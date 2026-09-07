@@ -8193,9 +8193,12 @@ function ActiveSectionChart({
     planPts: { d: number; z: number; label: string }[]
   }
 }) {
+  // 拡大率。1 で 画面幅に 収まり、上げると 大きく なって スクロールで 見る
+  const [zoom, setZoom] = useState(1)
   const W = 600
   const H = 200
-  const padL = 40, padR = 10, padT = 14, padB = 22
+  // 文字を 大きく した ぶん 目盛の 余白も 広げる
+  const padL = 52, padR = 14, padT = 18, padB = 30
   const PW = W - padL - padR
   const PH = H - padT - padB
   let zMin = Infinity, zMax = -Infinity
@@ -8222,28 +8225,58 @@ function ActiveSectionChart({
   for (let i = 0; i <= 4; i++) yTicks.push(zMin + step * i)
   return (
     <>
-      <div className="px-2 py-0.5 text-[10px] text-slate-500 border-b">
-        <span className="font-semibold text-slate-700">{name}</span>
-        <span className="ml-2">{direction === 'along' ? '線上' : '直角'} / 距離 {profile.length.toFixed(2)} m / 記録 {profile.recPts.length} 点</span>
+      <div className="px-2 py-1 text-[11px] text-slate-600 border-b flex items-center gap-2">
+        <span className="font-semibold text-slate-800 truncate">{name}</span>
+        <span className="truncate">
+          {direction === 'along' ? '線上' : '直角'} / 距離 {profile.length.toFixed(2)} m / 記録{' '}
+          {profile.recPts.length} 点
+        </span>
+        {/* 拡大すると 画面に 収まらなく なる ので、下の 枠を 縦横に スクロールして 見る */}
+        <div className="ml-auto flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => setZoom((z) => Math.max(1, +(z - 0.5).toFixed(1)))}
+            disabled={zoom <= 1}
+            className="w-7 h-7 flex items-center justify-center rounded border border-slate-300 text-slate-700 disabled:opacity-30"
+            title="縮小"
+          >
+            −
+          </button>
+          <span className="font-mono text-[11px] w-8 text-center">{zoom.toFixed(1)}x</span>
+          <button
+            type="button"
+            onClick={() => setZoom((z) => Math.min(6, +(z + 0.5).toFixed(1)))}
+            disabled={zoom >= 6}
+            className="w-7 h-7 flex items-center justify-center rounded border border-slate-300 text-slate-700 disabled:opacity-30"
+            title="拡大"
+          >
+            ＋
+          </button>
+        </div>
       </div>
-      <div className="flex-1 overflow-hidden">
-        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="w-full h-full">
+      <div className="flex-1 overflow-auto">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="xMidYMid meet"
+          // 拡大時は 内容の 方を 大きく して、親を スクロールさせる
+          style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%`, minWidth: '100%', minHeight: '100%' }}
+        >
           <rect x={padL} y={padT} width={PW} height={PH} fill="#f8fafc" stroke="#cbd5e1" />
           {yTicks.map((z, i) => (
             <g key={i}>
               <line x1={padL} y1={yOf(z)} x2={padL + PW} y2={yOf(z)} stroke="#e2e8f0" strokeWidth={0.5} />
-              <text x={padL - 3} y={yOf(z) + 3} fontSize={8} textAnchor="end" fill="#64748b">{z.toFixed(2)}</text>
+              <text x={padL - 3} y={yOf(z) + 3} fontSize={11} textAnchor="end" fill="#64748b">{z.toFixed(2)}</text>
             </g>
           ))}
           {/* 中間点の 断面は 中心を 0 に した 左右 (幅杭の offset と 同じ 読み方)。
               それ以外は 始点からの 距離 */}
-          <text x={padL} y={H - 6} fontSize={8} fill="#64748b">
+          <text x={padL} y={H - 6} fontSize={11} fill="#64748b">
             {centered ? `−${(profile.length / 2).toFixed(1)} m` : '0 m'}
           </text>
-          <text x={padL + PW} y={H - 6} fontSize={8} textAnchor="end" fill="#64748b">
+          <text x={padL + PW} y={H - 6} fontSize={11} textAnchor="end" fill="#64748b">
             {centered ? `+${(profile.length / 2).toFixed(1)} m` : `${profile.length.toFixed(1)} m`}
           </text>
-          <text x={padL + PW / 2} y={H - 6} fontSize={8} textAnchor="middle" fill="#64748b">
+          <text x={padL + PW / 2} y={H - 6} fontSize={11} textAnchor="middle" fill="#64748b">
             {centered ? '中心 0' : '距離'}
           </text>
           {path && <path d={path} fill="none" stroke="#0891b2" strokeWidth={1.5} />}
@@ -8263,7 +8296,7 @@ function ActiveSectionChart({
             <g key={`plan-${i}`}>
               <circle cx={xOf(p.d)} cy={yOf(p.z)} r={2.5} fill="#7c3aed" stroke="#fff" strokeWidth={0.8} />
               {p.label && (
-                <text x={xOf(p.d)} y={yOf(p.z) - 5} fontSize={7} textAnchor="middle" fill="#5b21b6">
+                <text x={xOf(p.d)} y={yOf(p.z) - 5} fontSize={11} textAnchor="middle" fill="#5b21b6">
                   {p.label}
                 </text>
               )}
@@ -8294,7 +8327,7 @@ function ActiveSectionChart({
                 strokeDasharray="2,2"
               />
               <circle cx={xOf(self.d)} cy={yOf(self.z)} r={4} fill="#2563eb" stroke="#fff" strokeWidth={1.5} />
-              <text x={xOf(self.d) + 5} y={yOf(self.z) - 5} fontSize={7} fill="#1d4ed8">
+              <text x={xOf(self.d) + 5} y={yOf(self.z) - 5} fontSize={11} fill="#1d4ed8">
                 現在地 {self.z.toFixed(3)}m
               </text>
             </g>
@@ -8302,7 +8335,7 @@ function ActiveSectionChart({
           {profile.recPts.map((p, i) => (
             <g key={i}>
               <circle cx={xOf(p.d)} cy={yOf(p.z)} r={3} fill="#f97316" stroke="#fff" strokeWidth={1} />
-              <text x={xOf(p.d) + 4} y={yOf(p.z) - 4} fontSize={7} fill="#9a3412">{p.name}</text>
+              <text x={xOf(p.d) + 4} y={yOf(p.z) - 4} fontSize={11} fill="#9a3412">{p.name}</text>
             </g>
           ))}
         </svg>
