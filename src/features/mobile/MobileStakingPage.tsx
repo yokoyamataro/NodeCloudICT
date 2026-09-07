@@ -8277,11 +8277,29 @@ function ActiveSectionChart({
   const [center, setCenter] = useState<{ d: number; z: number } | null>(null)
   const boxRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ x: number; y: number; c: { d: number; z: number } } | null>(null)
+  // viewBox の 縦横比を 枠に 合わせる。固定比 (600x200) だと meet で
+  // 上下に 余白が できて 図が 小さく なる。幅は 600 の まま なので
+  // 文字の 見た目の 大きさは 変わらない
+  const [boxSize, setBoxSize] = useState<{ w: number; h: number } | null>(null)
+  useEffect(() => {
+    const el = boxRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect()
+      if (r.width > 0 && r.height > 0) setBoxSize({ w: r.width, h: r.height })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   const W = 600
-  const H = 200
+  const H =
+    boxSize && boxSize.w > 0
+      ? Math.min(900, Math.max(200, Math.round((W * boxSize.h) / boxSize.w)))
+      : 260
   // 文字を 2 倍に した ぶん 目盛の 余白も 広げる。
-  // viewBox は 幅 600 で 画面幅に 縮む ため、実寸は 見た目の 6 割ほどに なる
-  const padL = 92, padR = 20, padT = 28, padB = 48
+  // viewBox は 幅 600 で 画面幅に 縮む ため、実寸は 見た目の 6 割ほどに なる。
+  // 上は 右上に 重ねた 操作枠に 隠れない 程度、右は 目盛が 無いので 詰める
+  const padL = 92, padR = 16, padT = 34, padB = 48
   const PW = W - padL - padR
   const PH = H - padT - padB
   let zMin = Infinity, zMax = -Infinity
