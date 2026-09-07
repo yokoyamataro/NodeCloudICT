@@ -2557,18 +2557,12 @@ export function MobileStakingPage() {
     }
     // 誘導中の 断面の 計画横断点 (横断測量 / 横断点の 設置に 使う)
     out.push(...plannedCrossTargets)
-    // 断面モードは 横断の 作業に 専念する 画面なので、中間点と 計画横断点
-    // だけに 絞る。通常の 測点が 混ざると 目的の 点を 探しにくい
-    if (show2D) {
-      return out.filter((t) => t.kind === 'channel_station')
-    }
     return out
   }, [
     coordinates,
     pipes,
     channelOverlay,
     plannedCrossTargets,
-    show2D,
     converter,
     projectId,
     pointTypesByProject,
@@ -6258,6 +6252,17 @@ export function MobileStakingPage() {
                   profile={sectionProfile}
                   // 中間点の 断面は 中心を 0 に した 左右で 読む
                   centered={activeSection.station != null}
+                  // 計測中の 自己位置。断面線に 乗っている ときだけ 出す
+                  // (離れが 大きいと 断面上の 点として 意味を 持たない)
+                  self={
+                    sectionRel && selfElevation !== null && Math.abs(sectionRel.offset) <= 2
+                      ? {
+                          d: sectionProfile.length / 2 + sectionRel.width,
+                          z: selfElevation,
+                          offMeters: sectionRel.offset,
+                        }
+                      : null
+                  }
                 />
               ) : (
                 <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-4 text-center">
@@ -7187,7 +7192,10 @@ export function MobileStakingPage() {
           <div className="flex flex-col gap-1">
             {/* 1 行目: 前/次 矢印 + 点名 (伸縮) + 解除 X + 矢印/距離。
                 前/次矢印は filteredTargets の並びで 1 つ隣のターゲットに切替。
-                ルートフィルタ時は「n点中m点計測」を右上に小さく表示。 */}
+                ルートフィルタ時は「n点中m点計測」を右上に小さく表示。
+                断面モードでは 下の 断面行 (離れ / 中心 / 中間点の 前後) が
+                すべてを 兼ねる ので この 行ごと 出さない */}
+            {!show2D && (
             <div className="flex items-center gap-1">
               {(() => {
                 const idx = filteredTargets.findIndex(
@@ -7295,6 +7303,7 @@ export function MobileStakingPage() {
                 )
               })()}
             </div>
+            )}
 
             {/* 断面モード: 断面線からの 離れ と 中心からの 離れ。
                 左右に 前後の 中間点への 切替を 置く。
@@ -8089,11 +8098,14 @@ function ActiveSectionChart({
   direction,
   profile,
   centered = false,
+  self = null,
 }: {
   name: string
   direction: 'along' | 'perp'
   /** 中間点の 断面。横軸を 中心 0 の ± で 読む */
   centered?: boolean
+  /** 計測中の 自己位置。d = 線上の 位置、z = 地表高、offMeters = 断面線からの 離れ */
+  self?: { d: number; z: number; offMeters: number } | null
   profile: {
     length: number
     tinPts: { d: number; z: number | null }[]
@@ -8111,6 +8123,9 @@ function ActiveSectionChart({
   for (const p of profile.tinPts) if (p.z != null) { if (p.z < zMin) zMin = p.z; if (p.z > zMax) zMax = p.z }
   for (const p of profile.recPts) { if (p.z < zMin) zMin = p.z; if (p.z > zMax) zMax = p.z }
   for (const p of profile.planPts) { if (p.z < zMin) zMin = p.z; if (p.z > zMax) zMax = p.z }
+  // 自己位置も 目盛の 対象に する。計画横断も 記録も 無い 段階では これだけが
+  // 手がかりに なる ので、0 基準では なく 実際の 高さの まわりを 出す
+  if (self) { if (self.z < zMin) zMin = self.z; if (self.z > zMax) zMax = self.z }
   if (!Number.isFinite(zMin) || !Number.isFinite(zMax)) { zMin = 0; zMax = 1 }
   if (zMax - zMin < 0.5) { const m = (zMin + zMax) / 2; zMin = m - 0.25; zMax = m + 0.25 }
   const xOf = (d: number) => padL + (d / profile.length) * PW
@@ -8186,6 +8201,24 @@ function ActiveSectionChart({
               strokeWidth={0.6}
               strokeDasharray="3,3"
             />
+          )}
+          {/* 計測中の 自己位置。断面上の どこに 居るかを 直接 見る */}
+          {self && (
+            <g>
+              <line
+                x1={xOf(self.d)}
+                y1={padT}
+                x2={xOf(self.d)}
+                y2={padT + PH}
+                stroke="#2563eb"
+                strokeWidth={0.8}
+                strokeDasharray="2,2"
+              />
+              <circle cx={xOf(self.d)} cy={yOf(self.z)} r={4} fill="#2563eb" stroke="#fff" strokeWidth={1.5} />
+              <text x={xOf(self.d) + 5} y={yOf(self.z) - 5} fontSize={7} fill="#1d4ed8">
+                現在地 {self.z.toFixed(3)}m
+              </text>
+            </g>
           )}
           {profile.recPts.map((p, i) => (
             <g key={i}>
