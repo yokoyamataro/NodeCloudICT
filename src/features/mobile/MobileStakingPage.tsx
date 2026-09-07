@@ -2880,8 +2880,13 @@ export function MobileStakingPage() {
     const dy = B.y - A.y
     if (Math.hypot(dx, dy) === 0) return 0
     // 断面線に 直交する 向き (路線方向) を 画面上に
-    return -Math.atan2(dx, -dy) * (180 / Math.PI)
-  }, [show2D, activeSectionLine, converter])
+    const base = -Math.atan2(dx, -dy) * (180 / Math.PI)
+    // 道路 (sideOrientation='forward') は BP→EP を 見て 左右を 取る 慣習。
+    // この 向きだと 画面が 逆さに なる ので 180 度 回す
+    const meta = activeSection?.station
+    const ch = meta ? openChannels.find((c) => c.id === meta.channelId) : null
+    return ch?.sideOrientation === 'forward' ? base + 180 : base
+  }, [show2D, activeSectionLine, converter, activeSection, openChannels])
 
   /** いま 誘導中の 断面の 前後の 中間点。距離順に 並べて 隣を 取る */
   const stationNav = useMemo(() => {
@@ -2905,7 +2910,10 @@ export function MobileStakingPage() {
   const targetHeightDiff =
     selfElevation !== null && selectedTarget?.z != null ? selfElevation - selectedTarget.z : null
 
-  const proximityActive = proximityRel != null && proximityRel.dist <= 1.0 && !proximityCancelled
+  // 断面モードでは 近接モードに 入らない。断面線上を 動きながら 何点も 拾う
+  // 使い方なので、1m 以内で 地図が レーダーに 変わると 作業が 止まる
+  const proximityActive =
+    !show2D && proximityRel != null && proximityRel.dist <= 1.0 && !proximityCancelled
 
   // 範囲外（1.2m 超のヒステリシス）に出たらキャンセルを解除して再表示できるようにする
   useEffect(() => {
@@ -2958,6 +2966,25 @@ export function MobileStakingPage() {
       void audioCtxRef.current.resume().catch(() => undefined)
     } catch (e) {
       console.warn('AudioContext init failed:', e)
+    }
+  }, [soundEnabled])
+
+  // iOS / Safari は ユーザー操作を 挟まないと AudioContext が suspended の まま で、
+  // resume() も 効かない。画面を 開いた だけでは 鳴らない ので、最初の タップで
+  // 起こす。これが 無いと 「音を ON に しているのに 鳴らない」に なる
+  useEffect(() => {
+    if (!soundEnabled) return
+    const wake = () => {
+      const ctx = audioCtxRef.current
+      if (ctx && ctx.state === 'suspended') void ctx.resume().catch(() => undefined)
+      void unlockAudio().catch(() => undefined)
+    }
+    // capture で 拾い、1 回で 十分 (once)
+    window.addEventListener('pointerdown', wake, { once: true, capture: true })
+    window.addEventListener('touchstart', wake, { once: true, capture: true })
+    return () => {
+      window.removeEventListener('pointerdown', wake, { capture: true })
+      window.removeEventListener('touchstart', wake, { capture: true })
     }
   }, [soundEnabled])
 

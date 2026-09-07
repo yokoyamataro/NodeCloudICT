@@ -64,8 +64,10 @@ interface GnssSettingsState {
 
 export const useGnssSettingsStore = create<GnssSettingsState>((set) => ({
   avgSeconds: loadNumber(KEY_AVG_SECONDS, 1, 1, 10),
-  // 既定 OFF (以前も useState(false) 初期化だったので同じ挙動)
-  soundEnabled: loadBool(KEY_SOUND_ENABLED, false),
+  // 既定 ON。FIX した / 外れた が 音で 分かる ほうが 現場では 安全で、
+  // 気づかず 単独測位の まま 測ってしまう のを 防げる。
+  // 明示的に 切った 人は localStorage の 値が 優先される
+  soundEnabled: loadBool(KEY_SOUND_ENABLED, true),
   antennaHeight: loadNumber(KEY_ANTENNA_HEIGHT, 2.0),
   useGeoidCorrection: loadBool(KEY_USE_GEOID, true),
   // 既定 OFF (従来どおり 北基準)
