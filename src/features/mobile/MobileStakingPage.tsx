@@ -6256,6 +6256,8 @@ export function MobileStakingPage() {
                   name={activeSection.name}
                   direction={activeSection.direction}
                   profile={sectionProfile}
+                  // 中間点の 断面は 中心を 0 に した 左右で 読む
+                  centered={activeSection.station != null}
                 />
               ) : (
                 <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-4 text-center">
@@ -7245,7 +7247,9 @@ export function MobileStakingPage() {
               >
                 <X className="h-4 w-4" />
               </button>
-              {distanceToTarget != null && bearingToTarget != null && (() => {
+              {/* 断面モードでは 出さない。すぐ下に 断面線からの 離れと
+                  中心からの 離れが 出ており、そちらが 追い込みの 基準に なる */}
+              {!show2D && distanceToTarget != null && bearingToTarget != null && (() => {
                 // 進行方向基準なら 自分の 向きからの 相対角、北基準なら 真北からの 方位角。
                 // 進行方向基準に していても 向きが 取れない 間は 北基準で 描く。
                 const rel =
@@ -8084,9 +8088,12 @@ function ActiveSectionChart({
   name,
   direction,
   profile,
+  centered = false,
 }: {
   name: string
   direction: 'along' | 'perp'
+  /** 中間点の 断面。横軸を 中心 0 の ± で 読む */
+  centered?: boolean
   profile: {
     length: number
     tinPts: { d: number; z: number | null }[]
@@ -8134,9 +8141,17 @@ function ActiveSectionChart({
               <text x={padL - 3} y={yOf(z) + 3} fontSize={8} textAnchor="end" fill="#64748b">{z.toFixed(2)}</text>
             </g>
           ))}
-          <text x={padL} y={H - 6} fontSize={8} fill="#64748b">0 m</text>
-          <text x={padL + PW} y={H - 6} fontSize={8} textAnchor="end" fill="#64748b">{profile.length.toFixed(1)} m</text>
-          <text x={padL + PW / 2} y={H - 6} fontSize={8} textAnchor="middle" fill="#64748b">距離</text>
+          {/* 中間点の 断面は 中心を 0 に した 左右 (幅杭の offset と 同じ 読み方)。
+              それ以外は 始点からの 距離 */}
+          <text x={padL} y={H - 6} fontSize={8} fill="#64748b">
+            {centered ? `−${(profile.length / 2).toFixed(1)} m` : '0 m'}
+          </text>
+          <text x={padL + PW} y={H - 6} fontSize={8} textAnchor="end" fill="#64748b">
+            {centered ? `+${(profile.length / 2).toFixed(1)} m` : `${profile.length.toFixed(1)} m`}
+          </text>
+          <text x={padL + PW / 2} y={H - 6} fontSize={8} textAnchor="middle" fill="#64748b">
+            {centered ? '中心 0' : '距離'}
+          </text>
           {path && <path d={path} fill="none" stroke="#0891b2" strokeWidth={1.5} />}
           {/* 計画横断 (中間点の 断面)。床掘 TIN も 記録も 無い 段階で
               「どの 測点を 見ているか」が 分かる 唯一の 手がかりに なる */}
@@ -8161,7 +8176,7 @@ function ActiveSectionChart({
             </g>
           ))}
           {/* 中心線 (offset 0) の 位置。左右の 振り分けの 基準 */}
-          {profile.planPts.length > 0 && (
+          {(centered || profile.planPts.length > 0) && (
             <line
               x1={xOf(profile.length / 2)}
               y1={padT}
