@@ -2926,6 +2926,68 @@ export function MobileStakingPage() {
     return ch?.sideOrientation === 'forward' ? base + 180 : base
   }, [show2D, activeSectionLine, converter, activeSection, openChannels])
 
+  /**
+   * 断面の 選択。断面図の タイトルを 兼ねる ので、断面を 選んでいない ときにも
+   * 出せる よう 変数に して 使い回す。
+   */
+  const sectionSelect = (
+    <>
+    {/* 路線の 中間点を 最初から 全部 並べる。選べば その場で
+        直交断面を 作って 誘導に 入る (作ってから 選ぶ 手順を 無くす)。
+        2 点から 作った 断面も 同じ ここから 選ぶ */}
+    {(channelOverlay.stations.length > 0 || sections.length > 0) && (
+      <select
+        value={
+          activeSection?.station
+            ? `st:${activeSection.station.stationId}`
+            : activeSection
+              ? `sec:${activeSection.id}`
+              : ''
+        }
+        onChange={(e) => {
+          const v = e.target.value
+          if (!v) {
+            setActiveSectionId(null)
+            return
+          }
+          if (v.startsWith('st:')) {
+            const st = channelOverlay.stations.find(
+              (x) => x.stationId === v.slice(3),
+            )
+            if (st) createSectionFromStation(st)
+            return
+          }
+          setActiveSectionId(v.slice(4))
+        }}
+        className="px-1 py-0.5 text-[11px] border rounded bg-white max-w-[11rem]"
+        title="表示する断面 (路線の中間点 / 2点から作った断面)"
+      >
+        <option value="">(選択なし)</option>
+        {channelOverlay.stations.length > 0 && (
+          <optgroup label="路線の中間点">
+            {channelOverlay.stations.map((st) => (
+              <option key={st.key} value={`st:${st.stationId}`}>
+                {st.label || '(名称なし)'} — {st.channelName}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {sections.some((sec) => !sec.station) && (
+          <optgroup label="2点から作った断面">
+            {sections
+              .filter((sec) => !sec.station)
+              .map((sec) => (
+                <option key={sec.id} value={`sec:${sec.id}`}>
+                  {sec.name}
+                </option>
+              ))}
+          </optgroup>
+        )}
+      </select>
+    )}
+    </>
+  )
+
   /** いま 誘導中の 断面の 前後の 中間点。距離順に 並べて 隣を 取る */
   const stationNav = useMemo(() => {
     const meta = activeSection?.station
@@ -6349,59 +6411,6 @@ export function MobileStakingPage() {
                 />
                 <span>m</span>
               </label>
-              {/* 路線の 中間点を 最初から 全部 並べる。選べば その場で
-                  直交断面を 作って 誘導に 入る (作ってから 選ぶ 手順を 無くす)。
-                  2 点から 作った 断面も 同じ ここから 選ぶ */}
-              {(channelOverlay.stations.length > 0 || sections.length > 0) && (
-                <select
-                  value={
-                    activeSection?.station
-                      ? `st:${activeSection.station.stationId}`
-                      : activeSection
-                        ? `sec:${activeSection.id}`
-                        : ''
-                  }
-                  onChange={(e) => {
-                    const v = e.target.value
-                    if (!v) {
-                      setActiveSectionId(null)
-                      return
-                    }
-                    if (v.startsWith('st:')) {
-                      const st = channelOverlay.stations.find(
-                        (x) => x.stationId === v.slice(3),
-                      )
-                      if (st) createSectionFromStation(st)
-                      return
-                    }
-                    setActiveSectionId(v.slice(4))
-                  }}
-                  className="px-1 py-0.5 text-[11px] border rounded bg-white max-w-[11rem]"
-                  title="表示する断面 (路線の中間点 / 2点から作った断面)"
-                >
-                  <option value="">(選択なし)</option>
-                  {channelOverlay.stations.length > 0 && (
-                    <optgroup label="路線の中間点">
-                      {channelOverlay.stations.map((st) => (
-                        <option key={st.key} value={`st:${st.stationId}`}>
-                          {st.label || '(名称なし)'} — {st.channelName}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {sections.some((sec) => !sec.station) && (
-                    <optgroup label="2点から作った断面">
-                      {sections
-                        .filter((sec) => !sec.station)
-                        .map((sec) => (
-                          <option key={sec.id} value={`sec:${sec.id}`}>
-                            {sec.name}
-                          </option>
-                        ))}
-                    </optgroup>
-                  )}
-                </select>
-              )}
               {sections.length > 0 && (
                 <button
                   onClick={() => {
@@ -6429,7 +6438,8 @@ export function MobileStakingPage() {
                   // 断面を 切り替えたら 作り直す。前の 断面の 描画が
                   // 残らないよう 明示的に 別物として 扱う
                   key={activeSection.id}
-                  name={activeSection.name}
+                  // 断面の 選択が そのまま タイトルに なる
+                  titleSlot={sectionSelect}
                   profile={sectionProfile}
                   // 中間点の 断面は 中心を 0 に した 左右で 読む
                   centered={activeSection.station != null}
@@ -6447,11 +6457,15 @@ export function MobileStakingPage() {
                   }
                 />
               ) : (
-                <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-4 text-center">
-                  「中間点から」で路線の横断、「新規（2点）」で任意の断面を作成。
-                  上の一覧からタップでも切り替わります。
-                  <br />
-                  管路の縦断図は「暗渠配管」タブで表示できます。
+                <div className="flex-1 flex flex-col">
+                  {/* 断面を 選んでいない ときも ここから 選ぶ */}
+                  <div className="px-2 py-1 border-b flex items-center gap-2">{sectionSelect}</div>
+                  <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-4 text-center">
+                    上の一覧から中間点を選ぶと、その横断に誘導します。
+                    <br />
+                    任意の 2 点で作るときは「新規（2点）」。
+                    管路の縦断図は「暗渠配管」タブです。
+                  </div>
                 </div>
               )}
             </div>
@@ -8243,13 +8257,14 @@ export function MobileStakingPage() {
 
 // 断面プロファイルチャート（断面パネル内で使用）
 function ActiveSectionChart({
-  name,
+  titleSlot,
   profile,
   centered = false,
   showLabels = true,
   self = null,
 }: {
-  name: string
+  /** タイトルの 位置に 出す もの (断面の 選択プルダウン) */
+  titleSlot: React.ReactNode
   /** 中間点の 断面。横軸を 中心 0 の ± で 読む */
   centered?: boolean
   /** 点名 (計画横断の 頂点名 / 実測点の 点名) を 出すか */
@@ -8326,10 +8341,7 @@ function ActiveSectionChart({
   return (
     <>
       <div className="px-2 py-1 text-[13px] text-slate-600 border-b flex items-center gap-2">
-        <span className="font-semibold text-slate-800 truncate">{name}</span>
-        <span className="truncate">
-          幅 {profile.length.toFixed(2)} m / 記録 {profile.recPts.length} 点
-        </span>
+        {titleSlot}
         {/* 拡大すると 画面に 収まらなく なる ので、下の 枠を 縦横に スクロールして 見る */}
         <div className="ml-auto flex items-center gap-1 shrink-0">
           <button
