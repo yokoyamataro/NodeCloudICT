@@ -8245,8 +8245,14 @@ function ActiveSectionChart({
   const [zoom, setZoom] = useState(1)
   // 追従モード。自己位置を 断面図の 真ん中 (水平・高さ とも) に 置き続ける
   const [follow, setFollow] = useState(false)
-  // スクロールは 持たない。断面図は 「追従」か 「固定倍率」の どちらかで、
-  // どちらも 枠に 収めて 描く (指での スクロールは 地図側に 取られて 効かない)
+  /**
+   * 表示の 中心 (断面上の 位置 d と 高さ z)。null なら 断面の 真ん中。
+   * 固定も 追従も 「同じ 絵を 平行移動している だけ」で、違いは 中心が
+   * 自己位置に 張り付くか どうか だけ。
+   */
+  const [center, setCenter] = useState<{ d: number; z: number } | null>(null)
+  const boxRef = useRef<HTMLDivElement | null>(null)
+  const dragRef = useRef<{ x: number; y: number; c: { d: number; z: number } } | null>(null)
   const W = 600
   const H = 200
   // 文字を 2 倍に した ぶん 目盛の 余白も 広げる。
@@ -8269,18 +8275,18 @@ function ActiveSectionChart({
   //              地図の 追従と 同じで、動くと 目盛の 方が ずれていく
   //   追従 OFF … 全体を 出す。倍率は 下の 枠を 大きくして スクロールで 見る
   const following = follow && self != null
-  // 倍率は 「切り取る 範囲」に 効かせる。SVG は 常に 枠に 収める ので
-  // スクロールは 要らない。
-  //   追従 ON  … 自己位置を 真ん中に して 切り取る
-  //   追従 OFF … 断面の 中心を 真ん中に して 切り取る (倍率 1 で 全体)
+  // 倍率は 「切り取る 範囲の 広さ」だけを 決める (指では 変えない)。
+  // 中心は 追従中なら 自己位置、そうでなければ 指で 動かした 位置。
   const xHalf = profile.length / 2 / zoom
   const zHalf = (zMax - zMin) / 2 / zoom
-  const xCenter = following ? (self as { d: number }).d : profile.length / 2
-  const zCenter = following ? (self as { z: number }).z : (zMin + zMax) / 2
-  const x0 = xCenter - xHalf
-  const x1 = xCenter + xHalf
-  const z0 = zCenter - zHalf
-  const z1 = zCenter + zHalf
+  const fallbackCenter = { d: profile.length / 2, z: (zMin + zMax) / 2 }
+  const activeCenter = following
+    ? { d: (self as { d: number }).d, z: (self as { z: number }).z }
+    : (center ?? fallbackCenter)
+  const x0 = activeCenter.d - xHalf
+  const x1 = activeCenter.d + xHalf
+  const z0 = activeCenter.z - zHalf
+  const z1 = activeCenter.z + zHalf
   const xOf = (d: number) => padL + ((d - x0) / (x1 - x0)) * PW
   const yOf = (z: number) => padT + (1 - (z - z0) / (z1 - z0)) * PH
   let path = ''
@@ -8306,7 +8312,12 @@ function ActiveSectionChart({
         <div className="ml-auto flex items-center gap-1 shrink-0">
           <button
             type="button"
-            onClick={() => setFollow((v) => !v)}
+            onClick={() => {
+              // 追従を 切る ときは その場の 中心で 止める。
+              // 入れる ときは 自己位置に 寄る (中心が シフトする だけ)
+              if (follow) setCenter(activeCenter)
+              setFollow((v) => !v)
+            }}
             disabled={self == null}
             className={`px-2 h-7 rounded border text-[11px] ${
               follow
@@ -8344,9 +8355,48 @@ function ActiveSectionChart({
           </button>
         </div>
       </div>
-      {/* 断面図は 「追従」か 「固定倍率」の どちらかで、どちらも 枠に 収める。
-          倍率は 切り取る 範囲に 効くので スクロールは 持たない */}
-      <div className="flex-1 overflow-hidden">
+      {/* 指で 掴んで 平行移動 する。倍率は 変えない (± ボタンのみ)。
+          追従中に 動かしたら 追従を 解いて その位置で 止める =
+          固定も 追従も 同じ 絵を 平行移動している だけ に なる */}
+      <div
+        ref={boxRef}
+        className="flex-1 overflow-hidden"
+        style={{ touchAction: 'none' }}
+        onPointerDown={(e) => {
+          // 追従中に 触ったら その場で 固定に 切り替える
+          if (following) {
+            setCenter(activeCenter)
+            setFollow(false)
+          }
+          dragRef.current = { x: e.clientX, y: e.clientY, c: activeCenter }
+          e.currentTarget.setPointerCapture(e.pointerId)
+        }}
+        onPointerMove={(e) => {
+          const d = dragRef.current
+          const box = boxRef.current
+          if (!d || !box) return
+          const r = box.getBoundingClientRect()
+          // viewBox は meet で 収まる ので、実寸との 比は 短い方に 合う
+          const scale = Math.min(r.width / W, r.height / H)
+          if (scale <= 0) return
+          // 画面 1px あたりの 断面上の 距離 / 高さ
+          const perPxX = (x1 - x0) / PW / scale
+          const perPxZ = (z1 - z0) / PH / scale
+          setCenter({
+            // 右へ 引くと 左側が 見えてくる = 中心は 小さく なる
+            d: d.c.d - (e.clientX - d.x) * perPxX,
+            // 下へ 引くと 上 (高い方) が 見えてくる = 中心は 大きく なる
+            z: d.c.z + (e.clientY - d.y) * perPxZ,
+          })
+        }}
+        onPointerUp={(e) => {
+          dragRef.current = null
+          e.currentTarget.releasePointerCapture(e.pointerId)
+        }}
+        onPointerCancel={() => {
+          dragRef.current = null
+        }}
+      >
         <svg
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="xMidYMid meet"
