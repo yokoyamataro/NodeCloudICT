@@ -3403,15 +3403,20 @@ export function MobileStakingPage() {
       if (dist === null) {
         // 座標欠落のターゲット → 新点扱い
         mode = 'free'
-      } else if (dist > STAKE_TOLERANCE_M && !show2D) {
-        // 誤差超過時はユーザーに 3 択を聞く。
-        // 断面モードは 断面線上を 動きながら 何点も 拾う 使い方なので、
-        // ターゲットから 離れているのが 当たり前。ここで 止めない
-        const choice = await new Promise<'stake' | 'free' | 'cancel'>((resolve) => {
-          setErrorChoice({ distance: dist as number, resolve })
-        })
-        if (choice === 'cancel') return
-        mode = choice
+      } else if (dist > STAKE_TOLERANCE_M) {
+        if (show2D) {
+          // 断面モードは 断面線上を 動きながら 何点も 拾う 使い方なので、
+          // ターゲットから 離れているのが 当たり前。「離れています」の 3 択は
+          // 出さず、そのまま 新点として 登録モーダルへ 進む
+          mode = 'free'
+        } else {
+          // 誤差超過時はユーザーに 3 択を聞く
+          const choice = await new Promise<'stake' | 'free' | 'cancel'>((resolve) => {
+            setErrorChoice({ distance: dist as number, resolve })
+          })
+          if (choice === 'cancel') return
+          mode = choice
+        }
       }
     }
 
