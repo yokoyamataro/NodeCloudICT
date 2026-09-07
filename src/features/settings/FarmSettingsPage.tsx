@@ -5,6 +5,12 @@ import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, HardDrive, Layers, Loader2, Pencil, RefreshCw } from 'lucide-react'
 import { OrthophotoUploadSection } from '@/features/orthophoto/OrthophotoUploadSection'
 import { useFarmStore } from '@/stores/farmStore'
+import {
+  FARM_FILE_QUOTA_BYTES,
+  listFarmFiles,
+  usedBytes,
+  type FarmFileRow,
+} from '@/lib/farmFiles'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { supabase } from '@/lib/supabase'
@@ -38,6 +44,9 @@ export function FarmSettingsPage() {
   const currentFarm = useFarmStore((s) => s.currentFarm)
   const updateFarm = useFarmStore((s) => s.updateFarm)
   const [usage, setUsage] = useState<StorageUsage | null>(null)
+  // ファイルストレージは 集計 RPC (get_farm_storage_usage) の 対象外なので
+  // ここで 別に 取って 足す。上限が 別建て (20MB) なので 行にも 明記する
+  const [fileRows, setFileRows] = useState<FarmFileRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -102,6 +111,7 @@ export function FarmSettingsPage() {
       if (rpcErr) throw rpcErr
       const row = Array.isArray(data) ? data[0] : data
       setUsage(row ?? null)
+      setFileRows(await listFarmFiles(currentFarm.id))
     } catch (err) {
       setError(
         typeof err === 'object' && err && 'message' in err && typeof (err as { message: unknown }).message === 'string'
@@ -130,8 +140,16 @@ export function FarmSettingsPage() {
         { label: '写真', count: usage.photos_count, bytes: usage.photos_bytes },
         { label: '登記情報 PDF', count: usage.registry_pdf_count, bytes: usage.registry_pdf_bytes },
         { label: 'LandXML', count: usage.landxml_count, bytes: usage.landxml_bytes },
+        {
+          label: `ファイル (上限 ${formatBytes(FARM_FILE_QUOTA_BYTES)})`,
+          count: fileRows.length,
+          bytes: usedBytes(fileRows),
+        },
       ]
     : []
+  // 合計は RPC の 値に ファイルストレージ分を 足す
+  const totalCount = (usage?.total_count ?? 0) + fileRows.length
+  const totalBytes = (usage?.total_bytes ?? 0) + usedBytes(fileRows)
 
   const coordPercent = (coordCount / MAX_COORDS_PER_FARM) * 100
   const parcelPercent = (parcelCount / MAX_PARCELS_PER_FARM) * 100
@@ -364,10 +382,10 @@ export function FarmSettingsPage() {
                   <tr className="border-t bg-slate-50">
                     <td className="py-2 font-semibold text-slate-800">合計</td>
                     <td className="py-2 text-right font-mono font-semibold">
-                      {usage.total_count.toLocaleString()}
+                      {totalCount.toLocaleString()}
                     </td>
                     <td className="py-2 text-right font-mono font-semibold text-blue-700">
-                      {formatBytes(usage.total_bytes)}
+                      {formatBytes(totalBytes)}
                     </td>
                   </tr>
                 </tfoot>
@@ -375,6 +393,10 @@ export function FarmSettingsPage() {
               <p className="mt-3 text-[11px] text-slate-500 leading-relaxed">
                 ※ オルソタイル (登録済オルソ画像) はここには含まれません。オルソ画像は
                 このページ上部の「オルソ画像」から追加・削除できます。
+                <br />
+                ※「ファイル」は 工区単位で 別枠の 上限 (20MB) が あり、
+                アップロードから 3 ヶ月で 失効します。左メニューの「ファイル」から
+                追加・削除できます。
               </p>
             </>
           ) : null}
