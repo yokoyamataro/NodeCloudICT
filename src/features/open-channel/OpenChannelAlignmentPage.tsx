@@ -5304,6 +5304,11 @@ export function OpenChannelAlignmentPage() {
               showLabels
               checkedCoordIds={registeredCoordIds}
               onPointSelect={handlePickCoordFromMap}
+              // 現況/出来形の 地図取得 中は 重なり選択を 挟まない。
+              // 続けて 点を 拾う 場面で ポップアップが 邪魔に なる うえ、
+              // 断面表示で 地図を 回して いる 間は Popup の 位置が ずれて
+              // 「押しても 何も 起きない」ように 見える
+              disableOverlapPicker={mapCaptureTarget != null}
               mapBearingDeg={mapBearingDeg}
             >
               {sampledLatLng.length >= 2 && (

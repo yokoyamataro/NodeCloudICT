@@ -602,6 +602,15 @@ interface CoordinateMapProps {
    */
   coordinatesInteractive?: boolean
   /**
+   * 重なり選択の ポップアップを 出さず、クリックした 点を そのまま 返す。
+   *
+   * 地図から 続けて 点を 拾う 用途 (横断の 現況取得 など) では、1 点ごとに
+   * ポップアップを 挟むと 進まない。加えて 地図を 回している 間は Popup の
+   * 位置が ずれる ことが あり、開いた ことに 気づけず 「押しても 何も
+   * 起きない」ように 見える。
+   */
+  disableOverlapPicker?: boolean
+  /**
    * 地図の 回転 (bearing) を 度数 で 指定 (北=0、東=90、時計回り)。
    * undefined なら 触らない (現在の bearing を 維持)。
    * 例: 横断計画で 「進行方向を 画面上向きに」する 用途を 想定。
@@ -652,6 +661,7 @@ export function CoordinateMap({
   lineSelectMode = false,
   onLineSelect,
   coordinatesInteractive = true,
+  disableOverlapPicker = false,
   mapBearingDeg,
   elementPanes,
   children,
@@ -1045,7 +1055,7 @@ export function CoordinateMap({
                 const marker = e.target as L.Marker & { _map?: L.Map }
                 const map = marker._map
                 const OVERLAP_PX = 15
-                if (map) {
+                if (map && !disableOverlapPicker) {
                   const clickedLL = marker.getLatLng()
                   const clickedPx = map.latLngToLayerPoint(clickedLL)
                   const nearby = displayCoordinates.filter((c) => {
