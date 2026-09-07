@@ -957,6 +957,15 @@ export function MobileStakingPage() {
       return next
     })
   }
+  // 断面モードは 地図を 横断方向に 回す。作図まわりは 画面座標での
+  // 当たり判定を 前提に していて 回転に 追従できない ので、断面モードの 間は
+  // ペイントを 落として おく (道具モーダルも 開かない)。
+  useEffect(() => {
+    if (!show2D) return
+    setDrawingMode('off')
+    setPaintOpen(false)
+  }, [show2D, setDrawingMode])
+
   // 断面（クロスセクション）
   interface CrossSection {
     id: string
@@ -5701,7 +5710,7 @@ export function MobileStakingPage() {
           {/* 地図の長押し / 右クリックで「測点追加 / メモを残す」の選択シートを開く。
               Leaflet の contextmenu イベントはスマホでも長押しで発火する。
               ペイント中は選択モードの頂点削除 (contextmenu) と衝突するので無効化 */}
-          {!paintActive && (
+          {!paintActive && !show2D && (
             <MapLongPressHandler
               onLongPress={(lat, lng) => {
                 if (areaModeActive) {
@@ -6028,7 +6037,9 @@ export function MobileStakingPage() {
               )}
               {/* 現在位置の青い点は専用ペイン(z-index 650)に置き、
                   markerPane(600)のターゲット等より常に前面に表示する */}
-              <Pane name="current-pos" style={{ zIndex: 650 }}>
+              {/* overlayPane の 中に 作る。leaflet-rotate は 標準 pane しか
+                  振り分けないので、mapPane 直下だと 回転時に 自己位置が ずれる */}
+              <Pane name="current-pos" pane="overlayPane" style={{ zIndex: 650 }}>
                 <CircleMarker
                   center={currentPos}
                   radius={6}
@@ -7526,12 +7537,19 @@ export function MobileStakingPage() {
               <button
                 type="button"
                 onClick={() => setPaintOpen(true)}
-                className={`flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 rounded-lg font-semibold ${
+                // 断面モードは 地図が 回るので 作図の 当たり判定が 合わない。
+                // 開けないように して 誤操作を 防ぐ
+                disabled={show2D}
+                className={`flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 rounded-lg font-semibold disabled:opacity-40 ${
                   paintActive
                     ? 'bg-blue-600 text-white'
                     : 'border border-amber-400 bg-amber-50 text-amber-800 active:bg-amber-100'
                 }`}
-                title="ペイント (手書き・線・テキスト・付箋メモ)"
+                title={
+                  show2D
+                    ? '断面モードでは使えません (地図が横断方向に回るため)'
+                    : 'ペイント (手書き・線・テキスト・付箋メモ)'
+                }
               >
                 <Pen className="h-5 w-5" />
                 ペイント

@@ -35,7 +35,10 @@ export function TinPane({
   keyPrefix: string
 }) {
   return (
-    <Pane name={paneName} style={{ zIndex }}>
+    // pane を overlayPane の 中に 作る。leaflet-rotate は 標準 pane しか
+    // rotatePane / norotatePane に 振り分けないので、mapPane 直下に 作ると
+    // 回転時に 位置が 補正されず ずれる
+    <Pane name={paneName} pane="overlayPane" style={{ zIndex }}>
       {tin && visible && meshOn &&
         tin.triangles.map((t, i) => (
           <LeafletPolygon
