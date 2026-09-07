@@ -612,8 +612,15 @@ function FollowCurrent({
 // （ref 経由は子 effect が親 effect より先に走り旧位置を読む不具合があるため避ける）
 function CenterOnSelect({
   target,
+  bottomPanelRatio = 0,
 }: {
   target: { id: string; lat: number; lng: number } | null
+  /**
+   * 下から 何割が 別パネル (断面図など) で 隠れているか。
+   * 地図の 中心に 寄せると 見えている 上半分では 下に 寄って しまう ので、
+   * その ぶん 上に ずらして 「見えている 範囲の 真ん中」に 置く。
+   */
+  bottomPanelRatio?: number
 }) {
   const map = useMap()
   const targetRef = useRef(target)
@@ -624,7 +631,13 @@ function CenterOnSelect({
     const t = targetRef.current
     if (!t || t.id !== targetId) return
     map.setView([t.lat, t.lng], Math.max(map.getZoom(), 18), { animate: true })
-  }, [map, targetId])
+    if (bottomPanelRatio > 0) {
+      // 見えている 範囲の 中心は 全体の 中心より 上に ある。
+      // 地図を 下に 送る = 中身が 上に 上がる
+      const h = map.getSize().y
+      map.panBy([0, (h * bottomPanelRatio) / 2], { animate: true })
+    }
+  }, [map, targetId, bottomPanelRatio])
   return null
 }
 
@@ -2367,6 +2380,31 @@ export function MobileStakingPage() {
     )
     return vertices
   }, [activeSection, openChannels, coordinates])
+
+  /**
+   * 画面に 出す 用に 伸ばした 断面線。
+   * 断面の 実長 (幅杭 + 2m 程度) では 画面を 横切らない ことが 多く、
+   * 向きが 分かりにくい。表示だけ 前後に 300m 伸ばす。
+   * 離れ / 中心 の 計算は 元の activeSectionLine を 使う。
+   */
+  const activeSectionLineExtended = useMemo<[[number, number], [number, number]] | null>(() => {
+    if (!activeSectionLine) return null
+    const A = converter.toXY(activeSectionLine[0][0], activeSectionLine[0][1])
+    const B = converter.toXY(activeSectionLine[1][0], activeSectionLine[1][1])
+    const dx = B.x - A.x
+    const dy = B.y - A.y
+    const len = Math.hypot(dx, dy)
+    if (len === 0) return activeSectionLine
+    const EXT = 300
+    const ux = dx / len
+    const uy = dy / len
+    const p1 = converter.toLatLng(A.x - ux * EXT, A.y - uy * EXT)
+    const p2 = converter.toLatLng(B.x + ux * EXT, B.y + uy * EXT)
+    return [
+      [p1.lat, p1.lng],
+      [p2.lat, p2.lng],
+    ]
+  }, [activeSectionLine, converter])
 
   // 断面プロファイル: TIN サンプル + 現況点（記録の射影）
   const sectionProfile = useMemo(() => {
@@ -5512,9 +5550,14 @@ export function MobileStakingPage() {
               />
             )
           })}
-          {/* アクティブ断面線 */}
-          {(show3D || show2D) && activeSectionLine && (
-            <Polyline positions={activeSectionLine} pathOptions={{ color: '#0891b2', weight: 3, dashArray: '6,4' }} />
+          {/* アクティブ断面線。断面の 実長では 画面を 横切らない ことが 多いので、
+              向きが 一目で 分かる よう 表示だけ 長く 伸ばす
+              (離れ / 中心 の 計算は 元の 線分の まま) */}
+          {(show3D || show2D) && activeSectionLineExtended && (
+            <Polyline
+              positions={activeSectionLineExtended}
+              pathOptions={{ color: '#0891b2', weight: 3, dashArray: '6,4' }}
+            />
           )}
           <TileLayer
             attribution='&copy; 国土地理院'
@@ -5559,6 +5602,8 @@ export function MobileStakingPage() {
                   }
                 : null
             }
+            // 断面 / 暗渠のパネルが 下半分を 覆う ときは、その ぶん 上に ずらす
+            bottomPanelRatio={(show2D || showPipe) && showMap ? 0.5 : 0}
           />
 
           {/* 工事区域ポリゴン（境界測量=属性色 / その他=工種色）。showParcelPolygons でまとめて非表示にできる */}
@@ -6206,20 +6251,22 @@ export function MobileStakingPage() {
                 />
                 <span>m</span>
               </label>
-              {sections.map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => setActiveSectionId(s.id === activeSectionId ? null : s.id)}
-                  className={`px-1.5 py-0.5 text-[11px] rounded border ${
-                    s.id === activeSectionId
-                      ? 'bg-cyan-100 border-cyan-400 text-cyan-800'
-                      : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
-                  }`}
-                  title={s.direction === 'along' ? '線上' : '直角'}
+              {/* 断面は 中間点を 送るたび 増える ので、ボタンを 並べず 選択式に する */}
+              {sections.length > 0 && (
+                <select
+                  value={activeSectionId ?? ''}
+                  onChange={(e) => setActiveSectionId(e.target.value || null)}
+                  className="px-1 py-0.5 text-[11px] border rounded bg-white max-w-[10rem]"
+                  title="表示する断面"
                 >
-                  {s.name}
-                </button>
-              ))}
+                  <option value="">(選択なし)</option>
+                  {sections.map((sec) => (
+                    <option key={sec.id} value={sec.id}>
+                      {sec.name}
+                    </option>
+                  ))}
+                </select>
+              )}
               {sections.length > 0 && (
                 <button
                   onClick={() => {
