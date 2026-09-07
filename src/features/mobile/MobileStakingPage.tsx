@@ -8332,30 +8332,6 @@ function ActiveSectionChart({
         <div className="ml-auto flex items-center gap-1 shrink-0">
           <button
             type="button"
-            onClick={() => {
-              // 追従を 切る ときは その場の 中心で 止める。
-              // 入れる ときは 自己位置に 寄る (中心が シフトする だけ)
-              if (follow) setCenter(activeCenter)
-              setFollow((v) => !v)
-            }}
-            disabled={self == null}
-            className={`px-2 h-7 rounded border text-[11px] ${
-              follow
-                ? 'bg-blue-600 border-blue-600 text-white'
-                : 'border-slate-300 text-slate-700 disabled:opacity-30'
-            }`}
-            title={
-              self == null
-                ? '断面線の近くに居ないため追従できません'
-                : follow
-                  ? '自己位置を中心に追従中。押すと断面の中心に固定'
-                  : '自己位置を断面図の中心に置き続ける'
-            }
-          >
-            {follow ? '追従' : '固定'}
-          </button>
-          <button
-            type="button"
             onClick={() => setZoom((z) => Math.max(1, +(z - 0.5).toFixed(1)))}
             disabled={zoom <= 1}
             className="w-7 h-7 flex items-center justify-center rounded border border-slate-300 text-slate-700 disabled:opacity-30"
@@ -8421,9 +8397,34 @@ function ActiveSectionChart({
             触れる 範囲だけ pointer を 受ける) */}
         {sizeSlot && (
           <div
-            className="absolute top-1 right-1 z-10 bg-white/90 border rounded px-1.5 py-0.5"
+            className="absolute top-1 right-1 z-10 bg-white/90 border rounded px-1.5 py-0.5 flex items-center gap-2"
             onPointerDown={(e) => e.stopPropagation()}
           >
+            {/* 追従は 図の 見え方を 決める ものなので 厚さ / 幅 と 並べる */}
+            <button
+              type="button"
+              onClick={() => {
+                // 追従を 切る ときは その場の 中心で 止める。
+                // 入れる ときは 自己位置に 寄る (中心が シフトする だけ)
+                if (follow) setCenter(activeCenter)
+                setFollow((v) => !v)
+              }}
+              disabled={self == null}
+              className={`shrink-0 px-2 py-0.5 rounded border text-[11px] ${
+                follow
+                  ? 'bg-blue-600 border-blue-600 text-white'
+                  : 'border-slate-300 text-slate-700 disabled:opacity-30'
+              }`}
+              title={
+                self == null
+                  ? '断面線の近くに居ないため追従できません'
+                  : follow
+                    ? '自己位置を中心に追従中。押すと断面の中心に固定'
+                    : '自己位置を断面図の中心に置き続ける'
+              }
+            >
+              {follow ? '追従' : '固定'}
+            </button>
             {sizeSlot}
           </div>
         )}
