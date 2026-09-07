@@ -2985,7 +2985,76 @@ export function MobileStakingPage() {
         )}
       </select>
     )}
+    {/* 断面名の 右に 任意断面の 作成と 全消去 */}
+    <button
+      onClick={startNewSection}
+      className="shrink-0 px-2 py-0.5 text-[11px] border border-cyan-600 text-cyan-700 rounded hover:bg-cyan-50"
+      title="座標 2 点を選んで任意の断面を作る"
+    >
+      任意断面
+    </button>
+    {sections.length > 0 && (
+      <button
+        onClick={() => {
+          if (!confirm('全ての断面を削除しますか？')) return
+          setSections([])
+          setActiveSectionId(null)
+        }}
+        className="shrink-0 px-1.5 py-0.5 text-[11px] border border-red-200 text-red-600 rounded hover:bg-red-50"
+      >
+        全消去
+      </button>
+    )}
     </>
+  )
+
+  /**
+   * 断面図の 右上に 出す 設定。
+   *   厚さ … 断面線から 何 m 以内の 実測点を 図に 載せるか
+   *   幅   … 中心から 何 m まで を 図に 出すか (断面の 半幅)
+   */
+  const sectionSizeInputs = (
+    <div className="flex items-center gap-2 text-[11px] text-slate-600">
+      <label className="flex items-center gap-1">
+        <span>厚さ</span>
+        <input
+          type="number"
+          step={0.1}
+          min={0.05}
+          value={sectionToleranceM}
+          onChange={(e) => {
+            const n = parseFloat(e.target.value)
+            if (Number.isFinite(n) && n > 0) setSectionToleranceM(n)
+          }}
+          className="w-12 px-1 py-0.5 text-[11px] border rounded text-right bg-white"
+          title="断面線から左右何mまでの実測点を断面図に出すか"
+        />
+        <span>m</span>
+      </label>
+      <label className="flex items-center gap-1">
+        <span>幅</span>
+        <input
+          type="number"
+          step={1}
+          min={1}
+          value={sectionHalfWidthM}
+          onChange={(e) => {
+            const n = parseFloat(e.target.value)
+            if (!Number.isFinite(n) || n <= 0) return
+            setSectionHalfWidthM(n)
+            // 表示中の 断面は その場で 引き直す (作り直さないと 幅が 変わらない)
+            const meta = activeSection?.station
+            if (meta) {
+              const st = channelOverlay.stations.find((x) => x.stationId === meta.stationId)
+              if (st) createSectionFromStation(st, n)
+            }
+          }}
+          className="w-12 px-1 py-0.5 text-[11px] border rounded text-right bg-white"
+          title="中心から何mまでを断面図に出すか (断面の半幅)"
+        />
+        <span>m</span>
+      </label>
+    </div>
   )
 
   /** いま 誘導中の 断面の 前後の 中間点。距離順に 並べて 隣を 取る */
@@ -6343,93 +6412,6 @@ export function MobileStakingPage() {
               showMap || show3D ? 'h-[50%] bottom-0' : 'top-0 bottom-0'
             }`}
           >
-            {/* ヘッダー: 新規・断面一覧・全消去・閉じる */}
-            <div className="flex items-center flex-wrap gap-1 px-2 py-1 border-b bg-cyan-50 text-[11px]">
-              <span className="font-semibold text-cyan-800 mr-1">断面</span>
-              <button
-                onClick={startNewSection}
-                className="px-2 py-0.5 text-[11px] bg-cyan-700 text-white rounded hover:bg-cyan-600"
-              >
-                新規（2点）
-              </button>
-              {sectionPickingMode && (
-                <span className="text-cyan-700">
-                  座標から{sectionPickIds.length === 0 ? '1点目' : '2点目'}を選択…
-                  <button
-                    onClick={() => {
-                      setSectionPickIds([])
-                      setActiveSectionId(null)
-                    }}
-                    className="ml-1 underline"
-                  >
-                    中止
-                  </button>
-                </span>
-              )}
-              {/* 断面と現況点の照合許容範囲（半幅）*/}
-              <label className="flex items-center gap-1 ml-1 text-slate-600">
-                <span>幅±</span>
-                <input
-                  type="number"
-                  step={0.1}
-                  min={0.05}
-                  value={sectionToleranceM}
-                  onChange={(e) => {
-                    const n = parseFloat(e.target.value)
-                    if (Number.isFinite(n) && n > 0) setSectionToleranceM(n)
-                  }}
-                  className="w-12 px-1 py-0.5 text-[11px] border rounded text-right"
-                  title="断面から左右何mまでの現況点を断面上に表示するか"
-                />
-                <span>m</span>
-              </label>
-              {/* 中間点から 作る 断面の 半幅。ここを 超える 点は 断面図に 出ない。
-                  計画横断が 幅杭より 外まで 伸びる 断面でも 切れないよう、
-                  幅杭からの 自動計算では なく 明示的に 決める */}
-              <label className="flex items-center gap-1 text-slate-600">
-                <span>中心±</span>
-                <input
-                  type="number"
-                  step={1}
-                  min={1}
-                  value={sectionHalfWidthM}
-                  onChange={(e) => {
-                    const n = parseFloat(e.target.value)
-                    if (!Number.isFinite(n) || n <= 0) return
-                    setSectionHalfWidthM(n)
-                    // 表示中の 断面は その場で 引き直す (作り直さないと 幅が 変わらない)
-                    const meta = activeSection?.station
-                    if (meta) {
-                      const st = channelOverlay.stations.find(
-                        (x) => x.stationId === meta.stationId,
-                      )
-                      if (st) createSectionFromStation(st, n)
-                    }
-                  }}
-                  className="w-12 px-1 py-0.5 text-[11px] border rounded text-right"
-                  title="中間点から作る断面の半幅 (中心からの距離)。これを超える点は断面図に出ません"
-                />
-                <span>m</span>
-              </label>
-              {sections.length > 0 && (
-                <button
-                  onClick={() => {
-                    if (!confirm('全ての断面を削除しますか？')) return
-                    setSections([])
-                    setActiveSectionId(null)
-                  }}
-                  className="px-1.5 py-0.5 text-[11px] border border-red-200 text-red-600 rounded hover:bg-red-50"
-                >
-                  全消去
-                </button>
-              )}
-              <button
-                onClick={() => setShowSectionPanel(false)}
-                className="ml-auto px-2 py-0.5 border rounded hover:bg-white"
-              >
-                閉じる
-              </button>
-            </div>
             {/* 本体: ユーザ作成の断面 or プレースホルダ (管路の縦断図は
                 「暗渠配管」タブに分離済み) */}
             <div className="flex-1 overflow-hidden flex flex-col">
@@ -6440,6 +6422,7 @@ export function MobileStakingPage() {
                   key={activeSection.id}
                   // 断面の 選択が そのまま タイトルに なる
                   titleSlot={sectionSelect}
+                  sizeSlot={sectionSizeInputs}
                   profile={sectionProfile}
                   // 中間点の 断面は 中心を 0 に した 左右で 読む
                   centered={activeSection.station != null}
@@ -6463,7 +6446,7 @@ export function MobileStakingPage() {
                   <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-4 text-center">
                     上の一覧から中間点を選ぶと、その横断に誘導します。
                     <br />
-                    任意の 2 点で作るときは「新規（2点）」。
+                    任意の 2 点で作るときは「任意断面」。
                     管路の縦断図は「暗渠配管」タブです。
                   </div>
                 </div>
@@ -8258,6 +8241,7 @@ export function MobileStakingPage() {
 // 断面プロファイルチャート（断面パネル内で使用）
 function ActiveSectionChart({
   titleSlot,
+  sizeSlot,
   profile,
   centered = false,
   showLabels = true,
@@ -8265,6 +8249,8 @@ function ActiveSectionChart({
 }: {
   /** タイトルの 位置に 出す もの (断面の 選択プルダウン) */
   titleSlot: React.ReactNode
+  /** 断面図の 右上に 重ねる もの (厚さ / 幅) */
+  sizeSlot?: React.ReactNode
   /** 中間点の 断面。横軸を 中心 0 の ± で 読む */
   centered?: boolean
   /** 点名 (計画横断の 頂点名 / 実測点の 点名) を 出すか */
@@ -8394,7 +8380,7 @@ function ActiveSectionChart({
           固定も 追従も 同じ 絵を 平行移動している だけ に なる */}
       <div
         ref={boxRef}
-        className="flex-1 overflow-hidden"
+        className="flex-1 overflow-hidden relative"
         style={{ touchAction: 'none' }}
         onPointerDown={(e) => {
           // 追従中に 触ったら その場で 固定に 切り替える
@@ -8431,6 +8417,16 @@ function ActiveSectionChart({
           dragRef.current = null
         }}
       >
+        {/* 厚さ / 幅 は 図の 右上に 重ねる (指での 移動を 邪魔しない よう
+            触れる 範囲だけ pointer を 受ける) */}
+        {sizeSlot && (
+          <div
+            className="absolute top-1 right-1 z-10 bg-white/90 border rounded px-1.5 py-0.5"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            {sizeSlot}
+          </div>
+        )}
         <svg
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="xMidYMid meet"
