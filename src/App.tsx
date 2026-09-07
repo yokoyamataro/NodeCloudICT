@@ -53,6 +53,7 @@ import { TrashPage } from '@/features/trash/TrashPage'
 import { RegistryCredentialsPage } from '@/features/settings/RegistryCredentialsPage'
 import { PasswordSettingsPage } from '@/features/settings/PasswordSettingsPage'
 import { FarmSettingsPage } from '@/features/settings/FarmSettingsPage'
+import { FarmFilesPage } from '@/features/files/FarmFilesPage'
 // モビリティ (社員/車両/重機の位置管理) - 現状はサイトオーナーのみプレビュー
 import { MobilityHomePage } from '@/features/mobility/MobilityHomePage'
 import { MobilityVehiclePage } from '@/features/mobility/MobilityVehiclePage'
@@ -357,6 +358,7 @@ function AppRoutes() {
         <Route path="open-channel">
           <Route path="alignment" element={<OpenChannelAlignmentPage />} />
         </Route>
+        <Route path="files" element={<FarmFilesPage />} />
         <Route path="settings" element={<FarmSettingsPage />} />
         <Route path="trash" element={<TrashPage />} />
         {/* モビリティ管理画面: サイトオーナー or 組織 admin のみ。

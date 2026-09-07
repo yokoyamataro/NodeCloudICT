@@ -4,6 +4,7 @@ import {
   Map,
   GitBranch,
   Settings,
+  FolderOpen,
   ChevronDown,
   ChevronRight,
   FileSearch,
@@ -142,6 +143,7 @@ const navigation: NavGroup[] = [
       { name: '線形登録', href: '/open-channel/alignment', icon: Square },
     ],
   },
+  { name: 'ファイル', href: '/files', icon: FolderOpen },
   { name: '設定', href: '/settings', icon: Settings },
 ]
 
