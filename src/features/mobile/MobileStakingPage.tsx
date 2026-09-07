@@ -6298,17 +6298,6 @@ export function MobileStakingPage() {
               >
                 新規（2点）
               </button>
-              {/* 中間点から 作る 方は 1 タップで 済むので 独立した ボタンに する。
-                  「新規（2点）」の 中に 埋もれていて 気づけなかった */}
-              {channelOverlay.stations.length > 0 && (
-                <button
-                  onClick={startNewSection}
-                  className="px-2 py-0.5 text-[11px] bg-indigo-700 text-white rounded hover:bg-indigo-600"
-                  title="路線の中間点を選ぶと、中心線に直交する断面に誘導します"
-                >
-                  中間点から
-                </button>
-              )}
               {sectionPickingMode && (
                 <span className="text-cyan-700">
                   座標から{sectionPickIds.length === 0 ? '1点目' : '2点目'}を選択…
@@ -6368,20 +6357,57 @@ export function MobileStakingPage() {
                 />
                 <span>m</span>
               </label>
-              {/* 断面は 中間点を 送るたび 増える ので、ボタンを 並べず 選択式に する */}
-              {sections.length > 0 && (
+              {/* 路線の 中間点を 最初から 全部 並べる。選べば その場で
+                  直交断面を 作って 誘導に 入る (作ってから 選ぶ 手順を 無くす)。
+                  2 点から 作った 断面も 同じ ここから 選ぶ */}
+              {(channelOverlay.stations.length > 0 || sections.length > 0) && (
                 <select
-                  value={activeSectionId ?? ''}
-                  onChange={(e) => setActiveSectionId(e.target.value || null)}
-                  className="px-1 py-0.5 text-[11px] border rounded bg-white max-w-[10rem]"
-                  title="表示する断面"
+                  value={
+                    activeSection?.station
+                      ? `st:${activeSection.station.stationId}`
+                      : activeSection
+                        ? `sec:${activeSection.id}`
+                        : ''
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (!v) {
+                      setActiveSectionId(null)
+                      return
+                    }
+                    if (v.startsWith('st:')) {
+                      const st = channelOverlay.stations.find(
+                        (x) => x.stationId === v.slice(3),
+                      )
+                      if (st) createSectionFromStation(st)
+                      return
+                    }
+                    setActiveSectionId(v.slice(4))
+                  }}
+                  className="px-1 py-0.5 text-[11px] border rounded bg-white max-w-[11rem]"
+                  title="表示する断面 (路線の中間点 / 2点から作った断面)"
                 >
                   <option value="">(選択なし)</option>
-                  {sections.map((sec) => (
-                    <option key={sec.id} value={sec.id}>
-                      {sec.name}
-                    </option>
-                  ))}
+                  {channelOverlay.stations.length > 0 && (
+                    <optgroup label="路線の中間点">
+                      {channelOverlay.stations.map((st) => (
+                        <option key={st.key} value={`st:${st.stationId}`}>
+                          {st.label || '(名称なし)'} — {st.channelName}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {sections.some((sec) => !sec.station) && (
+                    <optgroup label="2点から作った断面">
+                      {sections
+                        .filter((sec) => !sec.station)
+                        .map((sec) => (
+                          <option key={sec.id} value={`sec:${sec.id}`}>
+                            {sec.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                  )}
                 </select>
               )}
               {sections.length > 0 && (
@@ -7805,39 +7831,6 @@ export function MobileStakingPage() {
               >
                 <X className="h-4 w-4" />
               </button>
-            </div>
-            {/* 路線の 中間点から 作る。中心線に 直交する 断面が 1 タップで できる。
-                座標 2 点を 選ぶ より 早く、断面の 向きも 路線に 対して 正確に なる */}
-            {channelOverlay.stations.length > 0 && (
-              <div className="mb-3">
-                <div className="text-[11px] font-semibold text-slate-600 mb-1">
-                  路線の中間点から作る
-                </div>
-                <div className="border rounded divide-y max-h-40 overflow-auto">
-                  {channelOverlay.stations.map((st) => (
-                    <button
-                      key={st.key}
-                      type="button"
-                      onClick={() => createSectionFromStation(st)}
-                      className="w-full text-left p-2 hover:bg-indigo-50 flex items-baseline gap-2"
-                    >
-                      <span className="text-sm font-medium text-indigo-700 truncate">
-                        {st.label || '(名称なし)'}
-                      </span>
-                      <span className="text-[11px] text-slate-500 truncate">
-                        {st.channelName}
-                      </span>
-                      <span className="ml-auto text-[10px] text-slate-400 shrink-0">
-                        中心線に直交
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="text-[11px] font-semibold text-slate-600 mb-1">
-              座標 2 点から作る
             </div>
             <div className="text-[11px] text-slate-500 mb-2">
               {sectionPickIds.length === 0 ? '1 点目を選んでください' : '2 点目を選んでください'}
