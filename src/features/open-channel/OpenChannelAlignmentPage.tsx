@@ -47,6 +47,8 @@ import {
   buildCrossSectionPath,
   elementStep,
 } from '@/stores/openChannelStore'
+import { useStakingStore } from '@/stores/stakingStore'
+import { fetchSurveySlide, NO_SLIDE, type SurveySlide } from '@/lib/surveyCalibration'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
   sampleAlignment,
@@ -2764,6 +2766,161 @@ function DxfTraceModal({
 
 
 /**
+ * 現況取込 (実測記録) の サイドバー セクション。
+ *
+ * 測設記録 (staking_records) の 実測点を 逆スライド (実測 − スライド量) して
+ * から 中心線に 投影し、各測点の 現況横断 (currentSection) に 入れる。
+ *
+ * 逆スライドを かける のは、実測は GPS の 系統差を 含んだ ままで、設計の
+ * 土俵に 乗せない と 断面図で 設計線と 比べられない ため。スライド量は
+ * 測設記録の 画面で 工区ごとに 入れて ある もの を そのまま 使う。
+ */
+function StakingCurrentImportSection({
+  farmId,
+  stations,
+  segments,
+  sideOrientation,
+  onImported,
+}: {
+  farmId: string | null
+  stations: StationRow[]
+  segments: AlignmentSegment[]
+  sideOrientation: SideOrientation
+  onImported: (nextStations: StationRow[]) => void
+}) {
+  const records = useStakingStore((st) => st.records)
+  const fetchRecords = useStakingStore((st) => st.fetchRecords)
+  const [slide, setSlide] = useState<SurveySlide>(NO_SLIDE)
+  const [useSlide, setUseSlide] = useState(true)
+  /** 中心線 沿い に この 範囲内 の 記録だけ 対象に する [m] */
+  const [alongTolM, setAlongTolM] = useState(1)
+  const [halfWidth, setHalfWidth] = useState(10)
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!farmId) return
+    void fetchRecords(farmId)
+    void fetchSurveySlide(farmId).then(setSlide)
+  }, [farmId, fetchRecords])
+
+  const targetRecords = records.filter((r) => r.farmId === farmId && r.measuredZ != null)
+
+  const handleImport = () => {
+    if (!farmId || stations.length === 0) return
+    setBusy(true)
+    setStatus(null)
+    try {
+      const sign = sideOrientation === 'reverse' ? -1 : 1
+      let hit = 0
+      let used = 0
+      const next = stations.map((st) => {
+        const center = pointAtDistance(segments, st.distance)
+        const tangent = tangentAtDistance(segments, st.distance)
+        if (!center || !tangent) return st
+        const perpX = -tangent.y * sign
+        const perpY = tangent.x * sign
+        const pts: MeasuredCrossPoint[] = []
+        for (const r of targetRecords) {
+          if (r.measuredZ == null) continue
+          // 逆スライド: 実測 − スライド量 で 設計の 土俵に 乗せる
+          const x = useSlide ? r.measuredX - slide.dx : r.measuredX
+          const y = useSlide ? r.measuredY - slide.dy : r.measuredY
+          const z = useSlide ? r.measuredZ - slide.dz : r.measuredZ
+          const dx = x - center.x
+          const dy = y - center.y
+          // 中心線 沿い の ずれ。断面から 外れて いる 記録は 拾わない
+          const along = dx * tangent.x + dy * tangent.y
+          if (Math.abs(along) > alongTolM) continue
+          const offset = dx * perpX + dy * perpY
+          if (Math.abs(offset) > halfWidth) continue
+          pts.push({
+            id: `sr-${r.id}`,
+            offset: Math.round(offset * 1000) / 1000,
+            elevation: Math.round(z * 1000) / 1000,
+            note: r.targetName ?? undefined,
+          })
+        }
+        if (pts.length === 0) return st
+        hit++
+        used += pts.length
+        pts.sort((a, b) => a.offset - b.offset)
+        return { ...st, currentSection: pts }
+      })
+      onImported(next)
+      setStatus(
+        `完了: ${hit}/${stations.length} 測点 に ${used} 点 を 取込` +
+          (useSlide
+            ? ` (逆スライド dx=${slide.dx} dy=${slide.dy} dz=${slide.dz})`
+            : ' (スライド適用なし)'),
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="text-slate-500">
+        測設記録の 実測点を 中心線に 投影して 現況横断に 入れます。対象{' '}
+        <span className="font-mono">{targetRecords.length}</span> 点。
+      </div>
+      <label className="flex items-center gap-2">
+        <input type="checkbox" checked={useSlide} onChange={(e) => setUseSlide(e.target.checked)} />
+        <span>逆スライドを かける (実測 − スライド量)</span>
+      </label>
+      <div className="text-[11px] text-slate-500 pl-6">
+        スライド量 dx={slide.dx} / dy={slide.dy} / dz={slide.dz}
+        <span className="ml-1">(測設記録の画面で設定)</span>
+      </div>
+      <div className="flex items-center gap-3">
+        <label className="flex items-center gap-1">
+          <span className="text-slate-600">前後</span>
+          <input
+            type="number"
+            step={0.1}
+            min={0.1}
+            value={alongTolM}
+            onChange={(e) => {
+              const n = parseFloat(e.target.value)
+              if (Number.isFinite(n) && n > 0) setAlongTolM(n)
+            }}
+            className="w-16 px-1 py-0.5 border rounded text-right"
+            title="測点から中心線沿いに何mまでの記録を拾うか"
+          />
+          <span className="text-slate-500">m</span>
+        </label>
+        <label className="flex items-center gap-1">
+          <span className="text-slate-600">左右</span>
+          <input
+            type="number"
+            step={1}
+            min={1}
+            value={halfWidth}
+            onChange={(e) => {
+              const n = parseFloat(e.target.value)
+              if (Number.isFinite(n) && n > 0) setHalfWidth(n)
+            }}
+            className="w-16 px-1 py-0.5 border rounded text-right"
+            title="中心から何mまでの記録を拾うか"
+          />
+          <span className="text-slate-500">m</span>
+        </label>
+      </div>
+      <button
+        type="button"
+        onClick={handleImport}
+        disabled={busy || !farmId || stations.length === 0 || targetRecords.length === 0}
+        className="px-3 py-1.5 bg-cyan-700 text-white rounded hover:bg-cyan-600 disabled:opacity-50"
+      >
+        {busy ? '取込中…' : '全測点の現況を実測記録から取込'}
+      </button>
+      {status && <div className="text-[11px] text-emerald-700">{status}</div>}
+    </div>
+  )
+}
+
+/**
  * 現況取込 (LandXML) の サイドバー セクション。
  * 工区共有 の LandXML (kind='ground') を Storage から fetch し、
  * TIN から 各測点 の 現況横断 (currentSection) + 現況地盤高
@@ -4912,6 +5069,17 @@ export function OpenChannelAlignmentPage() {
               {/* 現況取込 (LandXML): 工区共有 の LandXML (kind='ground') の TIN から
                   各測点 の 現況横断 (currentSection) + 現況地盤高 (currentGroundHeight)
                   を 一括 サンプリング する。 */}
+              {/* 現況取込 (実測記録): 測設記録の 実測点を 逆スライドして 現況横断に 入れる */}
+              <CollapsibleSection title="現況取込 (実測記録)" storageKey="oc:section:staking">
+                <StakingCurrentImportSection
+                  farmId={farmId ?? null}
+                  stations={stations}
+                  segments={segments}
+                  sideOrientation={selected?.sideOrientation ?? 'forward'}
+                  onImported={(next) => setStations(next)}
+                />
+              </CollapsibleSection>
+
               <CollapsibleSection title="現況取込 (LandXML)" storageKey="oc:section:landxml">
                 <LandxmlCurrentImportSection
                   farmId={farmId ?? null}
