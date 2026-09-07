@@ -3,6 +3,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, Pane, Popup, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+// leaflet-rotate は L.Map に rotate / setBearing を 生やす 副作用 import。
+// 断面を 選んだ とき、地図を 横断方向に 向ける ために 使う
+import 'leaflet-rotate'
 import {
   ArrowLeft,
   ArrowUp,
@@ -161,6 +164,11 @@ interface StakingTarget {
   subTypeLabel: string
   /** 設置状態（coordinate のみ。pipe_vertex は 'unset' 相当） */
   stakeStatus: StakeStatus
+}
+
+/** ± を 付けた メートル表記。断面の 離れ / 中心からの 離れ に 使う */
+function signedMeters(v: number): string {
+  return `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(3)} m`
 }
 
 // Haversine 距離（m）
@@ -404,6 +412,17 @@ function PointPhotoThumb({
       )}
     </button>
   )
+}
+
+// mapBearingDeg を map.setBearing に 反映させる 不可視 コントローラ。
+// leaflet-rotate が 読まれていれば setBearing が 生えている。
+function BearingController({ bearingDeg }: { bearingDeg: number }) {
+  const map = useMap()
+  useEffect(() => {
+    const rot = map as unknown as { setBearing?: (deg: number) => void }
+    if (typeof rot.setBearing === 'function') rot.setBearing(bearingDeg)
+  }, [map, bearingDeg])
+  return null
 }
 
 // 地図インスタンスを 親の ref に 渡す。
@@ -911,6 +930,14 @@ export function MobileStakingPage() {
   // 一番古いもの（= 直近に追加されていない方）を外す。
   // 2d と pipe は同時に有効化できない (同じ下段パネル領域)
   const toggleViewMode = (mode: ViewMode) => {
+    // 断面は 上に 地図、下に 断面図 の 2 段で 使う ものなので、
+    // 単独に せず 必ず 地図と 組で 入れる
+    if (mode === '2d') {
+      setViewModes((prev) =>
+        prev.has('2d') ? new Set<ViewMode>(['map']) : new Set<ViewMode>(['map', '2d']),
+      )
+      return
+    }
     setViewModes((prev) => {
       const next = new Set(prev)
       if (next.has(mode)) {
@@ -918,8 +945,8 @@ export function MobileStakingPage() {
         next.delete(mode)
         return next
       }
-      // 2d / pipe の排他
-      if (mode === '2d' && next.has('pipe')) next.delete('pipe')
+      // 断面 (2d) は 上で 別扱い。ここに 来る のは map / 3d / pipe だけ。
+      // 暗渠配管は 断面と 同じ 下段を 使う ので 排他に する
       if (mode === 'pipe' && next.has('2d')) next.delete('2d')
       if (next.size >= 2) {
         // 1 つ外す: 任意のひとつ（先に入っていた方）を落とす
@@ -2763,6 +2790,42 @@ export function MobileStakingPage() {
     }
   }, [activeSectionLine, currentXY, converter])
 
+  /**
+   * 断面を 選んでいる 間、地図を 横断方向に 向ける ための bearing [deg]。
+   * 断面線が 画面の 左右に なる = 路線の 進行方向が 画面の 上に 来る。
+   * 線形物ページの 横断ビューと 同じ 考え方。
+   *   世界座標は x=北 / y=東。断面線 a→b の 直交 (= 路線方向) を 上に する。
+   *   leaflet-rotate の setBearing は 反時計回りが 正なので 符号を 反転する。
+   * 断面が 無い / 断面モードでない ときは 0 (北が 上) に 戻す。
+   */
+  const mapBearingDeg = useMemo(() => {
+    if (!show2D || !activeSectionLine) return 0
+    const A = converter.toXY(activeSectionLine[0][0], activeSectionLine[0][1])
+    const B = converter.toXY(activeSectionLine[1][0], activeSectionLine[1][1])
+    const dx = B.x - A.x
+    const dy = B.y - A.y
+    if (Math.hypot(dx, dy) === 0) return 0
+    // 断面線に 直交する 向き (路線方向) を 画面上に
+    return -Math.atan2(dx, -dy) * (180 / Math.PI)
+  }, [show2D, activeSectionLine, converter])
+
+  /** いま 誘導中の 断面の 前後の 中間点。距離順に 並べて 隣を 取る */
+  const stationNav = useMemo(() => {
+    const meta = activeSection?.station
+    if (!meta) return null
+    const list = channelOverlay.stations
+      .filter((st) => st.channelId === meta.channelId)
+      .sort((a, b) => a.distance - b.distance)
+    const idx = list.findIndex((st) => st.stationId === meta.stationId)
+    if (idx < 0) return null
+    return {
+      prev: idx > 0 ? list[idx - 1] : null,
+      next: idx < list.length - 1 ? list[idx + 1] : null,
+      pos: idx + 1,
+      total: list.length,
+    }
+  }, [activeSection, channelOverlay])
+
   // 近接モードに 出す 比高 (自分の 地表高 − ターゲットの 設計高)。
   // 正 = 自分が 高い (掘る)、負 = 自分が 低い (盛る)。trenchDiff と 同じ 向き。
   const targetHeightDiff =
@@ -3890,14 +3953,14 @@ export function MobileStakingPage() {
             .map((m) => {
             const on = viewModes.has(m)
             const label =
-              m === 'map' ? 'MAP' : m === '3d' ? '3D' : m === '2d' ? '2D' : '暗渠配管'
+              m === 'map' ? 'MAP' : m === '3d' ? '3D' : m === '2d' ? '断面' : '暗渠配管'
             const title =
               m === 'map'
                 ? '地図 + ターゲット'
                 : m === '3d'
                   ? '3D（LANDXML）TIN + 比高'
                   : m === '2d'
-                    ? '2D 断面プロファイル (任意 2 点)'
+                    ? '断面: 上が地図、下が断面図。中間点を選ぶと横断方向に回る'
                     : '暗渠 配管の縦断図 (管路タップで表示)'
             return (
               <button
@@ -5358,15 +5421,12 @@ export function MobileStakingPage() {
                     : 'text-slate-800'
                 }
               >
-                {Math.abs(sectionRel.offset).toFixed(3)} m
+                {signedMeters(sectionRel.offset)}
               </span>
             </div>
             <div className="flex items-baseline gap-1">
               <span className="text-[10px] text-slate-500 font-sans w-8">幅</span>
-              <span className="text-slate-800">
-                {sectionRel.width >= 0 ? '+' : '−'}
-                {Math.abs(sectionRel.width).toFixed(3)} m
-              </span>
+              <span className="text-slate-800">{signedMeters(sectionRel.width)}</span>
             </div>
           </div>
         )}
@@ -5412,6 +5472,9 @@ export function MobileStakingPage() {
           center={mapCenter}
           zoom={17}
           maxZoom={24}
+          // leaflet-rotate の 有効化。rotate:true が 無いと setBearing が 効かない。
+          // 右上に 出る 回転コントロールは 自前ボタン列と 被るので 抑制する
+          {...({ rotate: true, bearing: 0, rotateControl: false } as Record<string, unknown>)}
           // 標準の ズームコントロールは 左上に 出て 自前ボタン列と 重なるので 止める。
           // 代わりの +/- は 上の ボタン列に 置いてある
           zoomControl={false}
@@ -5466,6 +5529,8 @@ export function MobileStakingPage() {
           ))}
           {/* 左上の 自前ボタン列から ズームを 触るため 地図インスタンスを 受け取る */}
           <MapRefBinder mapRef={mapRef} />
+          {/* 断面を 選んでいる 間は 地図を 横断方向に 向ける */}
+          <BearingController bearingDeg={mapBearingDeg} />
           <FitOnce bounds={allBounds} />
           {/* 追従は安定位置(stablePos)で行う。FIX が外れると stablePos が更新されないため
               地図は最後の良好位置で止まり、外側へ大きくスクロールしない */}
@@ -7199,6 +7264,56 @@ export function MobileStakingPage() {
                 )
               })()}
             </div>
+
+            {/* 断面モード: 断面線からの 離れ と 中心からの 離れ。
+                左右に 前後の 中間点への 切替を 置く。
+                符号は 断面線の 正の 向き (幅杭の offset と 同じ) に 合わせる ので、
+                絶対値では なく ± で 出す */}
+            {show2D && activeSection?.station && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => stationNav?.prev && createSectionFromStation(stationNav.prev)}
+                  disabled={!stationNav?.prev}
+                  className="shrink-0 px-2 py-1.5 rounded border border-slate-300 text-slate-600 hover:bg-slate-100 disabled:opacity-30"
+                  title="前の中間点"
+                  aria-label="前の中間点"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <div className="flex-1 min-w-0 flex items-center justify-center gap-3 font-mono text-sm">
+                  <span className="flex items-baseline gap-1">
+                    <span className="text-[10px] text-slate-500 font-sans">離れ</span>
+                    <span
+                      className={
+                        sectionRel && Math.abs(sectionRel.offset) <= 0.05
+                          ? 'font-bold text-emerald-700'
+                          : 'font-bold text-slate-800'
+                      }
+                    >
+                      {sectionRel ? signedMeters(sectionRel.offset) : '-'}
+                    </span>
+                  </span>
+                  <span className="flex items-baseline gap-1">
+                    <span className="text-[10px] text-slate-500 font-sans">中心</span>
+                    <span className="font-bold text-slate-800">
+                      {sectionRel ? signedMeters(sectionRel.width) : '-'}
+                    </span>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => stationNav?.next && createSectionFromStation(stationNav.next)}
+                  disabled={!stationNav?.next}
+                  className="shrink-0 px-2 py-1.5 rounded border border-slate-300 text-slate-600 hover:bg-slate-100 disabled:opacity-30"
+                  title="次の中間点"
+                  aria-label="次の中間点"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+
             {/* 2 行目: 測定 + 詳細ボタン */}
             <div className="flex items-center gap-2">
               {!recording && (() => {
