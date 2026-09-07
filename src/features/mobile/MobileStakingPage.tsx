@@ -1015,6 +1015,23 @@ export function MobileStakingPage() {
   useEffect(() => {
     try { localStorage.setItem('mobile:sectionTolM', String(sectionToleranceM)) } catch { /* ignore */ }
   }, [sectionToleranceM])
+  /**
+   * 中間点から 作る 断面の 半幅 [m] (中心からの 距離)。
+   * これまでは 幅杭の 一番外 + 2m で 自動に していたが、計画横断の ほうが
+   * 広い ときに 設計線が 切れて しまう ため、明示的に 持たせる。
+   */
+  const [sectionHalfWidthM, setSectionHalfWidthM] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('mobile:sectionHalfM')
+      const n = v ? parseFloat(v) : NaN
+      return Number.isFinite(n) && n > 0 ? n : 10
+    } catch {
+      return 10
+    }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('mobile:sectionHalfM', String(sectionHalfWidthM)) } catch { /* ignore */ }
+  }, [sectionHalfWidthM])
   const sectionPickingMode = sectionPickIds.length < 2 && activeSectionId === 'pending'
 
   /**
@@ -1022,12 +1039,8 @@ export function MobileStakingPage() {
    * 断面は 中心線に 直交し、中心点を 真ん中に した 線分。
    * 半幅は その 線形物の 幅杭で 一番 外の もの + 余裕、無ければ 10m。
    */
-  const createSectionFromStation = (st: ChannelStation) => {
-    const ch = openChannels.find((c) => c.id === st.channelId)
-    const maxOffset = ch
-      ? ch.widthStakes.reduce((m, w) => Math.max(m, Math.abs(w.offset)), 0)
-      : 0
-    const half = maxOffset > 0 ? maxOffset + 2 : 10
+  const createSectionFromStation = (st: ChannelStation, halfOverride?: number) => {
+    const half = halfOverride ?? sectionHalfWidthM
     const a = converter.toLatLng(st.x - st.nx * half, st.y - st.ny * half)
     const b = converter.toLatLng(st.x + st.nx * half, st.y + st.ny * half)
     const id = `sec-st-${st.stationId}`
@@ -6280,6 +6293,34 @@ export function MobileStakingPage() {
                   }}
                   className="w-12 px-1 py-0.5 text-[11px] border rounded text-right"
                   title="断面から左右何mまでの現況点を断面上に表示するか"
+                />
+                <span>m</span>
+              </label>
+              {/* 中間点から 作る 断面の 半幅。ここを 超える 点は 断面図に 出ない。
+                  計画横断が 幅杭より 外まで 伸びる 断面でも 切れないよう、
+                  幅杭からの 自動計算では なく 明示的に 決める */}
+              <label className="flex items-center gap-1 text-slate-600">
+                <span>中心±</span>
+                <input
+                  type="number"
+                  step={1}
+                  min={1}
+                  value={sectionHalfWidthM}
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value)
+                    if (!Number.isFinite(n) || n <= 0) return
+                    setSectionHalfWidthM(n)
+                    // 表示中の 断面は その場で 引き直す (作り直さないと 幅が 変わらない)
+                    const meta = activeSection?.station
+                    if (meta) {
+                      const st = channelOverlay.stations.find(
+                        (x) => x.stationId === meta.stationId,
+                      )
+                      if (st) createSectionFromStation(st, n)
+                    }
+                  }}
+                  className="w-12 px-1 py-0.5 text-[11px] border rounded text-right"
+                  title="中間点から作る断面の半幅 (中心からの距離)。これを超える点は断面図に出ません"
                 />
                 <span>m</span>
               </label>
