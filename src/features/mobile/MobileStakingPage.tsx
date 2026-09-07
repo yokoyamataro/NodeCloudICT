@@ -2323,6 +2323,42 @@ export function MobileStakingPage() {
     ]
   }, [activeSection, converter])
 
+  /** いま 誘導中の 断面 (中間点由来) の 計画横断の 頂点 */
+  const activeStationVertices = useMemo(() => {
+    const meta = activeSection?.station
+    if (!meta) return []
+    const ch = openChannels.find((c) => c.id === meta.channelId)
+    if (!ch) return []
+    const st = ch.stations.find((x) => x.id === meta.stationId)
+    if (!st) return []
+    // 線形の 頂点を 座標テーブルから 解決して 区間を 作る
+    const verts = []
+    const total = ch.alignmentPoints.length
+    for (let i = 0; i < total; i++) {
+      const ap = ch.alignmentPoints[i]
+      const c = (coordinates as CoordinateRow[]).find((cc) => cc.id === ap.coordId)
+      if (!c) continue
+      verts.push({
+        x: c.x,
+        y: c.y,
+        kind: (total <= 1 || i === 0 ? 'bp' : i === total - 1 ? 'ep' : 'ip') as 'bp' | 'ip' | 'ep',
+        radius: ap.radius,
+        spiralAIn: ap.spiralAIn,
+        spiralAOut: ap.spiralAOut,
+      })
+    }
+    if (verts.length < 2) return []
+    const segments = buildSegments(verts)
+    const vertices = computeStationVertices(
+      st,
+      ch.standardCrossSection,
+      ch.profilePoints,
+      segments,
+      ch.sideOrientation,
+    )
+    return vertices
+  }, [activeSection, openChannels, coordinates])
+
   // 断面プロファイル: TIN サンプル + 現況点（記録の射影）
   const sectionProfile = useMemo(() => {
     if (!activeSection) return null
@@ -2367,8 +2403,20 @@ export function MobileStakingPage() {
       if (dist > sectionToleranceM) continue // 断面線から ±sectionToleranceM 以内のみ
       recPts.push({ d: t * len, z: r.measuredZ, name: r.targetName ?? '' })
     }
-    return { length: len, tinPts, recPts }
-  }, [activeSection, converter, trenchIdx, records, sectionToleranceM])
+    // 中間点から 作った 断面は、床掘 TIN も 実測記録も 無い ことが 多い。
+    // 計画横断 (中心からの offset と 高さ) を 重ねないと 中身が 空に なり、
+    // どの 測点を 見ているのか 分からない
+    const planPts: { d: number; z: number; label: string }[] = []
+    if (activeSection.station) {
+      for (const v of activeStationVertices) {
+        // 断面線は 中心を 真ん中に して 引いてある ので、
+        // 中心からの offset を 線上の 距離に 直す
+        planPts.push({ d: len / 2 + v.offset, z: v.z, label: v.label })
+      }
+      planPts.sort((a, b) => a.d - b.d)
+    }
+    return { length: len, tinPts, recPts, planPts }
+  }, [activeSection, activeStationVertices, converter, trenchIdx, records, sectionToleranceM])
 
   // 線形物 (中心線 / 幅杭 / 線形点 / 中間点)。全体図と 同じ 変換・同じ 見た目・
   // 同じ 出し分けに なるよう 共有の 部品を 使う。
@@ -2384,40 +2432,18 @@ export function MobileStakingPage() {
    * 点が 増えすぎて 現場で 選べなく なるため。
    * 横断測量・計画横断点の 設置は この 点列を 目標に 進める。
    */
+
+  /**
+   * いま 誘導の 対象に している 中間点の 計画横断点。
+   * 断面 (中間点由来) を 選んでいる 間だけ 出す。全中間点ぶん 出すと
+   * 点が 増えすぎて 現場で 選べなく なるため。
+   * 横断測量・計画横断点の 設置は この 点列を 目標に 進める。
+   */
   const plannedCrossTargets = useMemo<StakingTarget[]>(() => {
     const meta = activeSection?.station
     if (!meta) return []
-    const ch = openChannels.find((c) => c.id === meta.channelId)
-    if (!ch) return []
-    const st = ch.stations.find((x) => x.id === meta.stationId)
-    if (!st) return []
-    // 線形の 頂点を 座標テーブルから 解決して 区間を 作る
-    const verts = []
-    const total = ch.alignmentPoints.length
-    for (let i = 0; i < total; i++) {
-      const ap = ch.alignmentPoints[i]
-      const c = (coordinates as CoordinateRow[]).find((cc) => cc.id === ap.coordId)
-      if (!c) continue
-      verts.push({
-        x: c.x,
-        y: c.y,
-        kind: (total <= 1 || i === 0 ? 'bp' : i === total - 1 ? 'ep' : 'ip') as 'bp' | 'ip' | 'ep',
-        radius: ap.radius,
-        spiralAIn: ap.spiralAIn,
-        spiralAOut: ap.spiralAOut,
-      })
-    }
-    if (verts.length < 2) return []
-    const segments = buildSegments(verts)
-    const vertices = computeStationVertices(
-      st,
-      ch.standardCrossSection,
-      ch.profilePoints,
-      segments,
-      ch.sideOrientation,
-    )
     const out: StakingTarget[] = []
-    for (const v of vertices) {
+    for (const v of activeStationVertices) {
       // 中心 (CL) は 中間点そのもの と 同じ 位置なので 重ねない
       if (v.side === 'center') continue
       try {
@@ -2444,7 +2470,7 @@ export function MobileStakingPage() {
       }
     }
     return out
-  }, [activeSection, openChannels, coordinates, converter])
+  }, [activeSection, activeStationVertices, converter])
 
   // ターゲット一覧（座標管理 + 暗渠頂点 + 線形物の 中間点 + 計画横断点）
   const targets = useMemo<StakingTarget[]>(() => {
@@ -8043,6 +8069,8 @@ function ActiveSectionChart({
     length: number
     tinPts: { d: number; z: number | null }[]
     recPts: { d: number; z: number; name: string }[]
+    /** 計画横断 (中間点から 作った 断面のみ)。中心を 挟んで 左右に 並ぶ */
+    planPts: { d: number; z: number; label: string }[]
   }
 }) {
   const W = 600
@@ -8053,6 +8081,7 @@ function ActiveSectionChart({
   let zMin = Infinity, zMax = -Infinity
   for (const p of profile.tinPts) if (p.z != null) { if (p.z < zMin) zMin = p.z; if (p.z > zMax) zMax = p.z }
   for (const p of profile.recPts) { if (p.z < zMin) zMin = p.z; if (p.z > zMax) zMax = p.z }
+  for (const p of profile.planPts) { if (p.z < zMin) zMin = p.z; if (p.z > zMax) zMax = p.z }
   if (!Number.isFinite(zMin) || !Number.isFinite(zMax)) { zMin = 0; zMax = 1 }
   if (zMax - zMin < 0.5) { const m = (zMin + zMax) / 2; zMin = m - 0.25; zMax = m + 0.25 }
   const xOf = (d: number) => padL + (d / profile.length) * PW
@@ -8087,6 +8116,40 @@ function ActiveSectionChart({
           <text x={padL + PW} y={H - 6} fontSize={8} textAnchor="end" fill="#64748b">{profile.length.toFixed(1)} m</text>
           <text x={padL + PW / 2} y={H - 6} fontSize={8} textAnchor="middle" fill="#64748b">距離</text>
           {path && <path d={path} fill="none" stroke="#0891b2" strokeWidth={1.5} />}
+          {/* 計画横断 (中間点の 断面)。床掘 TIN も 記録も 無い 段階で
+              「どの 測点を 見ているか」が 分かる 唯一の 手がかりに なる */}
+          {profile.planPts.length >= 2 && (
+            <path
+              d={profile.planPts
+                .map((p, i) => `${i === 0 ? 'M' : 'L'}${xOf(p.d).toFixed(1)},${yOf(p.z).toFixed(1)}`)
+                .join(' ')}
+              fill="none"
+              stroke="#7c3aed"
+              strokeWidth={1.8}
+            />
+          )}
+          {profile.planPts.map((p, i) => (
+            <g key={`plan-${i}`}>
+              <circle cx={xOf(p.d)} cy={yOf(p.z)} r={2.5} fill="#7c3aed" stroke="#fff" strokeWidth={0.8} />
+              {p.label && (
+                <text x={xOf(p.d)} y={yOf(p.z) - 5} fontSize={7} textAnchor="middle" fill="#5b21b6">
+                  {p.label}
+                </text>
+              )}
+            </g>
+          ))}
+          {/* 中心線 (offset 0) の 位置。左右の 振り分けの 基準 */}
+          {profile.planPts.length > 0 && (
+            <line
+              x1={xOf(profile.length / 2)}
+              y1={padT}
+              x2={xOf(profile.length / 2)}
+              y2={padT + PH}
+              stroke="#7c3aed"
+              strokeWidth={0.6}
+              strokeDasharray="3,3"
+            />
+          )}
           {profile.recPts.map((p, i) => (
             <g key={i}>
               <circle cx={xOf(p.d)} cy={yOf(p.z)} r={3} fill="#f97316" stroke="#fff" strokeWidth={1} />
