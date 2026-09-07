@@ -1014,7 +1014,8 @@ export function MobileStakingPage() {
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
   /** 断面作成中に選択した座標 id（最大 2 件）。座標管理に登録された点から 2 点を選ぶ。 */
   const [sectionPickIds, setSectionPickIds] = useState<string[]>([])
-  const [sectionDirection, setSectionDirection] = useState<'along' | 'perp'>('along')
+  // 断面は 常に 「2 点を 結ぶ 線上」。垂直二等分線 (perp) は 使わないので
+  // 選択肢ごと 廃止した
   /** 断面から左右何 m 以内の現況点を断面チャートに重ねるか（既定 0.5m） */
   const [sectionToleranceM, setSectionToleranceM] = useState<number>(() => {
     try {
@@ -6280,18 +6281,9 @@ export function MobileStakingPage() {
               showMap || show3D ? 'h-[50%] bottom-0' : 'top-0 bottom-0'
             }`}
           >
-            {/* ヘッダー: 方向・新規・断面一覧・全消去・閉じる */}
+            {/* ヘッダー: 新規・断面一覧・全消去・閉じる */}
             <div className="flex items-center flex-wrap gap-1 px-2 py-1 border-b bg-cyan-50 text-[11px]">
               <span className="font-semibold text-cyan-800 mr-1">断面</span>
-              <select
-                value={sectionDirection}
-                onChange={(e) => setSectionDirection(e.target.value as 'along' | 'perp')}
-                className="px-1 py-0.5 text-[11px] border rounded bg-white"
-                title="2点を結ぶ線上 / 直角方向"
-              >
-                <option value="along">線上</option>
-                <option value="perp">直角</option>
-              </select>
               <button
                 onClick={startNewSection}
                 className="px-2 py-0.5 text-[11px] bg-cyan-700 text-white rounded hover:bg-cyan-600"
@@ -6438,7 +6430,6 @@ export function MobileStakingPage() {
                   // 残らないよう 明示的に 別物として 扱う
                   key={activeSection.id}
                   name={activeSection.name}
-                  direction={activeSection.direction}
                   profile={sectionProfile}
                   // 中間点の 断面は 中心を 0 に した 左右で 読む
                   centered={activeSection.station != null}
@@ -7834,7 +7825,7 @@ export function MobileStakingPage() {
             </div>
             <div className="text-[11px] text-slate-500 mb-2">
               {sectionPickIds.length === 0 ? '1 点目を選んでください' : '2 点目を選んでください'}
-              ・方向: {sectionDirection === 'along' ? '線上' : '直角'}
+
             </div>
             <div className="flex-1 overflow-auto border rounded divide-y">
               {(() => {
@@ -7880,7 +7871,7 @@ export function MobileStakingPage() {
                           name: name.trim() || suggested,
                           a: [a.lat, a.lng],
                           b: [b.lat, b.lng],
-                          direction: sectionDirection,
+                          direction: 'along',
                         }
                         setSections((prev) => [...prev, s])
                         setActiveSectionId(id)
@@ -8253,14 +8244,12 @@ export function MobileStakingPage() {
 // 断面プロファイルチャート（断面パネル内で使用）
 function ActiveSectionChart({
   name,
-  direction,
   profile,
   centered = false,
   showLabels = true,
   self = null,
 }: {
   name: string
-  direction: 'along' | 'perp'
   /** 中間点の 断面。横軸を 中心 0 の ± で 読む */
   centered?: boolean
   /** 点名 (計画横断の 頂点名 / 実測点の 点名) を 出すか */
@@ -8339,8 +8328,7 @@ function ActiveSectionChart({
       <div className="px-2 py-1 text-[13px] text-slate-600 border-b flex items-center gap-2">
         <span className="font-semibold text-slate-800 truncate">{name}</span>
         <span className="truncate">
-          {direction === 'along' ? '線上' : '直角'} / 距離 {profile.length.toFixed(2)} m / 記録{' '}
-          {profile.recPts.length} 点
+          幅 {profile.length.toFixed(2)} m / 記録 {profile.recPts.length} 点
         </span>
         {/* 拡大すると 画面に 収まらなく なる ので、下の 枠を 縦横に スクロールして 見る */}
         <div className="ml-auto flex items-center gap-1 shrink-0">
