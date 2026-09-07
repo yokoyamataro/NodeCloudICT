@@ -1147,6 +1147,17 @@ export function MobileStakingPage() {
     })
   }
 
+  // 断面図に 点名を 出すか (既定 ON)。点が 密な 断面では 文字が 重なって
+  // 読めなく なる ので 消せるように する
+  const [showSectionLabels, setShowSectionLabels] = useState<boolean>(() => {
+    try { return localStorage.getItem('mobile:staking:sectionLabels') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('mobile:staking:sectionLabels', showSectionLabels ? '1' : '0')
+    } catch { /* ignore */ }
+  }, [showSectionLabels])
+
   // 線形物の 表示 (既定 ON)
   const [showChannels, setShowChannels] = useState<boolean>(() => {
     try { return localStorage.getItem('mobile:staking:showChannels') !== '0' } catch { return true }
@@ -5236,6 +5247,17 @@ export function MobileStakingPage() {
           <div className="pt-2 mt-1 border-t text-[11px] font-semibold text-slate-500">
             絞り込み・表示
           </div>
+          {/* 断面図の 点名 (計画横断の 頂点名 / 実測点の 点名) */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showSectionLabels}
+              onChange={() => setShowSectionLabels((v) => !v)}
+              className="h-4 w-4"
+            />
+            <span>断面図の点名</span>
+          </label>
+
           {/* コンパス */}
           <label
             className="flex items-center gap-2 cursor-pointer"
@@ -6379,6 +6401,7 @@ export function MobileStakingPage() {
                   profile={sectionProfile}
                   // 中間点の 断面は 中心を 0 に した 左右で 読む
                   centered={activeSection.station != null}
+                  showLabels={showSectionLabels}
                   // 計測中の 自己位置。断面線に 乗っている ときだけ 出す
                   // (離れが 大きいと 断面上の 点として 意味を 持たない)
                   self={
@@ -8225,12 +8248,15 @@ function ActiveSectionChart({
   direction,
   profile,
   centered = false,
+  showLabels = true,
   self = null,
 }: {
   name: string
   direction: 'along' | 'perp'
   /** 中間点の 断面。横軸を 中心 0 の ± で 読む */
   centered?: boolean
+  /** 点名 (計画横断の 頂点名 / 実測点の 点名) を 出すか */
+  showLabels?: boolean
   /** 計測中の 自己位置。d = 線上の 位置、z = 地表高、offMeters = 断面線からの 離れ */
   self?: { d: number; z: number; offMeters: number } | null
   profile: {
@@ -8453,7 +8479,7 @@ function ActiveSectionChart({
           {profile.planPts.map((p, i) => (
             <g key={`plan-${i}`}>
               <circle cx={xOf(p.d)} cy={yOf(p.z)} r={2.5} fill="#7c3aed" stroke="#fff" strokeWidth={0.8} />
-              {p.label && (
+              {showLabels && p.label && (
                 <text x={xOf(p.d)} y={yOf(p.z) - 10} fontSize={22} textAnchor="middle" fill="#5b21b6">
                   {p.label}
                 </text>
@@ -8493,7 +8519,9 @@ function ActiveSectionChart({
           {profile.recPts.map((p, i) => (
             <g key={i}>
               <circle cx={xOf(p.d)} cy={yOf(p.z)} r={3} fill="#f97316" stroke="#fff" strokeWidth={1} />
-              <text x={xOf(p.d) + 8} y={yOf(p.z) - 8} fontSize={22} fill="#9a3412">{p.name}</text>
+              {showLabels && (
+                <text x={xOf(p.d) + 8} y={yOf(p.z) - 8} fontSize={22} fill="#9a3412">{p.name}</text>
+              )}
             </g>
           ))}
           </g>
