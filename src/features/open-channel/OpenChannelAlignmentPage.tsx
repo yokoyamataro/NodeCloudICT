@@ -2792,8 +2792,8 @@ function StakingCurrentImportSection({
   const fetchRecords = useStakingStore((st) => st.fetchRecords)
   const [slide, setSlide] = useState<SurveySlide>(NO_SLIDE)
   const [useSlide, setUseSlide] = useState(true)
-  /** 中心線 沿い に この 範囲内 の 記録だけ 対象に する [m] */
-  const [alongTolM, setAlongTolM] = useState(1)
+  /** 横断幅。中心線 沿い に この 範囲内 の 記録だけ 対象に する [m] */
+  const [alongTolM, setAlongTolM] = useState(0.5)
   const [halfWidth, setHalfWidth] = useState(10)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -2862,8 +2862,11 @@ function StakingCurrentImportSection({
   return (
     <div className="space-y-2 text-xs">
       <div className="text-slate-500">
-        測設記録の 実測点を 中心線に 投影して 現況横断に 入れます。対象{' '}
+        測設記録の 実測点を 中心線に 投影して 現況横断に 保存します。対象{' '}
         <span className="font-mono">{targetRecords.length}</span> 点。
+        <br />
+        断面図には 保存前でも 横断幅 以内の 実測点が 出ています。ここで 保存すると
+        その 内容が 測点に 残ります。
       </div>
       <label className="flex items-center gap-2">
         <input type="checkbox" checked={useSlide} onChange={(e) => setUseSlide(e.target.checked)} />
@@ -2875,7 +2878,7 @@ function StakingCurrentImportSection({
       </div>
       <div className="flex items-center gap-3">
         <label className="flex items-center gap-1">
-          <span className="text-slate-600">前後</span>
+          <span className="text-slate-600">横断幅</span>
           <input
             type="number"
             step={0.1}
@@ -2886,7 +2889,7 @@ function StakingCurrentImportSection({
               if (Number.isFinite(n) && n > 0) setAlongTolM(n)
             }}
             className="w-16 px-1 py-0.5 border rounded text-right"
-            title="測点から中心線沿いに何mまでの記録を拾うか"
+            title="中心線沿いに何mまでの記録をこの断面上の点として拾うか (横断幅)"
           />
           <span className="text-slate-500">m</span>
         </label>
@@ -3319,6 +3322,45 @@ export function OpenChannelAlignmentPage() {
   const [tableModalTarget, setTableModalTarget] = useState<SectionTarget | null>(null)
   // 地図から 現況/出来形/計画 点を 拾う モード。null で 通常
   const [mapCaptureTarget, setMapCaptureTarget] = useState<SectionTarget | null>(null)
+
+  /**
+   * 横断幅 [m]。中心線 沿い に この 範囲に 入る 実測記録を 「その 測点の
+   * 横断上の 点」と みなす。既定 0.5m (50cm)。
+   */
+  const [crossBandM, setCrossBandM] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('oc:crossBandM')
+      const n = v ? parseFloat(v) : NaN
+      return Number.isFinite(n) && n > 0 ? n : 0.5
+    } catch {
+      return 0.5
+    }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('oc:crossBandM', String(crossBandM)) } catch { /* ignore */ }
+  }, [crossBandM])
+  /** 横断上の 実測点を 出す ための 測設記録 */
+  const stakingRecords = useStakingStore((st) => st.records)
+  const fetchStakingRecords = useStakingStore((st) => st.fetchRecords)
+  useEffect(() => {
+    if (farmId) void fetchStakingRecords(farmId)
+  }, [farmId, fetchStakingRecords])
+
+  /** 実測記録に かける スライド量 (逆スライドで 設計の 土俵に 乗せる) */
+  const [surveySlide, setSurveySlide] = useState<SurveySlide>(NO_SLIDE)
+  useEffect(() => {
+    if (!farmId) {
+      setSurveySlide(NO_SLIDE)
+      return
+    }
+    let cancelled = false
+    void fetchSurveySlide(farmId).then((v) => {
+      if (!cancelled) setSurveySlide(v)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [farmId])
   // DXF トレースモーダル (校正 + トレース)。対象 station + target を 保持
   const [dxfTraceContext, setDxfTraceContext] = useState<
     | { stationId: string; target: SectionTarget }
@@ -3572,6 +3614,44 @@ export function OpenChannelAlignmentPage() {
 
   const stations: StationRow[] = selected?.stations ?? []
   const selectedStation = stations.find((s) => s.id === selectedStationId) ?? null
+
+  /**
+   * 選んでいる 測点の 横断上に ある 実測点。
+   * 中心線 沿い に 横断幅 (既定 50cm) 以内の 測設記録を 逆スライド して 拾う。
+   *
+   * 保存はしない (DB へ 書くのは 取込ボタン)。ここは 「いま その 断面の 上に
+   * 何が 測られて いるか」を 常に 見せる ための もの で、開いた だけで
+   * 勝手に 保存されると 手入力の 現況を 潰しかねない。
+   */
+  const autoCurrentSection = useMemo<MeasuredCrossPoint[]>(() => {
+    if (!selectedStation || !farmId) return []
+    const center = pointAtDistance(segments, selectedStation.distance)
+    const tangent = tangentAtDistance(segments, selectedStation.distance)
+    if (!center || !tangent) return []
+    const sign = selected?.sideOrientation === 'reverse' ? -1 : 1
+    const perpX = -tangent.y * sign
+    const perpY = tangent.x * sign
+    const out: MeasuredCrossPoint[] = []
+    for (const r of stakingRecords) {
+      if (r.farmId !== farmId || r.measuredZ == null) continue
+      // 逆スライド: 実測 − スライド量 で 設計の 土俵に 乗せる
+      const x = r.measuredX - surveySlide.dx
+      const y = r.measuredY - surveySlide.dy
+      const z = r.measuredZ - surveySlide.dz
+      const dx = x - center.x
+      const dy = y - center.y
+      // 中心線 沿い の ずれが 横断幅 に 収まる もの だけ
+      if (Math.abs(dx * tangent.x + dy * tangent.y) > crossBandM) continue
+      out.push({
+        id: `sr-${r.id}`,
+        offset: Math.round((dx * perpX + dy * perpY) * 1000) / 1000,
+        elevation: Math.round(z * 1000) / 1000,
+        note: r.targetName ?? undefined,
+      })
+    }
+    out.sort((a, b) => a.offset - b.offset)
+    return out
+  }, [selectedStation, farmId, segments, selected?.sideOrientation, stakingRecords, surveySlide, crossBandM])
 
   // 「横断を 切替中は 図面の 断面方向 (左右=画面 左右) が 水平に なる ように 地図を 回転」
   // する 用の bearing (度)。 CoordinateMap の mapBearingDeg (setBearing 経由) に 渡す。
@@ -5551,6 +5631,31 @@ export function OpenChannelAlignmentPage() {
                                   </span>
                                 </>
                               )}
+                              {/* 横断幅: 中心線 沿い に この 範囲の 実測記録を
+                                  「この 断面上の 点」と みなす。既定 50cm */}
+                              <label
+                                className="flex items-center gap-1 text-[10px] text-slate-500"
+                                title="中心線沿いにこの範囲内の実測記録を、この断面上の点として自動で拾います"
+                              >
+                                <span>横断幅</span>
+                                <input
+                                  type="number"
+                                  step={0.1}
+                                  min={0.05}
+                                  value={crossBandM}
+                                  onChange={(e) => {
+                                    const n = parseFloat(e.target.value)
+                                    if (Number.isFinite(n) && n > 0) setCrossBandM(n)
+                                  }}
+                                  className="w-14 px-1 py-0.5 border rounded text-right text-[11px]"
+                                />
+                                <span>m</span>
+                                {autoCurrentSection.length > 0 && (
+                                  <span className="text-cyan-700">
+                                    実測 {autoCurrentSection.length} 点
+                                  </span>
+                                )}
+                              </label>
                               {/* 編集対象 の 切替 (現況 / 計画 / 出来形)。
                                   計画 = 従来の Interactive エディタ、現況 = 地図拾い or 表モーダル、
                                   出来形 = プレースホルダ (次ステップ) */}
@@ -5719,7 +5824,15 @@ export function OpenChannelAlignmentPage() {
                                 onChange={applyChange}
                                 centerHeight={centerZ}
                                 currentGroundHeight={selectedStation?.currentGroundHeight ?? null}
-                                currentSection={selectedStation?.currentSection ?? null}
+                                // 保存済みが 無ければ、横断幅 以内の 実測点を
+                                // そのまま 出す (取込ボタンを 押さなくても 見える)
+                                currentSection={
+                                  selectedStation?.currentSection?.length
+                                    ? selectedStation.currentSection
+                                    : autoCurrentSection.length > 0
+                                      ? autoCurrentSection
+                                      : null
+                                }
                                 asbuiltSection={selectedStation?.asbuiltSection ?? null}
                                 onPrevStation={
                                   prevStation
