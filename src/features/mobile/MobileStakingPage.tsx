@@ -2949,6 +2949,8 @@ export function MobileStakingPage() {
   const audioCtxRef = useRef<AudioContext | null>(null)
   const soundFqRef = useRef<number | null>(null)
   const soundDistRef = useRef<number | null>(null)
+  /** 「ピピ」に 切り替わる 距離 [m]。断面モードは 詰める */
+  const soundNearRef = useRef<number>(1.0)
   const prevFixRef = useRef<boolean>(false)
   // 最新の Fix品質・ターゲット距離を ref に同期
   useEffect(() => {
@@ -2956,7 +2958,9 @@ export function MobileStakingPage() {
   }, [currentFixQuality])
   useEffect(() => {
     soundDistRef.current = proximityRel?.dist ?? null
-  }, [proximityRel])
+    // 「ピピ」に なる 距離。断面モードは 50cm、それ以外は 1m
+    soundNearRef.current = show2D ? 0.5 : 1.0
+  }, [proximityRel, show2D])
 
   /** Fix 判定: RTK Fix (fixQuality=4) を 受信しているときのみ FIX 扱い
    *  (Float=5 は 除外。精度しきい値による 判定は 廃止) */
@@ -3019,9 +3023,12 @@ export function MobileStakingPage() {
       }
       if (!isCurrentlyFixed()) return
       const d = soundDistRef.current
+      // 断面モードは 断面線上の 決まった 位置に 追い込む 作業なので、
+      // 通常の 1m では 鳴りっぱなしに なる。50cm / 10cm に 詰める
+      const near = soundNearRef.current
       let count = 1
       if (d != null && d <= 0.1) count = 3
-      else if (d != null && d <= 1.0) count = 2
+      else if (d != null && d <= near) count = 2
       playBeeps(ctx, count)
     }, 1000)
     return () => window.clearInterval(id)
@@ -8238,9 +8245,8 @@ function ActiveSectionChart({
   const [zoom, setZoom] = useState(1)
   // 追従モード。自己位置を 断面図の 真ん中 (水平・高さ とも) に 置き続ける
   const [follow, setFollow] = useState(false)
-  // 指で 掴んで スクロール する ための 保持 (追従 OFF のとき だけ)
-  const scrollRef = useRef<HTMLDivElement | null>(null)
-  const dragRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null)
+  // スクロールは 持たない。断面図は 「追従」か 「固定倍率」の どちらかで、
+  // どちらも 枠に 収めて 描く (指での スクロールは 地図側に 取られて 効かない)
   const W = 600
   const H = 200
   // 文字を 2 倍に した ぶん 目盛の 余白も 広げる。
@@ -8263,12 +8269,18 @@ function ActiveSectionChart({
   //              地図の 追従と 同じで、動くと 目盛の 方が ずれていく
   //   追従 OFF … 全体を 出す。倍率は 下の 枠を 大きくして スクロールで 見る
   const following = follow && self != null
+  // 倍率は 「切り取る 範囲」に 効かせる。SVG は 常に 枠に 収める ので
+  // スクロールは 要らない。
+  //   追従 ON  … 自己位置を 真ん中に して 切り取る
+  //   追従 OFF … 断面の 中心を 真ん中に して 切り取る (倍率 1 で 全体)
   const xHalf = profile.length / 2 / zoom
   const zHalf = (zMax - zMin) / 2 / zoom
-  const x0 = following ? (self as { d: number }).d - xHalf : 0
-  const x1 = following ? (self as { d: number }).d + xHalf : profile.length
-  const z0 = following ? (self as { z: number }).z - zHalf : zMin
-  const z1 = following ? (self as { z: number }).z + zHalf : zMax
+  const xCenter = following ? (self as { d: number }).d : profile.length / 2
+  const zCenter = following ? (self as { z: number }).z : (zMin + zMax) / 2
+  const x0 = xCenter - xHalf
+  const x1 = xCenter + xHalf
+  const z0 = zCenter - zHalf
+  const z1 = zCenter + zHalf
   const xOf = (d: number) => padL + ((d - x0) / (x1 - x0)) * PW
   const yOf = (z: number) => padT + (1 - (z - z0) / (z1 - z0)) * PH
   let path = ''
@@ -8304,10 +8316,12 @@ function ActiveSectionChart({
             title={
               self == null
                 ? '断面線の近くに居ないため追従できません'
-                : '自己位置を断面図の中心に置き続ける'
+                : follow
+                  ? '自己位置を中心に追従中。押すと断面の中心に固定'
+                  : '自己位置を断面図の中心に置き続ける'
             }
           >
-            追従
+            {follow ? '追従' : '固定'}
           </button>
           <button
             type="button"
@@ -8330,49 +8344,13 @@ function ActiveSectionChart({
           </button>
         </div>
       </div>
-      {/* 追従中は 目盛の 方が 動く ので スクロールは 要らない。
-          追従 OFF のときは 指で 掴んで 動かせる ように する
-          (端末の 慣性スクロールだけ だと 地図側に 取られる ことが ある) */}
-      <div
-        ref={scrollRef}
-        className={following ? 'flex-1 overflow-hidden' : 'flex-1 overflow-auto'}
-        style={following ? undefined : { touchAction: 'none' }}
-        onPointerDown={(e) => {
-          if (following) return
-          const el = scrollRef.current
-          if (!el) return
-          dragRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop }
-          el.setPointerCapture(e.pointerId)
-        }}
-        onPointerMove={(e) => {
-          const d = dragRef.current
-          const el = scrollRef.current
-          if (!d || !el) return
-          el.scrollLeft = d.sl - (e.clientX - d.x)
-          el.scrollTop = d.st - (e.clientY - d.y)
-        }}
-        onPointerUp={(e) => {
-          dragRef.current = null
-          scrollRef.current?.releasePointerCapture(e.pointerId)
-        }}
-        onPointerCancel={() => {
-          dragRef.current = null
-        }}
-      >
+      {/* 断面図は 「追従」か 「固定倍率」の どちらかで、どちらも 枠に 収める。
+          倍率は 切り取る 範囲に 効くので スクロールは 持たない */}
+      <div className="flex-1 overflow-hidden">
         <svg
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="xMidYMid meet"
-          // 追従中は 枠に 収める (目盛が 動く)。それ以外は 内容を 大きく して スクロール
-          style={
-            following
-              ? { width: '100%', height: '100%' }
-              : {
-                  width: `${zoom * 100}%`,
-                  height: `${zoom * 100}%`,
-                  minWidth: '100%',
-                  minHeight: '100%',
-                }
-          }
+          style={{ width: '100%', height: '100%' }}
         >
           {/* 追従中は 目盛の 外に 出る 要素が ある ので 枠で 切る */}
           <defs>
