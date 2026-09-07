@@ -6121,7 +6121,10 @@ export function MobileStakingPage() {
               disableClicks={paintActive}
             />
           )}
-          {/* 描画レイヤ: モードが選ばれている間だけ描ける。オフでも既存ストロークは表示 */}
+          {/* 描画レイヤ: モードが選ばれている間だけ描ける。オフでも既存ストロークは表示。
+              断面モードは 地図が 回るが 作図は 画面座標で 当たり判定を している ため
+              位置が 合わない。描き込みだけで なく 描画済みも まとめて 隠す */}
+          {!show2D && (
           <MapDrawingLayer
             farmId={farm?.id ?? null}
             mode={drawingMode}
@@ -6139,6 +6142,7 @@ export function MobileStakingPage() {
             extraSnapPoints={extraSnapPoints}
             extraSegments={extraSegments}
           />
+          )}
         </MapContainer>
 
         {/* 2D（断面）パネル: MAP/3D と併用なら下半分、単独なら全画面 */}
