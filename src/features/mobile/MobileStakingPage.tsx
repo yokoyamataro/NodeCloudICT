@@ -8195,6 +8195,11 @@ function ActiveSectionChart({
 }) {
   // 拡大率。1 で 画面幅に 収まり、上げると 大きく なって スクロールで 見る
   const [zoom, setZoom] = useState(1)
+  // 追従モード。自己位置を 断面図の 真ん中 (水平・高さ とも) に 置き続ける
+  const [follow, setFollow] = useState(false)
+  // 指で 掴んで スクロール する ための 保持 (追従 OFF のとき だけ)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const dragRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null)
   const W = 600
   const H = 200
   // 文字を 大きく した ぶん 目盛の 余白も 広げる
@@ -8210,8 +8215,20 @@ function ActiveSectionChart({
   if (self) { if (self.z < zMin) zMin = self.z; if (self.z > zMax) zMax = self.z }
   if (!Number.isFinite(zMin) || !Number.isFinite(zMax)) { zMin = 0; zMax = 1 }
   if (zMax - zMin < 0.5) { const m = (zMin + zMax) / 2; zMin = m - 0.25; zMax = m + 0.25 }
-  const xOf = (d: number) => padL + (d / profile.length) * PW
-  const yOf = (z: number) => padT + (1 - (z - zMin) / (zMax - zMin)) * PH
+
+  // 表示する 範囲。
+  //   追従 ON  … 自己位置を 真ん中に して、倍率の ぶん 狭く 切り取る。
+  //              地図の 追従と 同じで、動くと 目盛の 方が ずれていく
+  //   追従 OFF … 全体を 出す。倍率は 下の 枠を 大きくして スクロールで 見る
+  const following = follow && self != null
+  const xHalf = profile.length / 2 / zoom
+  const zHalf = (zMax - zMin) / 2 / zoom
+  const x0 = following ? (self as { d: number }).d - xHalf : 0
+  const x1 = following ? (self as { d: number }).d + xHalf : profile.length
+  const z0 = following ? (self as { z: number }).z - zHalf : zMin
+  const z1 = following ? (self as { z: number }).z + zHalf : zMax
+  const xOf = (d: number) => padL + ((d - x0) / (x1 - x0)) * PW
+  const yOf = (z: number) => padT + (1 - (z - z0) / (z1 - z0)) * PH
   let path = ''
   let started = false
   for (const p of profile.tinPts) {
@@ -8221,8 +8238,8 @@ function ActiveSectionChart({
     started = true
   }
   const yTicks: number[] = []
-  const step = (zMax - zMin) / 4
-  for (let i = 0; i <= 4; i++) yTicks.push(zMin + step * i)
+  const step = (z1 - z0) / 4
+  for (let i = 0; i <= 4; i++) yTicks.push(z0 + step * i)
   return (
     <>
       <div className="px-2 py-1 text-[11px] text-slate-600 border-b flex items-center gap-2">
@@ -8233,6 +8250,23 @@ function ActiveSectionChart({
         </span>
         {/* 拡大すると 画面に 収まらなく なる ので、下の 枠を 縦横に スクロールして 見る */}
         <div className="ml-auto flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => setFollow((v) => !v)}
+            disabled={self == null}
+            className={`px-2 h-7 rounded border text-[11px] ${
+              follow
+                ? 'bg-blue-600 border-blue-600 text-white'
+                : 'border-slate-300 text-slate-700 disabled:opacity-30'
+            }`}
+            title={
+              self == null
+                ? '断面線の近くに居ないため追従できません'
+                : '自己位置を断面図の中心に置き続ける'
+            }
+          >
+            追従
+          </button>
           <button
             type="button"
             onClick={() => setZoom((z) => Math.max(1, +(z - 0.5).toFixed(1)))}
@@ -8254,13 +8288,56 @@ function ActiveSectionChart({
           </button>
         </div>
       </div>
-      <div className="flex-1 overflow-auto">
+      {/* 追従中は 目盛の 方が 動く ので スクロールは 要らない。
+          追従 OFF のときは 指で 掴んで 動かせる ように する
+          (端末の 慣性スクロールだけ だと 地図側に 取られる ことが ある) */}
+      <div
+        ref={scrollRef}
+        className={following ? 'flex-1 overflow-hidden' : 'flex-1 overflow-auto'}
+        style={following ? undefined : { touchAction: 'none' }}
+        onPointerDown={(e) => {
+          if (following) return
+          const el = scrollRef.current
+          if (!el) return
+          dragRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop }
+          el.setPointerCapture(e.pointerId)
+        }}
+        onPointerMove={(e) => {
+          const d = dragRef.current
+          const el = scrollRef.current
+          if (!d || !el) return
+          el.scrollLeft = d.sl - (e.clientX - d.x)
+          el.scrollTop = d.st - (e.clientY - d.y)
+        }}
+        onPointerUp={(e) => {
+          dragRef.current = null
+          scrollRef.current?.releasePointerCapture(e.pointerId)
+        }}
+        onPointerCancel={() => {
+          dragRef.current = null
+        }}
+      >
         <svg
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="xMidYMid meet"
-          // 拡大時は 内容の 方を 大きく して、親を スクロールさせる
-          style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%`, minWidth: '100%', minHeight: '100%' }}
+          // 追従中は 枠に 収める (目盛が 動く)。それ以外は 内容を 大きく して スクロール
+          style={
+            following
+              ? { width: '100%', height: '100%' }
+              : {
+                  width: `${zoom * 100}%`,
+                  height: `${zoom * 100}%`,
+                  minWidth: '100%',
+                  minHeight: '100%',
+                }
+          }
         >
+          {/* 追従中は 目盛の 外に 出る 要素が ある ので 枠で 切る */}
+          <defs>
+            <clipPath id="section-plot-clip">
+              <rect x={padL} y={padT} width={PW} height={PH} />
+            </clipPath>
+          </defs>
           <rect x={padL} y={padT} width={PW} height={PH} fill="#f8fafc" stroke="#cbd5e1" />
           {yTicks.map((z, i) => (
             <g key={i}>
@@ -8270,15 +8347,26 @@ function ActiveSectionChart({
           ))}
           {/* 中間点の 断面は 中心を 0 に した 左右 (幅杭の offset と 同じ 読み方)。
               それ以外は 始点からの 距離 */}
-          <text x={padL} y={H - 6} fontSize={11} fill="#64748b">
-            {centered ? `−${(profile.length / 2).toFixed(1)} m` : '0 m'}
-          </text>
-          <text x={padL + PW} y={H - 6} fontSize={11} textAnchor="end" fill="#64748b">
-            {centered ? `+${(profile.length / 2).toFixed(1)} m` : `${profile.length.toFixed(1)} m`}
-          </text>
-          <text x={padL + PW / 2} y={H - 6} fontSize={11} textAnchor="middle" fill="#64748b">
-            {centered ? '中心 0' : '距離'}
-          </text>
+          {(() => {
+            // centered (中間点の 断面) は 中心を 0 に した ± で 読む
+            const toLabel = (d: number) =>
+              centered ? d - profile.length / 2 : d
+            const fmt = (v: number) => `${v >= 0 && centered ? '+' : ''}${v.toFixed(1)} m`
+            return (
+              <>
+                <text x={padL} y={H - 6} fontSize={11} fill="#64748b">
+                  {fmt(toLabel(x0))}
+                </text>
+                <text x={padL + PW} y={H - 6} fontSize={11} textAnchor="end" fill="#64748b">
+                  {fmt(toLabel(x1))}
+                </text>
+                <text x={padL + PW / 2} y={H - 6} fontSize={11} textAnchor="middle" fill="#64748b">
+                  {following ? '追従中' : centered ? '中心 0' : '距離'}
+                </text>
+              </>
+            )
+          })()}
+          <g clipPath="url(#section-plot-clip)">
           {path && <path d={path} fill="none" stroke="#0891b2" strokeWidth={1.5} />}
           {/* 計画横断 (中間点の 断面)。床掘 TIN も 記録も 無い 段階で
               「どの 測点を 見ているか」が 分かる 唯一の 手がかりに なる */}
@@ -8338,6 +8426,7 @@ function ActiveSectionChart({
               <text x={xOf(p.d) + 4} y={yOf(p.z) - 4} fontSize={11} fill="#9a3412">{p.name}</text>
             </g>
           ))}
+          </g>
         </svg>
       </div>
     </>
