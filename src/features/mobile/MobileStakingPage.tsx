@@ -8202,8 +8202,9 @@ function ActiveSectionChart({
   const dragRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null)
   const W = 600
   const H = 200
-  // 文字を 大きく した ぶん 目盛の 余白も 広げる
-  const padL = 52, padR = 14, padT = 18, padB = 30
+  // 文字を 2 倍に した ぶん 目盛の 余白も 広げる。
+  // viewBox は 幅 600 で 画面幅に 縮む ため、実寸は 見た目の 6 割ほどに なる
+  const padL = 92, padR = 20, padT = 28, padB = 48
   const PW = W - padL - padR
   const PH = H - padT - padB
   let zMin = Infinity, zMax = -Infinity
@@ -8242,7 +8243,7 @@ function ActiveSectionChart({
   for (let i = 0; i <= 4; i++) yTicks.push(z0 + step * i)
   return (
     <>
-      <div className="px-2 py-1 text-[11px] text-slate-600 border-b flex items-center gap-2">
+      <div className="px-2 py-1 text-[13px] text-slate-600 border-b flex items-center gap-2">
         <span className="font-semibold text-slate-800 truncate">{name}</span>
         <span className="truncate">
           {direction === 'along' ? '線上' : '直角'} / 距離 {profile.length.toFixed(2)} m / 記録{' '}
@@ -8342,7 +8343,7 @@ function ActiveSectionChart({
           {yTicks.map((z, i) => (
             <g key={i}>
               <line x1={padL} y1={yOf(z)} x2={padL + PW} y2={yOf(z)} stroke="#e2e8f0" strokeWidth={0.5} />
-              <text x={padL - 3} y={yOf(z) + 3} fontSize={11} textAnchor="end" fill="#64748b">{z.toFixed(2)}</text>
+              <text x={padL - 6} y={yOf(z) + 7} fontSize={22} textAnchor="end" fill="#64748b">{z.toFixed(2)}</text>
             </g>
           ))}
           {/* 中間点の 断面は 中心を 0 に した 左右 (幅杭の offset と 同じ 読み方)。
@@ -8354,13 +8355,13 @@ function ActiveSectionChart({
             const fmt = (v: number) => `${v >= 0 && centered ? '+' : ''}${v.toFixed(1)} m`
             return (
               <>
-                <text x={padL} y={H - 6} fontSize={11} fill="#64748b">
+                <text x={padL} y={H - 12} fontSize={22} fill="#64748b">
                   {fmt(toLabel(x0))}
                 </text>
-                <text x={padL + PW} y={H - 6} fontSize={11} textAnchor="end" fill="#64748b">
+                <text x={padL + PW} y={H - 12} fontSize={22} textAnchor="end" fill="#64748b">
                   {fmt(toLabel(x1))}
                 </text>
-                <text x={padL + PW / 2} y={H - 6} fontSize={11} textAnchor="middle" fill="#64748b">
+                <text x={padL + PW / 2} y={H - 12} fontSize={22} textAnchor="middle" fill="#64748b">
                   {following ? '追従中' : centered ? '中心 0' : '距離'}
                 </text>
               </>
@@ -8384,7 +8385,7 @@ function ActiveSectionChart({
             <g key={`plan-${i}`}>
               <circle cx={xOf(p.d)} cy={yOf(p.z)} r={2.5} fill="#7c3aed" stroke="#fff" strokeWidth={0.8} />
               {p.label && (
-                <text x={xOf(p.d)} y={yOf(p.z) - 5} fontSize={11} textAnchor="middle" fill="#5b21b6">
+                <text x={xOf(p.d)} y={yOf(p.z) - 10} fontSize={22} textAnchor="middle" fill="#5b21b6">
                   {p.label}
                 </text>
               )}
@@ -8415,7 +8416,7 @@ function ActiveSectionChart({
                 strokeDasharray="2,2"
               />
               <circle cx={xOf(self.d)} cy={yOf(self.z)} r={4} fill="#2563eb" stroke="#fff" strokeWidth={1.5} />
-              <text x={xOf(self.d) + 5} y={yOf(self.z) - 5} fontSize={11} fill="#1d4ed8">
+              <text x={xOf(self.d) + 8} y={yOf(self.z) - 10} fontSize={22} fill="#1d4ed8">
                 現在地 {self.z.toFixed(3)}m
               </text>
             </g>
@@ -8423,7 +8424,7 @@ function ActiveSectionChart({
           {profile.recPts.map((p, i) => (
             <g key={i}>
               <circle cx={xOf(p.d)} cy={yOf(p.z)} r={3} fill="#f97316" stroke="#fff" strokeWidth={1} />
-              <text x={xOf(p.d) + 4} y={yOf(p.z) - 4} fontSize={11} fill="#9a3412">{p.name}</text>
+              <text x={xOf(p.d) + 8} y={yOf(p.z) - 8} fontSize={22} fill="#9a3412">{p.name}</text>
             </g>
           ))}
           </g>
