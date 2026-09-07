@@ -106,6 +106,8 @@ import { TinPane } from '@/components/map/TinPane'
 import { buildTinFromXml } from '@/lib/landxml/buildTin'
 import { useLandxmlEventsStore } from '@/stores/landxmlEventsStore'
 import { buildChannelOverlay, type ChannelStation } from '@/lib/openChannel/overlayRender'
+import { computeStationVertices } from '@/lib/openChannel/stationVertices'
+import { buildSegments } from '@/lib/openChannel/alignment'
 import { watchSamples } from '@/lib/geolocation'
 import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
 import {
@@ -997,6 +999,9 @@ export function MobileStakingPage() {
     setSections((prev) => [...prev.filter((x) => x.id !== id), sec])
     setActiveSectionId(id)
     setSectionPickIds([])
+    // 断面を 作って 終わりでは なく、その 中間点を 誘導対象に する。
+    // 横断測量は まず 中心に 出てから 左右に 振るので、ここが 起点に なる。
+    setSelectedTargetId(`s-${st.stationId}`)
   }
   const startNewSection = () => {
     setActiveSectionId('pending')
@@ -2346,7 +2351,75 @@ export function MobileStakingPage() {
     [openChannels, coordinates, converter],
   )
 
-  // ターゲット一覧（座標管理 + 暗渠頂点 + 線形物の 中間点）
+  /**
+   * いま 誘導の 対象に している 中間点の 計画横断点。
+   * 断面 (中間点由来) を 選んでいる 間だけ 出す。全中間点ぶん 出すと
+   * 点が 増えすぎて 現場で 選べなく なるため。
+   * 横断測量・計画横断点の 設置は この 点列を 目標に 進める。
+   */
+  const plannedCrossTargets = useMemo<StakingTarget[]>(() => {
+    const meta = activeSection?.station
+    if (!meta) return []
+    const ch = openChannels.find((c) => c.id === meta.channelId)
+    if (!ch) return []
+    const st = ch.stations.find((x) => x.id === meta.stationId)
+    if (!st) return []
+    // 線形の 頂点を 座標テーブルから 解決して 区間を 作る
+    const verts = []
+    const total = ch.alignmentPoints.length
+    for (let i = 0; i < total; i++) {
+      const ap = ch.alignmentPoints[i]
+      const c = (coordinates as CoordinateRow[]).find((cc) => cc.id === ap.coordId)
+      if (!c) continue
+      verts.push({
+        x: c.x,
+        y: c.y,
+        kind: (total <= 1 || i === 0 ? 'bp' : i === total - 1 ? 'ep' : 'ip') as 'bp' | 'ip' | 'ep',
+        radius: ap.radius,
+        spiralAIn: ap.spiralAIn,
+        spiralAOut: ap.spiralAOut,
+      })
+    }
+    if (verts.length < 2) return []
+    const segments = buildSegments(verts)
+    const vertices = computeStationVertices(
+      st,
+      ch.standardCrossSection,
+      ch.profilePoints,
+      segments,
+      ch.sideOrientation,
+    )
+    const out: StakingTarget[] = []
+    for (const v of vertices) {
+      // 中心 (CL) は 中間点そのもの と 同じ 位置なので 重ねない
+      if (v.side === 'center') continue
+      try {
+        const ll = converter.toLatLng(v.x, v.y)
+        if (!Number.isFinite(ll.lat) || !Number.isFinite(ll.lng)) continue
+        const sideLabel = v.offset >= 0 ? '右' : '左'
+        out.push({
+          id: `pcs-${meta.stationId}-${v.side}-${v.label}-${v.offset.toFixed(3)}`,
+          kind: 'channel_station',
+          refId: meta.stationId,
+          vertexIndex: null,
+          name: `${meta.label} ${sideLabel}${Math.abs(v.offset).toFixed(2)}${v.label ? ` ${v.label}` : ''}`,
+          x: v.x,
+          y: v.y,
+          z: v.z,
+          lat: ll.lat,
+          lng: ll.lng,
+          subType: '_planned_cross',
+          subTypeLabel: '計画横断点',
+          stakeStatus: 'unset',
+        })
+      } catch {
+        /* skip */
+      }
+    }
+    return out
+  }, [activeSection, openChannels, coordinates, converter])
+
+  // ターゲット一覧（座標管理 + 暗渠頂点 + 線形物の 中間点 + 計画横断点）
   const targets = useMemo<StakingTarget[]>(() => {
     const out: StakingTarget[] = []
     for (const c of coordinates as CoordinateRow[]) {
@@ -2420,8 +2493,18 @@ export function MobileStakingPage() {
         stakeStatus: 'unset',
       })
     }
+    // 誘導中の 断面の 計画横断点 (横断測量 / 横断点の 設置に 使う)
+    out.push(...plannedCrossTargets)
     return out
-  }, [coordinates, pipes, channelOverlay, converter, projectId, pointTypesByProject])
+  }, [
+    coordinates,
+    pipes,
+    channelOverlay,
+    plannedCrossTargets,
+    converter,
+    projectId,
+    pointTypesByProject,
+  ])
 
   // 出力点選択（順路）に従ってターゲットを並べ替える。
   // 現在アクティブなルートの points を使う。routesByFarmId には複数のルートが
@@ -5999,6 +6082,17 @@ export function MobileStakingPage() {
               >
                 新規（2点）
               </button>
+              {/* 中間点から 作る 方は 1 タップで 済むので 独立した ボタンに する。
+                  「新規（2点）」の 中に 埋もれていて 気づけなかった */}
+              {channelOverlay.stations.length > 0 && (
+                <button
+                  onClick={startNewSection}
+                  className="px-2 py-0.5 text-[11px] bg-indigo-700 text-white rounded hover:bg-indigo-600"
+                  title="路線の中間点を選ぶと、中心線に直交する断面に誘導します"
+                >
+                  中間点から
+                </button>
+              )}
               {sectionPickingMode && (
                 <span className="text-cyan-700">
                   座標から{sectionPickIds.length === 0 ? '1点目' : '2点目'}を選択…
