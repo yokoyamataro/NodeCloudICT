@@ -613,6 +613,7 @@ function FollowCurrent({
 function CenterOnSelect({
   target,
   bottomPanelRatio = 0,
+  bearingDeg = 0,
 }: {
   target: { id: string; lat: number; lng: number } | null
   /**
@@ -621,6 +622,11 @@ function CenterOnSelect({
    * その ぶん 上に ずらして 「見えている 範囲の 真ん中」に 置く。
    */
   bottomPanelRatio?: number
+  /**
+   * いまの 地図の 向き。断面を 切り替えると 向きも 一緒に 変わる ので、
+   * 回転が 効いた 後に 寄せ直さないと 位置が ずれる。
+   */
+  bearingDeg?: number
 }) {
   const map = useMap()
   const targetRef = useRef(target)
@@ -630,14 +636,21 @@ function CenterOnSelect({
     if (!targetId) return
     const t = targetRef.current
     if (!t || t.id !== targetId) return
-    map.setView([t.lat, t.lng], Math.max(map.getZoom(), 18), { animate: true })
+    // アニメーションさせない。回転 (setBearing) と 移動が 同時に 走ると
+    // 途中の 状態で 打ち消し合って、狙った 位置に 止まらない
+    map.setView([t.lat, t.lng], Math.max(map.getZoom(), 18), { animate: false })
     if (bottomPanelRatio > 0) {
-      // 見えている 範囲の 中心は 全体の 中心より 上に ある。
-      // 地図を 下に 送る = 中身が 上に 上がる
-      const h = map.getSize().y
-      map.panBy([0, (h * bottomPanelRatio) / 2], { animate: true })
+      // 回転の 変形が 当たってから ずらす。panBy は 画面座標なので、
+      // 先に 回っていないと ずれる 向きが 変わって しまう
+      const id = requestAnimationFrame(() => {
+        const h = map.getSize().y
+        // 見えている 範囲の 中心は 全体の 中心より 上。
+        // 地図を 下に 送る = 中身が 上に 上がる
+        map.panBy([0, (h * bottomPanelRatio) / 2], { animate: false })
+      })
+      return () => cancelAnimationFrame(id)
     }
-  }, [map, targetId, bottomPanelRatio])
+  }, [map, targetId, bottomPanelRatio, bearingDeg])
   return null
 }
 
@@ -5678,6 +5691,8 @@ export function MobileStakingPage() {
             }
             // 断面 / 暗渠のパネルが 下半分を 覆う ときは、その ぶん 上に ずらす
             bottomPanelRatio={(show2D || showPipe) && showMap ? 0.5 : 0}
+            // 断面を 切り替えると 向きも 変わる。回った 後に 寄せ直す
+            bearingDeg={mapBearingDeg}
           />
 
           {/* 工事区域ポリゴン（境界測量=属性色 / その他=工種色）。showParcelPolygons でまとめて非表示にできる */}
