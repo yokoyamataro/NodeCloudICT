@@ -2522,12 +2522,18 @@ export function MobileStakingPage() {
     }
     // 誘導中の 断面の 計画横断点 (横断測量 / 横断点の 設置に 使う)
     out.push(...plannedCrossTargets)
+    // 断面モードは 横断の 作業に 専念する 画面なので、中間点と 計画横断点
+    // だけに 絞る。通常の 測点が 混ざると 目的の 点を 探しにくい
+    if (show2D) {
+      return out.filter((t) => t.kind === 'channel_station')
+    }
     return out
   }, [
     coordinates,
     pipes,
     channelOverlay,
     plannedCrossTargets,
+    show2D,
     converter,
     projectId,
     pointTypesByProject,
@@ -2786,7 +2792,8 @@ export function MobileStakingPage() {
     const py = currentXY.y - my
     return {
       width: px * ux + py * uy,
-      offset: px * nx + py * ny,
+      // 符号は 現場の 見え方に 合わせて 反転する
+      offset: -(px * nx + py * ny),
     }
   }, [activeSectionLine, currentXY, converter])
 
@@ -3302,8 +3309,10 @@ export function MobileStakingPage() {
       if (dist === null) {
         // 座標欠落のターゲット → 新点扱い
         mode = 'free'
-      } else if (dist > STAKE_TOLERANCE_M) {
-        // 誤差超過時はユーザーに 3 択を聞く
+      } else if (dist > STAKE_TOLERANCE_M && !show2D) {
+        // 誤差超過時はユーザーに 3 択を聞く。
+        // 断面モードは 断面線上を 動きながら 何点も 拾う 使い方なので、
+        // ターゲットから 離れているのが 当たり前。ここで 止めない
         const choice = await new Promise<'stake' | 'free' | 'cancel'>((resolve) => {
           setErrorChoice({ distance: dist as number, resolve })
         })
@@ -5404,33 +5413,6 @@ export function MobileStakingPage() {
             下端は測点の操作列が詰まっているのでここに置く */}
         <MapDrawingCommandBar className="absolute top-1 left-1 right-1 z-[1200] rounded-lg bg-white/95 shadow border px-2 py-1.5 overflow-x-auto" />
 
-        {/* 断面に対する 現在地。断面線に 乗せて 追い込む ための 数字。
-            地図に 出すのは 「線からの ずれ」と 「中心からの 幅」の 2 つだけ。
-            上の ボタン列と 重ならないよう 左下に 置く */}
-        {(show2D || show3D) && activeSection && sectionRel && (
-          <div className="absolute bottom-14 left-2 z-[1100] bg-white/95 border rounded-lg shadow-lg px-2 py-1.5 text-[11px] font-mono">
-            <div className="text-[10px] text-slate-500 font-sans truncate max-w-[9rem]">
-              {activeSection.name}
-            </div>
-            <div className="flex items-baseline gap-1">
-              <span className="text-[10px] text-slate-500 font-sans w-8">離れ</span>
-              <span
-                className={
-                  Math.abs(sectionRel.offset) <= 0.05
-                    ? 'text-emerald-700 font-bold'
-                    : 'text-slate-800'
-                }
-              >
-                {signedMeters(sectionRel.offset)}
-              </span>
-            </div>
-            <div className="flex items-baseline gap-1">
-              <span className="text-[10px] text-slate-500 font-sans w-8">幅</span>
-              <span className="text-slate-800">{signedMeters(sectionRel.width)}</span>
-            </div>
-          </div>
-        )}
-
         {/* 背景地図セレクタ（右下、Leaflet 帰属の上） */}
         <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-300 bg-white/95 text-[11px]">
           <span className="text-slate-500">背景</span>
@@ -6227,13 +6209,17 @@ export function MobileStakingPage() {
             <div className="flex-1 overflow-hidden flex flex-col">
               {activeSection && sectionProfile ? (
                 <ActiveSectionChart
+                  // 断面を 切り替えたら 作り直す。前の 断面の 描画が
+                  // 残らないよう 明示的に 別物として 扱う
+                  key={activeSection.id}
                   name={activeSection.name}
                   direction={activeSection.direction}
                   profile={sectionProfile}
                 />
               ) : (
                 <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-4 text-center">
-                  「新規（2点）」で任意の断面を作成、または上の一覧からタップして表示。
+                  「中間点から」で路線の横断、「新規（2点）」で任意の断面を作成。
+                  上の一覧からタップでも切り替わります。
                   <br />
                   管路の縦断図は「暗渠配管」タブで表示できます。
                 </div>
