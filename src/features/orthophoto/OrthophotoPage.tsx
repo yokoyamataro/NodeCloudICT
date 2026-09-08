@@ -936,11 +936,47 @@ export function OrthophotoPage() {
   }
 
   // 既存レイヤ名の一覧（レイヤ名入力の候補）
+  /**
+   * 手で 足した レイヤ名。
+   * レイヤの 一覧は 作図要素から 組み立てて いる ので、名前を 足しただけでは
+   * どの 要素にも 使われて おらず 一覧に 出ない。図形を 1 つ 描くまで 見えない
+   * のは 不便なので、足した 名前を ここに 覚えて 一覧に 混ぜる。
+   * 工区ごとに 端末に 残す。
+   */
+  const addedLayersKey = currentFarm ? `overview:addedLayers:${currentFarm.id}` : null
+  const [addedLayers, setAddedLayers] = useState<string[]>([])
+  useEffect(() => {
+    if (!addedLayersKey) {
+      setAddedLayers([])
+      return
+    }
+    try {
+      const raw = localStorage.getItem(addedLayersKey)
+      setAddedLayers(raw ? (JSON.parse(raw) as string[]) : [])
+    } catch {
+      setAddedLayers([])
+    }
+  }, [addedLayersKey])
+  const addLayerName = useCallback(
+    (name: string) => {
+      setAddedLayers((prev) => {
+        if (prev.includes(name)) return prev
+        const next = [...prev, name]
+        if (addedLayersKey) {
+          try { localStorage.setItem(addedLayersKey, JSON.stringify(next)) } catch { /* ignore */ }
+        }
+        return next
+      })
+    },
+    [addedLayersKey],
+  )
+
   const existingLayers = useMemo(() => {
     const set = new Set<string>(DEFAULT_LAYERS)
     for (const d of drawingItems) if (d.layer) set.add(d.layer)
+    for (const l of addedLayers) set.add(l)
     return Array.from(set)
-  }, [drawingItems])
+  }, [drawingItems, addedLayers])
 
   /**
    * 「描画の設定」を どこに効かせるか。
@@ -1199,6 +1235,8 @@ export function OrthophotoPage() {
           applyToSelection({ layer: l })
         }}
         onAddLayer={(l) => {
+          // 名前を 覚えて 一覧に 出す。これが 無いと 図形を 描くまで 現れない
+          addLayerName(l)
           setDrawLayer(l)
           applyToSelection({ layer: l })
         }}

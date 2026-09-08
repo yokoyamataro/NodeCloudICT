@@ -16,6 +16,7 @@ import {
   FARM_FILE_QUOTA_BYTES,
   canPreview,
   deleteFarmFile,
+  errorMessage,
   getFarmFileUrl,
   kindFromFileName,
   listFarmFiles,
@@ -55,7 +56,14 @@ export function FarmFilesPage() {
     try {
       setRows(await listFarmFiles(farmId))
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      const msg = errorMessage(e)
+      // テーブルが 無い = マイグレーション 未実行。原因が 分かる 文言に する
+      setError(
+        /relation .* does not exist|schema cache|farm_files/i.test(msg)
+          ? `ファイル置き場の準備ができていません: ${msg}\n` +
+            'supabase/migrations/20260907_add_farm_files.sql を Supabase の SQL Editor で実行してください。'
+          : msg,
+      )
     } finally {
       setLoading(false)
     }
@@ -91,7 +99,7 @@ export function FarmFilesPage() {
       await uploadFarmFile({ farmId, file })
       await load()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -110,7 +118,7 @@ export function FarmFilesPage() {
         window.open(url, '_blank', 'noopener')
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }
 
@@ -122,7 +130,7 @@ export function FarmFilesPage() {
       await deleteFarmFile(row)
       await load()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -177,7 +185,7 @@ export function FarmFilesPage() {
       </div>
 
       {error && (
-        <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-sm text-red-700">
+        <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-sm text-red-700 whitespace-pre-line">
           {error}
         </div>
       )}

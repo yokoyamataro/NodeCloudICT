@@ -9,6 +9,26 @@
 
 import { supabase } from './supabase'
 
+/**
+ * Supabase の エラーは Error を 継承していない ただの オブジェクト なので、
+ * String() すると "[object Object]" に なる。message / hint を 拾って 出す。
+ */
+export function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message
+  if (e && typeof e === 'object') {
+    const o = e as { message?: unknown; error_description?: unknown; hint?: unknown; details?: unknown }
+    const parts = [o.message, o.error_description, o.details, o.hint]
+      .filter((v): v is string => typeof v === 'string' && v.length > 0)
+    if (parts.length > 0) return parts.join(' / ')
+    try {
+      return JSON.stringify(e)
+    } catch {
+      return '不明なエラー'
+    }
+  }
+  return String(e)
+}
+
 const BUCKET = 'farm-files'
 
 /** 1 工区あたりの 上限 [バイト]。DB の トリガと 同じ 値に する */
