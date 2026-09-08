@@ -583,15 +583,24 @@ function renderShape(
     )
   }
   if (s.kind === 'text') {
-    const anchor = tx(s.x)
-    const baseline = ty(s.y)
+    const px = tx(s.x)
+    const py = ty(s.y)
+    // s.height は 図面 の 実寸。 x/y は すでに 画面座標 に 変換 済み なので、
+    // 文字高 にも 同じ 倍率 を かけない と 図面 に 対して 極端に 小さく
+    // (= 事実上 見えなく) なる
+    const scale = Math.abs(tx(1) - tx(0))
+    const fontSize = s.height * scale
+    if (!(fontSize > 0.5)) return null
     return (
       <text
         key={i}
-        x={anchor} y={baseline}
-        fontSize={s.height}
+        x={px} y={py}
+        fontSize={fontSize}
         fill={s.color}
-        transform={s.rotationDeg ? `rotate(${-s.rotationDeg} ${anchor} ${baseline})` : undefined}
+        textAnchor={s.anchor}
+        dominantBaseline={s.baseline}
+        transform={s.rotationDeg ? `rotate(${-s.rotationDeg} ${px} ${py})` : undefined}
+        style={{ whiteSpace: 'pre' }}
         {...commonProps}
       >
         {s.text}

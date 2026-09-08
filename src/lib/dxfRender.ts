@@ -3,7 +3,8 @@
 //
 // - Shift-JIS で 出力された DXF (日本の 土木 CAD で 多い) は 呼び出し側で
 //   Uint8Array → TextDecoder('shift-jis') で 文字列化して 渡す。
-// - LINE / LWPOLYLINE / POLYLINE / TEXT / MTEXT / CIRCLE / ARC を サポート。
+// - LINE / LWPOLYLINE / POLYLINE / TEXT / MTEXT / ATTRIB / ATTDEF / CIRCLE / ARC /
+//   INSERT (ブロック参照。 中身を 変換して 展開) を サポート。
 //   その他 は 現状 スキップ (後で 必要に なったら 拡張)。
 // - 色は 「DXF ACI カラーインデックス → RGB」で 解決。 ByLayer (256) は レイヤの 色を 使う。
 //   True Color (420 group) や ByBlock (0) は 現状 未対応 (適当な 黒に フォールバック)。
@@ -18,6 +19,7 @@ import DxfParser, {
   type IMtextEntity,
   type ICircleEntity,
   type IArcEntity,
+  type IInsertEntity,
 } from 'dxf-parser'
 
 /** AutoCAD カラーインデックス (ACI) の 標準 RGB マップ。 1..255 のみ 収録。 */
@@ -49,7 +51,20 @@ export interface DxfBounds {
 export type DxfShape =
   | { kind: 'line'; layer: string; color: string; x1: number; y1: number; x2: number; y2: number }
   | { kind: 'polyline'; layer: string; color: string; closed: boolean; pts: { x: number; y: number }[] }
-  | { kind: 'text'; layer: string; color: string; x: number; y: number; height: number; text: string; rotationDeg: number }
+  | {
+      kind: 'text'
+      layer: string
+      color: string
+      x: number
+      y: number
+      height: number
+      text: string
+      rotationDeg: number
+      /** SVG text-anchor。 DXF の 水平位置合わせ (group 72 / MTEXT の 挿入点) 由来 */
+      anchor: 'start' | 'middle' | 'end'
+      /** SVG dominant-baseline。 DXF の 垂直位置合わせ (group 73 / attachmentPoint) 由来 */
+      baseline: 'alphabetic' | 'middle' | 'hanging'
+    }
   | { kind: 'circle'; layer: string; color: string; cx: number; cy: number; r: number }
   | { kind: 'arc'; layer: string; color: string; cx: number; cy: number; r: number; startDeg: number; endDeg: number }
 
@@ -127,58 +142,169 @@ export function parseDxf(dxfText: string): DxfDocument {
     return layerColor(layer)
   }
 
-  for (const ent of parsed.entities ?? []) {
-    const layer = ent.layer ?? '0'
-    layerNames.add(layer)
-    const color = resolveColor(ent, layer)
-    if (ent.type === 'LINE') {
-      const e = ent as ILineEntity
-      const v0 = e.vertices?.[0]
-      const v1 = e.vertices?.[1]
-      if (!v0 || !v1) continue
-      shapes.push({ kind: 'line', layer, color, x1: v0.x, y1: v0.y, x2: v1.x, y2: v1.y })
-      updateBounds(v0.x, v0.y); updateBounds(v1.x, v1.y)
-    } else if (ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
-      const e = ent as ILwpolylineEntity | IPolylineEntity
-      const vs = e.vertices ?? []
-      if (vs.length < 2) continue
-      const pts = vs.map((v) => ({ x: v.x, y: v.y }))
-      const closed = Boolean((e as { shape?: boolean }).shape)
-      shapes.push({ kind: 'polyline', layer, color, closed, pts })
-      for (const p of pts) updateBounds(p.x, p.y)
-    } else if (ent.type === 'CIRCLE') {
-      const e = ent as ICircleEntity
-      shapes.push({ kind: 'circle', layer, color, cx: e.center.x, cy: e.center.y, r: e.radius })
-      updateBounds(e.center.x - e.radius, e.center.y - e.radius)
-      updateBounds(e.center.x + e.radius, e.center.y + e.radius)
-    } else if (ent.type === 'ARC') {
-      const e = ent as IArcEntity
-      shapes.push({
-        kind: 'arc', layer, color,
-        cx: e.center.x, cy: e.center.y, r: e.radius,
-        startDeg: e.startAngle * (180 / Math.PI),
-        endDeg: e.endAngle * (180 / Math.PI),
-      })
-      updateBounds(e.center.x - e.radius, e.center.y - e.radius)
-      updateBounds(e.center.x + e.radius, e.center.y + e.radius)
-    } else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-      const e = ent as ITextEntity | IMtextEntity
-      const pos = (e as ITextEntity).startPoint ?? (e as IMtextEntity).position
-      if (!pos) continue
-      const text = (e as { text?: string; string?: string }).text
-        ?? (e as { string?: string }).string
-        ?? ''
-      const height = (e as { textHeight?: number; height?: number }).textHeight
-        ?? (e as { height?: number }).height
-        ?? 2.5
-      const rot = (e as { rotation?: number }).rotation ?? 0
-      shapes.push({
-        kind: 'text', layer, color,
-        x: pos.x, y: pos.y, height, text, rotationDeg: rot,
-      })
-      updateBounds(pos.x, pos.y)
+  // INSERT (ブロック参照) の 展開に 使う 相似変換。
+  // world = 挿入点 + R(rot) * S(scale) * (p - ブロック基点)
+  interface Xform {
+    ox: number
+    oy: number
+    sx: number
+    sy: number
+    cos: number
+    sin: number
+    rotDeg: number
+    /** 文字高さ / 半径 に かける 代表スケール */
+    s: number
+  }
+  const IDENTITY: Xform = { ox: 0, oy: 0, sx: 1, sy: 1, cos: 1, sin: 0, rotDeg: 0, s: 1 }
+  const apply = (t: Xform, x: number, y: number) => ({
+    x: t.ox + (x * t.sx) * t.cos - (y * t.sy) * t.sin,
+    y: t.oy + (x * t.sx) * t.sin + (y * t.sy) * t.cos,
+  })
+
+  const blocks = parsed.blocks ?? {}
+
+  const pushEntities = (entities: IEntity[], t: Xform, depth: number) => {
+    // 自己参照 ブロック で 無限再帰 しない よう 深さ を 制限
+    if (depth > 8) return
+    for (const ent of entities) {
+      const layer = ent.layer ?? '0'
+      layerNames.add(layer)
+      const color = resolveColor(ent, layer)
+      if (ent.type === 'LINE') {
+        const e = ent as ILineEntity
+        const v0 = e.vertices?.[0]
+        const v1 = e.vertices?.[1]
+        if (!v0 || !v1) continue
+        const p0 = apply(t, v0.x, v0.y)
+        const p1 = apply(t, v1.x, v1.y)
+        shapes.push({ kind: 'line', layer, color, x1: p0.x, y1: p0.y, x2: p1.x, y2: p1.y })
+        updateBounds(p0.x, p0.y); updateBounds(p1.x, p1.y)
+      } else if (ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
+        const e = ent as ILwpolylineEntity | IPolylineEntity
+        const vs = e.vertices ?? []
+        if (vs.length < 2) continue
+        const pts = vs.map((v) => apply(t, v.x, v.y))
+        const closed = Boolean((e as { shape?: boolean }).shape)
+        shapes.push({ kind: 'polyline', layer, color, closed, pts })
+        for (const p of pts) updateBounds(p.x, p.y)
+      } else if (ent.type === 'CIRCLE') {
+        const e = ent as ICircleEntity
+        const c = apply(t, e.center.x, e.center.y)
+        const r = e.radius * t.s
+        shapes.push({ kind: 'circle', layer, color, cx: c.x, cy: c.y, r })
+        updateBounds(c.x - r, c.y - r)
+        updateBounds(c.x + r, c.y + r)
+      } else if (ent.type === 'ARC') {
+        const e = ent as IArcEntity
+        const c = apply(t, e.center.x, e.center.y)
+        const r = e.radius * t.s
+        shapes.push({
+          kind: 'arc', layer, color,
+          cx: c.x, cy: c.y, r,
+          startDeg: e.startAngle * (180 / Math.PI) + t.rotDeg,
+          endDeg: e.endAngle * (180 / Math.PI) + t.rotDeg,
+        })
+        updateBounds(c.x - r, c.y - r)
+        updateBounds(c.x + r, c.y + r)
+      } else if (ent.type === 'INSERT') {
+        const e = ent as IInsertEntity
+        const blk = blocks[e.name]
+        if (!blk?.entities?.length) continue
+        const rot = ((e.rotation ?? 0) * Math.PI) / 180
+        const sx = e.xScale ?? 1
+        const sy = e.yScale ?? 1
+        const cos = Math.cos(rot)
+        const sin = Math.sin(rot)
+        const base = blk.position ?? { x: 0, y: 0 }
+        // 行列 と 行列 の 合成 (親 t の 上に 今回の 変換 を 積む)
+        const cols = Math.max(1, e.columnCount ?? 1)
+        const rows = Math.max(1, e.rowCount ?? 1)
+        const cSp = e.columnSpacing ?? 0
+        const rSp = e.rowSpacing ?? 0
+        for (let ci = 0; ci < cols; ci++) {
+          for (let ri = 0; ri < rows; ri++) {
+            // ブロック ローカル 座標 p に 対して
+            //   local = R*S*(p - base) + 挿入点(+ 配列オフセット)
+            // これを 親 t で さらに 変換 する
+            const insX = (e.position?.x ?? 0) + ci * cSp
+            const insY = (e.position?.y ?? 0) + ri * rSp
+            // 合成後 の 原点 = t(挿入点 - R*S*base)
+            const localOx = insX - (base.x * sx * cos - base.y * sy * sin)
+            const localOy = insY - (base.x * sx * sin + base.y * sy * cos)
+            const o = apply(t, localOx, localOy)
+            const child: Xform = {
+              ox: o.x,
+              oy: o.y,
+              sx: t.sx * sx,
+              sy: t.sy * sy,
+              cos: Math.cos(rot + (t.rotDeg * Math.PI) / 180),
+              sin: Math.sin(rot + (t.rotDeg * Math.PI) / 180),
+              rotDeg: t.rotDeg + (e.rotation ?? 0),
+              s: t.s * (Math.abs(sx) + Math.abs(sy)) / 2,
+            }
+            pushEntities(blk.entities, child, depth + 1)
+          }
+        }
+      } else if (
+        ent.type === 'TEXT' ||
+        ent.type === 'MTEXT' ||
+        ent.type === 'ATTRIB' ||
+        ent.type === 'ATTDEF'
+      ) {
+        const isM = ent.type === 'MTEXT'
+        const e = ent as ITextEntity | IMtextEntity
+        // TEXT / ATTRIB は 位置合わせ が 「左下」以外 の とき、実際の 基準点 が
+        // group 11 (endPoint) に 入る。 group 10 は 0,0 のまま の CAD が 多く、
+        // ここを 見落とすと 文字が 原点に 積み上がって 画面外 に 消える。
+        const halign = (e as { halign?: number }).halign ?? 0
+        const valign = (e as { valign?: number }).valign ?? 0
+        const startPoint = (e as ITextEntity).startPoint
+        const endPoint = (e as ITextEntity).endPoint
+        const pos = isM
+          ? (e as IMtextEntity).position
+          : (halign !== 0 || valign !== 0) && endPoint
+            ? endPoint
+            : startPoint ?? endPoint
+        if (!pos) continue
+        const rawText = (e as { text?: string }).text ?? ''
+        const height =
+          (e as { textHeight?: number }).textHeight ??
+          (e as { height?: number }).height ??
+          2.5
+        const rot = (e as { rotation?: number }).rotation ?? 0
+        // MTEXT は 挿入点 の 意味 が attachmentPoint (1..9) で 決まる
+        const ap = (e as IMtextEntity).attachmentPoint ?? 1
+        const anchor: 'start' | 'middle' | 'end' = isM
+          ? ap % 3 === 1 ? 'start' : ap % 3 === 2 ? 'middle' : 'end'
+          : halign === 1 || halign === 4 ? 'middle' : halign === 2 ? 'end' : 'start'
+        const baseline: 'alphabetic' | 'middle' | 'hanging' = isM
+          ? ap <= 3 ? 'hanging' : ap <= 6 ? 'middle' : 'alphabetic'
+          : valign === 3 ? 'hanging' : valign === 2 ? 'middle' : 'alphabetic'
+        const lines = decodeDxfText(rawText, isM)
+        if (lines.length === 0) continue
+        const h = height * t.s
+        const p = apply(t, pos.x, pos.y)
+        // 複数行 (MTEXT の \P) は 行送り 1.2 倍 で 下 に 積む
+        const dirRad = ((rot + t.rotDeg) * Math.PI) / 180
+        lines.forEach((line, li) => {
+          if (!line) return
+          // 行送り は 文字の 「下」方向 = 回転後の -Y 側
+          const off = li * h * 1.2
+          const lx = p.x + off * Math.sin(dirRad)
+          const ly = p.y - off * Math.cos(dirRad)
+          shapes.push({
+            kind: 'text', layer, color,
+            x: lx, y: ly, height: h, text: line,
+            rotationDeg: rot + t.rotDeg,
+            anchor, baseline,
+          })
+          updateBounds(lx, ly)
+        })
+      }
     }
   }
+
+  pushEntities(parsed.entities ?? [], IDENTITY, 0)
 
   // レイヤ 情報 (パース側の 定義順)
   const layers: DxfLayerInfo[] = Object.values(layerMap)
@@ -197,6 +323,38 @@ export function parseDxf(dxfText: string): DxfDocument {
 
   if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = 100; maxY = 100 }
   return { bounds: { minX, minY, maxX, maxY }, layers, shapes }
+}
+
+/**
+ * DXF の 文字列 を 表示用 に 整える。
+ *
+ * - TEXT: %%d → °、%%c → ⌀、%%p → ± の 特殊コード だけ 置換 する。
+ * - MTEXT: フォーマットコード (\fMS Gothic|b0; や \H0.7x; \A1; と それを 囲む
+ *   波括弧) を 落とし、\P を 改行 として 行 に 分ける。 これを しないと 制御
+ *   コード が そのまま 出て 読めない。
+ *
+ * 戻り値 は 行 の 配列 (TEXT は 常に 1 行)。
+ */
+export function decodeDxfText(raw: string, isMText: boolean): string[] {
+  if (!raw) return []
+  let t = raw
+  if (isMText) {
+    t = t.replace(/\\P/g, '\n')
+    // \f フォント指定、\H 文字高、\W 幅、\Q 傾き、\A 位置、\C/\c 色、\T 字間、\p 段落
+    t = t.replace(/\\[fF][^;]*;/g, '')
+    t = t.replace(/\\[HWQATCcpL][^;]*;/g, '')
+    // 分数/積み文字 は 中身 だけ 残す
+    t = t.replace(/\\S([^;]*);/g, '$1')
+    t = t.replace(/\\~/g, ' ')
+    // 書式グループ の 波括弧 を 外し、最後に エスケープ を 解除
+    t = t.replace(/[{}]/g, '')
+    t = t.replace(/\\\\/g, '\\')
+  }
+  t = t.replace(/%%[dD]/g, '°').replace(/%%[cC]/g, '⌀').replace(/%%[pP]/g, '±')
+  // %%123 形式 (ASCII コード 指定)
+  t = t.replace(/%%(\d{1,3})/g, (_m, n: string) => String.fromCharCode(Number(n)))
+  const lines = isMText ? t.split('\n') : [t]
+  return lines.map((l) => l.trimEnd())
 }
 
 function aciToRgb(idx: number): string {
