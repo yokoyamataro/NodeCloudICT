@@ -7961,16 +7961,12 @@ export function MobileStakingPage() {
         const otherPhotos = photos.filter(
           (p) => p.category !== '遠景' && p.category !== '近景',
         )
+        // 画面を 覆う モーダル では なく、下端に 貼り付く パネル。
+        // 地図を 見ながら 点の 内容を 直せる ように、背景の 暗幕は 置かない
         return (
-          <div
-            className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3400] p-3"
-            onClick={() => setPointInfoTarget(null)}
-          >
-            <div
-              className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[92vh]"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="px-4 py-3 border-b flex items-center justify-between">
+          <div className="fixed left-0 right-0 bottom-0 z-[3400]">
+            <div className="bg-white w-full border-t border-slate-300 rounded-t-xl shadow-[0_-4px_16px_rgba(0,0,0,0.18)] overflow-hidden flex flex-col max-h-[60vh]">
+              <div className="px-3 py-2 border-b flex items-center justify-between">
                 <div className="min-w-0">
                   <div className="text-sm font-bold text-slate-800 truncate">{t.name}</div>
                 </div>
@@ -7982,7 +7978,7 @@ export function MobileStakingPage() {
                 </button>
               </div>
 
-              <div className="overflow-auto flex-1 p-4 space-y-3">
+              <div className="overflow-auto flex-1 px-3 py-2 space-y-1.5">
                 {/* 座標 X / Y / Z を横並び（枠なし） */}
                 <div className="flex items-baseline gap-4 text-sm font-mono">
                   <div>
@@ -8001,10 +7997,10 @@ export function MobileStakingPage() {
                   </div>
                 </div>
 
-                {/* 点名 (coordinate のみ編集可) */}
+                {/* 点名 (coordinate のみ編集可)。 表題は 左、入力は 右 */}
                 {isCoord && (
-                  <div>
-                    <div className="text-[10px] text-slate-500 mb-0.5">点名</div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-10 shrink-0 text-[11px] text-slate-500">点名</span>
                     <input
                       type="text"
                       defaultValue={liveCoord?.pointNumber ?? t.name}
@@ -8014,7 +8010,7 @@ export function MobileStakingPage() {
                         if (v === (liveCoord?.pointNumber ?? t.name)) return
                         void updatePointNumberStore(t.refId, v)
                       }}
-                      className="w-full px-2 py-1 text-sm border rounded bg-white"
+                      className="flex-1 min-w-0 px-2 py-1 text-sm border rounded bg-white"
                     />
                   </div>
                 )}
@@ -8022,47 +8018,44 @@ export function MobileStakingPage() {
                 {/* 点種 / 設置 を横並び（coordinate のみ編集可） */}
                 {isCoord ? (
                   <>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <div className="text-[10px] text-slate-500 mb-0.5">点種</div>
-                        <select
-                          value={currentType}
-                          onChange={(e) =>
-                            void setCoordinateType(
-                              t.refId,
-                              e.target.value as CoordinateRow['type'],
-                            )
-                          }
-                          className="w-full px-2 py-1 text-sm border rounded bg-white"
-                        >
-                          {typeOptions.map((o) => (
-                            <option key={o.code} value={o.code}>
-                              {o.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-slate-500 mb-0.5">設置</div>
-                        <select
-                          value={currentStatus || ''}
-                          onChange={(e) => {
-                            const v = e.target.value as typeof currentStatus
-                            void setStakeStatus(t.refId, v)
-                          }}
-                          className="w-full px-2 py-1 text-sm border rounded bg-white"
-                        >
-                          {STAKE_STATUS_OPTIONS.map((s) => (
-                            <option key={s} value={s}>
-                              {STAKE_STATUS_LABEL[s]}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                    {/* 点種 と 設置 は 1 行に まとめる */}
+                    <div className="flex items-center gap-2">
+                      <span className="w-10 shrink-0 text-[11px] text-slate-500">点種</span>
+                      <select
+                        value={currentType}
+                        onChange={(e) =>
+                          void setCoordinateType(
+                            t.refId,
+                            e.target.value as CoordinateRow['type'],
+                          )
+                        }
+                        className="flex-1 min-w-0 px-2 py-1 text-sm border rounded bg-white"
+                      >
+                        {typeOptions.map((o) => (
+                          <option key={o.code} value={o.code}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="w-8 shrink-0 text-[11px] text-slate-500 text-right">設置</span>
+                      <select
+                        value={currentStatus || ''}
+                        onChange={(e) => {
+                          const v = e.target.value as typeof currentStatus
+                          void setStakeStatus(t.refId, v)
+                        }}
+                        className="flex-1 min-w-0 px-2 py-1 text-sm border rounded bg-white"
+                      >
+                        {STAKE_STATUS_OPTIONS.map((s) => (
+                          <option key={s} value={s}>
+                            {STAKE_STATUS_LABEL[s]}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     {/* 杭種 (自由入力。任意) */}
-                    <div>
-                      <div className="text-[10px] text-slate-500 mb-0.5">杭種</div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-10 shrink-0 text-[11px] text-slate-500">杭種</span>
                       <input
                         type="text"
                         defaultValue={liveCoord?.stakeType ?? ''}
@@ -8073,25 +8066,23 @@ export function MobileStakingPage() {
                           void updateStakeTypeStore(t.refId, v.length > 0 ? v : null)
                         }}
                         placeholder="任意 (例: プラ杭 / 木杭)"
-                        className="w-full px-2 py-1 text-sm border rounded bg-white"
+                        className="flex-1 min-w-0 px-2 py-1 text-sm border rounded bg-white"
                       />
                     </div>
                   </>
                 ) : (
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                      <div className="text-[10px] text-slate-500 mb-0.5">点種</div>
-                      <div className="px-2 py-1 border rounded bg-slate-50 text-slate-800">
-                        {t.subTypeLabel}
-                      </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="w-10 shrink-0 text-[11px] text-slate-500">点種</span>
+                    <div className="flex-1 min-w-0 px-2 py-1 border rounded bg-slate-50 text-slate-800">
+                      {t.subTypeLabel}
                     </div>
                   </div>
                 )}
 
                 {/* 備考（coordinate のみ編集可、blur で即時保存） */}
                 {isCoord && (
-                  <div>
-                    <div className="text-[10px] text-slate-500 mb-0.5">備考</div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-10 shrink-0 text-[11px] text-slate-500">備考</span>
                     <input
                       type="text"
                       defaultValue={liveCoord?.notes ?? ''}
@@ -8100,7 +8091,7 @@ export function MobileStakingPage() {
                         void setNotes(t.refId, v.length > 0 ? v : null)
                       }}
                       placeholder="任意のメモ"
-                      className="w-full px-2 py-1 text-sm border rounded bg-white"
+                      className="flex-1 min-w-0 px-2 py-1 text-sm border rounded bg-white"
                     />
                   </div>
                 )}
@@ -8187,15 +8178,6 @@ export function MobileStakingPage() {
                     )}
                   </div>
                 )}
-              </div>
-
-              <div className="px-4 pb-4 pt-2 border-t">
-                <button
-                  onClick={() => setPointInfoTarget(null)}
-                  className="w-full px-3 py-2 text-sm border rounded hover:bg-slate-50"
-                >
-                  閉じる
-                </button>
               </div>
             </div>
           </div>
