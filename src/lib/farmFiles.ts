@@ -195,6 +195,14 @@ export async function getFarmFileUrl(storagePath: string, expiresInSec = 3600): 
   return data.signedUrl
 }
 
+/** 中身を バイト列で 取る (DXF は Shift-JIS が 多く、文字コードを 自前で 判定する) */
+export async function downloadFarmFileBytes(storagePath: string): Promise<ArrayBuffer> {
+  const { data, error } = await supabase.storage.from(BUCKET).download(storagePath)
+  if (error) throw error
+  if (!data) throw new Error('ダウンロードに失敗しました')
+  return await data.arrayBuffer()
+}
+
 /** 中身を テキストで 取る (DXF / LandXML / SIM の 閲覧用) */
 export async function downloadFarmFileText(storagePath: string): Promise<string> {
   const { data, error } = await supabase.storage.from(BUCKET).download(storagePath)

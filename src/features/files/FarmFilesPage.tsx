@@ -8,14 +8,17 @@
 // 効かせてあるが、押す前に 分かるよう 画面でも 出す。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, Download, Trash2, Eye, Loader2, FileText } from 'lucide-react'
+import { Upload, Download, Trash2, Eye, Loader2, FileText, X } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
+import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
+import { decodeDxfBytes } from '@/lib/dxfRender'
 import {
   FARM_FILE_ACCEPT,
   FARM_FILE_KIND_LABEL,
   FARM_FILE_QUOTA_BYTES,
   canPreview,
   deleteFarmFile,
+  downloadFarmFileBytes,
   errorMessage,
   getFarmFileUrl,
   kindFromFileName,
@@ -45,6 +48,13 @@ export function FarmFilesPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  /**
+   * 中身を 見る ための モーダル。
+   * DXF は 別タブで 開くと ブラウザが ダウンロードして しまう ので、
+   * 横断図の DXF 取込で 使っている ビューアを そのまま 使って 画面内で 出す。
+   */
+  const [viewer, setViewer] = useState<{ row: FarmFileRow; text: string } | null>(null)
+  const [viewerLoading, setViewerLoading] = useState(false)
 
   const load = useCallback(async () => {
     if (!farmId) {
@@ -108,6 +118,16 @@ export function FarmFilesPage() {
   const handleOpen = async (row: FarmFileRow, download: boolean) => {
     setError(null)
     try {
+      if (!download && row.kind === 'dxf') {
+        // DXF は 別タブで 開くと ブラウザが ダウンロードして しまう。
+        // 画面内の ビューアで 出す
+        setViewerLoading(true)
+        // DXF は Shift-JIS の ことが 多い。text() だと 文字化けする ので
+        // 既存の 判定つき デコーダを 通す
+        const buf = await downloadFarmFileBytes(row.storagePath)
+        setViewer({ row, text: decodeDxfBytes(buf) })
+        return
+      }
       const url = await getFarmFileUrl(row.storagePath)
       if (download) {
         const a = document.createElement('a')
@@ -119,6 +139,8 @@ export function FarmFilesPage() {
       }
     } catch (err) {
       setError(errorMessage(err))
+    } finally {
+      setViewerLoading(false)
     }
   }
 
@@ -227,11 +249,17 @@ export function FarmFilesPage() {
                       className="p-1.5 rounded border text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:cursor-not-allowed"
                       title={
                         canPreview(row.kind)
-                          ? '別タブで開く'
+                          ? row.kind === 'dxf'
+                            ? '図面ビューアで開く'
+                            : '別タブで開く'
                           : 'SFC / P21 の閲覧は未実装です（ダウンロードは可能）'
                       }
                     >
-                      <Eye className="h-4 w-4" />
+                      {viewerLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
                     </button>
                     <button
                       type="button"
@@ -257,6 +285,42 @@ export function FarmFilesPage() {
           </div>
         )}
       </div>
+
+      {/* DXF ビューア。横断図の DXF 取込と 同じ 部品を そのまま 使う */}
+      {viewer && (
+        <div
+          className="fixed inset-0 z-[3000] bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setViewer(null)}
+        >
+          <div
+            className="bg-white w-full max-w-5xl h-[85vh] rounded-lg shadow-xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-3 py-2 border-b flex items-center gap-2">
+              <FileText className="h-4 w-4 text-slate-500" />
+              <span className="text-sm font-semibold truncate">{viewer.row.name}</span>
+              <button
+                type="button"
+                onClick={() => void handleOpen(viewer.row, true)}
+                className="ml-auto px-2 py-1 rounded border text-xs text-slate-600 hover:bg-slate-50"
+              >
+                ダウンロード
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewer(null)}
+                className="p-1 rounded hover:bg-slate-100"
+                aria-label="閉じる"
+              >
+                <X className="h-4 w-4 text-slate-500" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <DxfCrossSectionViewer dxfText={viewer.text} className="w-full h-full" />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
