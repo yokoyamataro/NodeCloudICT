@@ -2,9 +2,17 @@
 // 将来: 工区名の変更、削除、メンバー招待などをここに集約する想定。
 
 import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, HardDrive, Layers, Loader2, Pencil, RefreshCw } from 'lucide-react'
+import { AlertTriangle, HardDrive, Layers, Loader2, Pencil, RefreshCw, Trash2, Eye } from 'lucide-react'
 import { OrthophotoUploadSection } from '@/features/orthophoto/OrthophotoUploadSection'
 import { useFarmStore } from '@/stores/farmStore'
+import { useProjectListStore } from '@/stores/projectListStore'
+import { useNavigate } from 'react-router-dom'
+import {
+  fetchUserNames,
+  listFarmViews,
+  touchFarmView,
+  type FarmViewRow,
+} from '@/lib/farmViews'
 import {
   FARM_FILE_QUOTA_BYTES,
   listFarmFiles,
@@ -40,9 +48,39 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
+/** 日時を 「2026/09/08 14:03」の 形で 出す。null は '-' */
+function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '-'
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
 export function FarmSettingsPage() {
   const currentFarm = useFarmStore((s) => s.currentFarm)
   const updateFarm = useFarmStore((s) => s.updateFarm)
+  const deleteFarm = useFarmStore((s) => s.deleteFarm)
+  const navigate = useNavigate()
+
+  // 現場オーナーだけが 工区を 消せる
+  const userRolesByProject = useProjectListStore((s) => s.userRolesByProject)
+  const fetchUserRoles = useProjectListStore((s) => s.fetchUserRoles)
+  // 役割は 現場一覧の 画面で 読んでいる。設定を 直接 開いた ときは 空なので、
+  // ここでも 読む (空だと オーナーでも 削除欄が 出ない)
+  useEffect(() => {
+    void fetchUserRoles()
+  }, [fetchUserRoles])
+  const isOwner =
+    currentFarm != null &&
+    userRolesByProject.get(currentFarm.project_id) === 'owner'
+
+  // 作成者 / 閲覧履歴
+  const [creatorName, setCreatorName] = useState<string | null>(null)
+  const [views, setViews] = useState<FarmViewRow[]>([])
+  // 削除は 工区名を 手で 入れた ときだけ 通す
+  const [deleteInput, setDeleteInput] = useState('')
+  const [deleting, setDeleting] = useState(false)
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   // ファイルストレージは 集計 RPC (get_farm_storage_usage) の 対象外なので
   // ここで 別に 取って 足す。上限が 別建て (20MB) なので 行にも 明記する
@@ -127,6 +165,49 @@ export function FarmSettingsPage() {
     void load()
   }, [load])
 
+  // 作成者の 氏名 と 閲覧履歴。開いた ことも ここで 記録する
+  useEffect(() => {
+    if (!currentFarm) {
+      setCreatorName(null)
+      setViews([])
+      return
+    }
+    const farmId = currentFarm.id
+    let cancelled = false
+    void (async () => {
+      await touchFarmView(farmId)
+      if (cancelled) return
+      try {
+        const rows = await listFarmViews(farmId)
+        if (!cancelled) setViews(rows)
+      } catch {
+        // テーブル 未作成 でも 他の 表示は 出す
+        if (!cancelled) setViews([])
+      }
+      const names = await fetchUserNames([currentFarm.user_id])
+      if (!cancelled) setCreatorName(names.get(currentFarm.user_id) ?? null)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [currentFarm])
+
+  const handleDelete = async () => {
+    if (!currentFarm || !isOwner) return
+    if (deleteInput.trim() !== currentFarm.name) return
+    setDeleting(true)
+    setError(null)
+    try {
+      await deleteFarm(currentFarm.id)
+      // 消した 工区の 画面に 留まらせない
+      navigate('/')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '工区の削除に失敗しました')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   if (!currentFarm) {
     return (
       <div className="h-full flex items-center justify-center text-slate-500 text-sm">
@@ -183,6 +264,53 @@ export function FarmSettingsPage() {
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {/* オルソ画像のアップロード。日常的に押すものではないので全体図から移した */}
         <OrthophotoUploadSection farmId={currentFarm.id} />
+
+        {/* この工区について: 作成 と 閲覧の 履歴。編集は しない 表示だけの 欄 */}
+        <section className="bg-white border rounded-lg p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <Eye className="h-4 w-4 text-slate-500" />
+            <h2 className="text-base font-semibold">この工区について</h2>
+          </div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-20 shrink-0">作成日</span>
+              <span className="font-mono">{formatDateTime(currentFarm.created_at)}</span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-20 shrink-0">作成者</span>
+              <span className="truncate">{creatorName ?? '(不明)'}</span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-20 shrink-0">最終閲覧日</span>
+              <span className="font-mono">
+                {views.length > 0 ? formatDateTime(views[0].viewedAt) : '-'}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-20 shrink-0">閲覧者</span>
+              <span className="truncate">
+                {views.length > 0 ? views[0].userName ?? '(不明)' : '-'}
+              </span>
+            </div>
+          </div>
+          {views.length > 1 && (
+            <details className="text-xs text-slate-600">
+              <summary className="cursor-pointer text-slate-500">
+                これまでの閲覧者 ({views.length})
+              </summary>
+              <ul className="mt-1 space-y-0.5">
+                {views.map((v) => (
+                  <li key={v.userId} className="flex gap-2">
+                    <span className="font-mono text-slate-500 shrink-0">
+                      {formatDateTime(v.viewedAt)}
+                    </span>
+                    <span className="truncate">{v.userName ?? '(不明)'}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </section>
 
         {/* 工区情報 (工区名 / 説明 / 着手日 / 完成日) — blur で即保存 */}
         <section className="bg-white border rounded-lg p-4 space-y-3">
@@ -401,6 +529,44 @@ export function FarmSettingsPage() {
             </>
           ) : null}
         </section>
+
+        {/* 工区の削除。現場オーナーだけ。取り違え 防止に 工区名を 打たせる */}
+        {isOwner && (
+          <section className="bg-white border border-red-200 rounded-lg p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <Trash2 className="h-4 w-4 text-red-600" />
+              <h2 className="text-base font-semibold text-red-700">工区の削除</h2>
+            </div>
+            <p className="text-sm text-slate-600">
+              この工区をゴミ箱に移します。座標・測設記録・写真・ファイルなど、
+              工区に紐づくものは一緒に見えなくなります。
+              <br />
+              取り違えを防ぐため、確認として工区名{' '}
+              <span className="font-mono font-semibold text-slate-800">{currentFarm.name}</span>{' '}
+              を入力してください。
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={deleteInput}
+                onChange={(e) => setDeleteInput(e.target.value)}
+                placeholder="工区名を入力"
+                className="px-2 py-1 border rounded text-sm w-64"
+              />
+              <button
+                type="button"
+                onClick={() => void handleDelete()}
+                disabled={deleting || deleteInput.trim() !== currentFarm.name}
+                className="px-3 py-1.5 bg-red-600 text-white rounded text-sm font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {deleting ? '削除中…' : 'この工区を削除'}
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              削除した工区はゴミ箱から元に戻せます。
+            </p>
+          </section>
+        )}
       </div>
     </div>
   )
