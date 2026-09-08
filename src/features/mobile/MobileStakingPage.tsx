@@ -11,7 +11,6 @@ import {
   ArrowUp,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Loader2,
   CloudOff,
   Circle as CircleIcon,
@@ -94,6 +93,7 @@ import {
 } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
+import { useLayerOrder } from '@/features/orthophoto/OverviewLayerPanel'
 import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
 import type { Feature, Polygon as GeoJsonPolygon } from 'geojson'
@@ -1102,28 +1102,6 @@ export function MobileStakingPage() {
   const [hiddenSubTypes, setHiddenSubTypes] = useState<Set<string>>(new Set())
   // 表示設定パネル（コンパス・点名・点種フィルタ・地番・背景地図）の表示
   const [showDisplaySettings, setShowDisplaySettings] = useState(false)
-  // 表示設定パネル内の各カテゴリの折りたたみ状態 (localStorage 永続化)
-  const [displayExpanded, setDisplayExpanded] = useState<{
-    subType: boolean
-    stakeStatus: boolean
-  }>(() => {
-    try {
-      const raw = localStorage.getItem('mobile:staking:displayExpanded')
-      if (raw) {
-        const parsed = JSON.parse(raw) as { subType?: boolean; stakeStatus?: boolean }
-        return {
-          subType: parsed.subType ?? true,
-          stakeStatus: parsed.stakeStatus ?? false,
-        }
-      }
-    } catch { /* ignore */ }
-    return { subType: true, stakeStatus: false }
-  })
-  useEffect(() => {
-    try {
-      localStorage.setItem('mobile:staking:displayExpanded', JSON.stringify(displayExpanded))
-    } catch { /* ignore */ }
-  }, [displayExpanded])
   // 写真 / メモ の 表示 (全体図の レイヤに 合わせる。既定 ON)
   const [showPhotoLayer, setShowPhotoLayer] = useState<boolean>(() => {
     try { return localStorage.getItem('mobile:staking:showPhotoLayer') !== '0' } catch { return true }
@@ -1852,6 +1830,42 @@ export function MobileStakingPage() {
     for (const d of drawingItems) if (d.layer) set.add(d.layer)
     return Array.from(set)
   }, [drawingItems])
+
+  // ---- ペイント作図の 表示 / 非表示 ----
+  // 「隠しているレイヤ」は 全体図の レイヤパネルと 同じ localStorage を 使う ので、
+  // 同じ 端末なら PC 表示と スマホ表示で 見え方が 揃う。
+  const { hidden: hiddenPaintLayers, toggleHidden: togglePaintLayerHidden } = useLayerOrder(
+    farm?.id ?? '',
+    existingLayers,
+    [],
+  )
+  /** 実際に 描かれている レイヤ だけ (件数つき)。 空の レイヤは 出さない */
+  const paintLayerStats = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const d of drawingItems) {
+      // レイヤ 未設定 の 要素 は MapDrawingLayer と 同じ '0' で 束ねる
+      const l = d.layer ?? '0'
+      m.set(l, (m.get(l) ?? 0) + 1)
+    }
+    const order = [...DEFAULT_LAYERS] as string[]
+    return Array.from(m, ([name, count]) => ({ name, count })).sort((a, b) => {
+      const ia = order.indexOf(a.name)
+      const ib = order.indexOf(b.name)
+      if (ia !== ib) return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib)
+      return a.name.localeCompare(b.name)
+    })
+  }, [drawingItems])
+  const [showPaintLayer, setShowPaintLayer] = useState<boolean>(() => {
+    try { return localStorage.getItem('mobile:staking:showPaintLayer') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('mobile:staking:showPaintLayer', showPaintLayer ? '1' : '0') } catch { /* ignore */ }
+  }, [showPaintLayer])
+  /** 親トグルが OFF の 間は 全レイヤを 隠す */
+  const effectiveHiddenPaintLayers = useMemo(
+    () => (showPaintLayer ? hiddenPaintLayers : paintLayerStats.map((l) => l.name)),
+    [showPaintLayer, hiddenPaintLayers, paintLayerStats],
+  )
 
   // 方位センサー（DeviceOrientation）リスナー
   useEffect(() => {
@@ -5144,65 +5158,32 @@ export function MobileStakingPage() {
             </span>
           </label>
           {showTargets && subTypeStats.length > 0 && (
-            <div className="pl-7 space-y-1 text-xs">
-              {/* 点種 (折りたたみ) */}
-              {subTypeStats.length > 0 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setDisplayExpanded((s) => ({ ...s, subType: !s.subType }))
-                    }
-                    className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900"
-                  >
-                    {displayExpanded.subType ? (
-                      <ChevronDown className="h-3 w-3" />
-                    ) : (
-                      <ChevronRight className="h-3 w-3" />
-                    )}
-                    <span>
-                      点種 ({subTypeStats.length - hiddenSubTypes.size}/
-                      {subTypeStats.length})
-                    </span>
-                  </button>
-                  {displayExpanded.subType &&
-                    subTypeStats.map((s) => {
-                      const visible = !hiddenSubTypes.has(s.code)
-                      return (
-                        <label
-                          key={s.code}
-                          className="flex items-center gap-2 cursor-pointer pl-4"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={visible}
-                            onChange={() =>
-                              setHiddenSubTypes((prev) => {
-                                const next = new Set(prev)
-                                if (next.has(s.code)) next.delete(s.code)
-                                else next.add(s.code)
-                                return next
-                              })
-                            }
-                            className="h-3.5 w-3.5"
-                          />
-                          <span>{s.label}</span>
-                          <span className="text-[10px] text-slate-500">
-                            ({s.count})
-                          </span>
-                        </label>
-                      )
-                    })}
-                  {displayExpanded.subType && hiddenSubTypes.size > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setHiddenSubTypes(new Set())}
-                      className="text-[11px] text-blue-600 hover:underline pl-4"
-                    >
-                      全ての点種を表示
-                    </button>
-                  )}
-                </>
+            <div className="pl-7 flex flex-wrap items-center gap-1">
+              <span className="text-[10px] text-slate-500 mr-0.5">点種</span>
+              {subTypeStats.map((st) => (
+                <ChipToggle
+                  key={st.code}
+                  on={!hiddenSubTypes.has(st.code)}
+                  label={st.label}
+                  count={st.count}
+                  onClick={() =>
+                    setHiddenSubTypes((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(st.code)) next.delete(st.code)
+                      else next.add(st.code)
+                      return next
+                    })
+                  }
+                />
+              ))}
+              {hiddenSubTypes.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setHiddenSubTypes(new Set())}
+                  className="text-[10px] text-blue-600 hover:underline px-1"
+                >
+                  全表示
+                </button>
               )}
             </div>
           )}
@@ -5268,42 +5249,30 @@ export function MobileStakingPage() {
                   {openChannels.map((ch) => {
                     const parent = `ch:${ch.id}`
                     return (
-                      <div key={ch.id}>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={subOn(parent)}
-                            onChange={() => setSubVis(parent, !subOn(parent))}
-                            className="h-3.5 w-3.5"
-                          />
-                          <span className="text-[11px] text-slate-700 truncate">{ch.name}</span>
-                        </label>
-                        {subOn(parent) && (
-                          <div className="ml-5 mt-0.5 space-y-0.5">
-                            {[
-                              { sub: 'center', label: '中心線' },
-                              { sub: 'stakes', label: '幅杭' },
-                              { sub: 'vertices', label: '線形点 (BP/IP/EP)' },
-                              { sub: 'stations', label: '中間点' },
-                            ].map((c) => {
-                              const k = `${parent}:${c.sub}`
-                              return (
-                                <label
-                                  key={k}
-                                  className="flex items-center gap-2 cursor-pointer"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={subOn(k)}
-                                    onChange={() => setSubVis(k, !subOn(k))}
-                                    className="h-3.5 w-3.5"
-                                  />
-                                  <span className="text-[11px] text-slate-600">{c.label}</span>
-                                </label>
-                              )
-                            })}
-                          </div>
-                        )}
+                      <div key={ch.id} className="flex flex-wrap items-center gap-1">
+                        <ChipToggle
+                          on={subOn(parent)}
+                          label={ch.name}
+                          onClick={() => setSubVis(parent, !subOn(parent))}
+                        />
+                        {subOn(parent) &&
+                          [
+                            { sub: 'center', label: '中心線' },
+                            { sub: 'stakes', label: '幅杭' },
+                            { sub: 'vertices', label: '線形点' },
+                            { sub: 'stations', label: '中間点' },
+                          ].map((c) => {
+                            const k = `${parent}:${c.sub}`
+                            return (
+                              <ChipToggle
+                                key={k}
+                                on={subOn(k)}
+                                label={c.label}
+                                small
+                                onClick={() => setSubVis(k, !subOn(k))}
+                              />
+                            )
+                          })}
                       </div>
                     )
                   })}
@@ -5314,14 +5283,15 @@ export function MobileStakingPage() {
 
 
           {/* TIN (現況 / 設計面)。全体図と 同じ 3 サブ (色分けメッシュ / 等高線 /
-              ワイヤーフレーム)。データが 無い 面は 出さない */}
+              ワイヤーフレーム)。データが 無い 面は 出さない。
+              サブは 横並びの ボタン に して 縦を 詰める */}
           {[
             { key: 'tin:ground', label: '現況 (LandXML)', tin: groundTin },
             { key: 'tin:design', label: '設計面 (LandXML)', tin: designTin },
           ]
             .filter((g) => g.tin != null)
             .map((g) => (
-              <div key={g.key}>
+              <div key={g.key} className="flex flex-wrap items-center gap-1">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -5331,30 +5301,55 @@ export function MobileStakingPage() {
                   />
                   <span>{g.label}</span>
                 </label>
-                {subOn(g.key) && (
-                  <div className="ml-6 mt-0.5 space-y-0.5">
-                    {[
-                      { sub: 'mesh', label: '色分けメッシュ' },
-                      { sub: 'contour', label: '等高線' },
-                      { sub: 'wireframe', label: 'ワイヤーフレーム' },
-                    ].map((c) => {
-                      const k = `${g.key}:${c.sub}`
-                      return (
-                        <label key={k} className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={subOn(k)}
-                            onChange={() => setSubVis(k, !subOn(k))}
-                            className="h-3.5 w-3.5"
-                          />
-                          <span className="text-[11px] text-slate-600">{c.label}</span>
-                        </label>
-                      )
-                    })}
-                  </div>
-                )}
+                {subOn(g.key) &&
+                  [
+                    { sub: 'mesh', label: 'メッシュ' },
+                    { sub: 'contour', label: '等高線' },
+                    { sub: 'wireframe', label: 'ワイヤー' },
+                  ].map((c) => {
+                    const k = `${g.key}:${c.sub}`
+                    return (
+                      <ChipToggle
+                        key={k}
+                        on={subOn(k)}
+                        label={c.label}
+                        small
+                        onClick={() => setSubVis(k, !subOn(k))}
+                      />
+                    )
+                  })}
               </div>
             ))}
+
+          {/* ペイント作図。 レイヤ ごとに 出し分ける (全体図の レイヤパネルと
+              同じ 「隠しているレイヤ」を 端末内で 共有する) */}
+          {paintLayerStats.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showPaintLayer}
+                  onChange={() => setShowPaintLayer((v) => !v)}
+                  className="h-4 w-4"
+                />
+                <span>作図</span>
+                <span className="text-[11px] text-slate-500">
+                  ({drawingItems.length})
+                </span>
+              </label>
+              {showPaintLayer &&
+                paintLayerStats.map((l) => (
+                  <ChipToggle
+                    key={l.name}
+                    on={!hiddenPaintLayers.includes(l.name)}
+                    label={l.name === '0' ? 'レイヤなし' : l.name}
+                    count={l.count}
+                    small
+                    onClick={() => togglePaintLayerHidden(l.name)}
+                  />
+                ))}
+            </div>
+          )}
 
 
           {/* 写真 (全体図の レイヤに 合わせる) */}
@@ -5450,62 +5445,37 @@ export function MobileStakingPage() {
             </label>
           )}
 
-          {/* 設置状態フィルタ (折りたたみ)。PC と mapViewStore で共有 */}
-          <button
-            type="button"
-            onClick={() =>
-              setDisplayExpanded((s) => ({
-                ...s,
-                stakeStatus: !s.stakeStatus,
-              }))
-            }
-            className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900 border-t pt-1 mt-1 w-full"
-          >
-            {displayExpanded.stakeStatus ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
-            <span>
-              設置状態 ({visibleStakeStatuses.size}/
-              {STAKE_STATUS_OPTIONS.length})
+          {/* 設置状態フィルタ。PC と mapViewStore で共有。
+              項目が 増えても 縦に 伸びない よう 横並びの ボタン に する */}
+          <div className="flex flex-wrap items-center gap-1 border-t pt-1 mt-1">
+            <span className="text-[10px] text-slate-500 mr-0.5">
+              設置状態 ({visibleStakeStatuses.size}/{STAKE_STATUS_OPTIONS.length})
             </span>
-          </button>
-          {displayExpanded.stakeStatus &&
-            STAKE_STATUS_OPTIONS.map((s) => {
-              const on = visibleStakeStatuses.has(s)
+            {STAKE_STATUS_OPTIONS.map((st) => {
+              const on = visibleStakeStatuses.has(st)
               return (
-                <label
-                  key={s}
-                  className="flex items-center gap-2 cursor-pointer pl-4"
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => toggleVisibleStakeStatus(st)}
+                  className={`px-1.5 py-0.5 text-[10px] font-medium border rounded ${
+                    on ? STAKE_STATUS_BADGE[st] : 'bg-white text-slate-400 border-slate-200'
+                  }`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={on}
-                    onChange={() => toggleVisibleStakeStatus(s)}
-                    className="h-3.5 w-3.5"
-                  />
-                  <span
-                    className={`px-1.5 py-0.5 text-[10px] font-medium border rounded ${STAKE_STATUS_BADGE[s]}`}
-                  >
-                    {STAKE_STATUS_LABEL[s]}
-                  </span>
-                </label>
+                  {STAKE_STATUS_LABEL[st]}
+                </button>
               )
             })}
-          {displayExpanded.stakeStatus &&
-            visibleStakeStatuses.size < STAKE_STATUS_OPTIONS.length && (
+            {visibleStakeStatuses.size < STAKE_STATUS_OPTIONS.length && (
               <button
                 type="button"
-                onClick={() =>
-                  setVisibleStakeStatuses(new Set(STAKE_STATUS_OPTIONS))
-                }
-                className="text-[11px] text-blue-600 hover:underline pl-4"
+                onClick={() => setVisibleStakeStatuses(new Set(STAKE_STATUS_OPTIONS))}
+                className="text-[10px] text-blue-600 hover:underline px-1"
               >
-                全ての設置状態を表示
+                全表示
               </button>
             )}
-
+          </div>
 
         </div>
       )}
@@ -6401,6 +6371,7 @@ export function MobileStakingPage() {
             snapTypes={snapTypes}
             extraSnapPoints={extraSnapPoints}
             extraSegments={extraSegments}
+            hiddenLayers={effectiveHiddenPaintLayers}
           />
           )}
         </MapContainer>
@@ -8963,6 +8934,44 @@ function FreePointDialog({
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * 表示設定パネル の サブ項目 用 の 小さな トグルボタン。
+ *
+ * 縦に 積む チェックリスト だと 線形物 や 点種 が 増える ほど パネルが
+ * 縦長に なって スマホ の 画面を 埋める ので、サブ項目 は これで 横に 流す。
+ */
+function ChipToggle({
+  on,
+  label,
+  count,
+  small,
+  onClick,
+}: {
+  on: boolean
+  label: string
+  count?: number
+  small?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={on}
+      className={`px-2 rounded-full border leading-none whitespace-nowrap ${
+        small ? 'py-1 text-[10px]' : 'py-1.5 text-[11px]'
+      } ${
+        on
+          ? 'bg-blue-600 text-white border-blue-600'
+          : 'bg-white text-slate-400 border-slate-300'
+      }`}
+    >
+      {label}
+      {count != null && <span className="ml-1 opacity-75">{count}</span>}
+    </button>
   )
 }
 
