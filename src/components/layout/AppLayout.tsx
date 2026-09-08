@@ -38,6 +38,7 @@ import {
   FileText,
   ShieldCheck,
   ClipboardList,
+  Megaphone,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -402,19 +403,8 @@ export function AppLayout() {
                 メンバー
               </Link>
             )}
-            {/* サイトオーナー: 組織・申込・地番マップ を 「サイト管理者」 に 統合 */}
-            {isAdmin(user?.email) && (
-              <>
-                <SiteAdminMenu />
-                <Link
-                  to="/admin/announcements"
-                  className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
-                  title="お知らせ管理"
-                >
-                  お知らせ
-                </Link>
-              </>
-            )}
+            {/* サイトオーナー: 組織・申込・お知らせ・地番マップ を 「サイト管理者」 に 統合 */}
+            {isAdmin(user?.email) && <SiteAdminMenu />}
             {/* 意見・要望メール */}
             <FeedbackButton variant="pc" />
 
@@ -663,7 +653,7 @@ export function AppLayout() {
 }
 
 /** ヘッダの 「サイト管理者」 メニュー。 サイトオーナー 専用 の 管理画面
- *  (組織・メンバー / 申込 / 地番マップ) を 1 つ に 集約 する。 */
+ *  (組織・メンバー / 申込 / お知らせ / 地番マップ) を 1 つ に 集約 する。 */
 function SiteAdminMenu() {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -682,6 +672,7 @@ function SiteAdminMenu() {
   const items = [
     { to: '/admin/organizations', label: '組織・メンバー', icon: Users },
     { to: '/admin/signups', label: '申込', icon: ClipboardList },
+    { to: '/admin/announcements', label: 'お知らせ', icon: Megaphone },
     { to: '/admin/parcel-maps', label: '地番マップ', icon: LandPlot },
   ]
 
