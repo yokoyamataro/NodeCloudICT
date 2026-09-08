@@ -36,6 +36,8 @@ import {
   Users,
   KeyRound,
   FileText,
+  ShieldCheck,
+  ClipboardList,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -56,6 +58,9 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { FarmPresenceBadge } from '@/components/layout/FarmPresenceBadge'
+import { FarmChatIconButton } from '@/features/chat/FarmChatIconButton'
+import { FarmChatSheet } from '@/features/chat/FarmChatSheet'
+import { useFarmChatStore } from '@/stores/farmChatStore'
 import { isNavVisibleForCategory } from '@/lib/projectCategory'
 
 interface NavItem {
@@ -173,6 +178,24 @@ export function AppLayout() {
   const { currentProject, projects, fetchProjects } = useProjectListStore()
   const fetchUserRoles = useProjectListStore((s) => s.fetchUserRoles)
   const { currentFarm, setCurrentFarm, farms, fetchFarms } = useFarmStore()
+  const [chatOpen, setChatOpen] = useState(false)
+  const subscribeFarmChat = useFarmChatStore((s) => s.subscribe)
+  const unsubscribeFarmChat = useFarmChatStore((s) => s.unsubscribe)
+
+  // ヘッダのチャットボタンに 未読数 を 出すため、開いている 工区 を 購読する。
+  // 工区一覧 (ProjectListPage) は 自前で 全工区を 購読しており、store の
+  // subscribe() は 先に unsubscribe() するので、その画面では 手を出さない。
+  const onProjectList = location.pathname.startsWith('/projects/')
+  useEffect(() => {
+    if (!currentFarm || onProjectList) return
+    subscribeFarmChat([currentFarm.id])
+    return () => unsubscribeFarmChat()
+  }, [currentFarm, onProjectList, subscribeFarmChat, unsubscribeFarmChat])
+
+  // 工区を 切り替えたら チャットは 閉じる
+  useEffect(() => {
+    setChatOpen(false)
+  }, [currentFarm?.id])
 
   // リロード時の復帰: currentProject/currentFarm は localStorage から復元されるが、
   // 一覧（projects/farms/userRoles）は揮発するため、座標系の解決や 権限判定のために取り直す。
@@ -361,7 +384,6 @@ export function AppLayout() {
                   <>
                     <span className="text-slate-500 mx-1">／</span>
                     <span className="text-slate-200 font-medium">{currentFarm.name}</span>
-                    <FarmPresenceBadge farmId={currentFarm.id} />
                   </>
                 )}
               </span>
@@ -380,36 +402,16 @@ export function AppLayout() {
                 メンバー
               </Link>
             )}
-            {/* サイトオーナー: 各種管理画面。組織・メンバーは統合済み */}
+            {/* サイトオーナー: 組織・申込・地番マップ を 「サイト管理者」 に 統合 */}
             {isAdmin(user?.email) && (
               <>
-                <Link
-                  to="/admin/organizations"
-                  className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
-                  title="組織・メンバー管理"
-                >
-                  組織・メンバー
-                </Link>
-                <Link
-                  to="/admin/signups"
-                  className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
-                  title="申し込み管理"
-                >
-                  申込
-                </Link>
+                <SiteAdminMenu />
                 <Link
                   to="/admin/announcements"
                   className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
                   title="お知らせ管理"
                 >
                   お知らせ
-                </Link>
-                <Link
-                  to="/admin/parcel-maps"
-                  className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
-                  title="地番マップ (法務省地図)"
-                >
-                  地番マップ
                 </Link>
               </>
             )}
@@ -448,6 +450,20 @@ export function AppLayout() {
                 <ExternalLink className="h-4 w-4" />
                 地図ウィンドウ
               </button>
+            )}
+
+            {/* 共同作業メンバー バッジ と その右 の チャットボタン。
+                ログインユーザー表示 の 左 に 置く */}
+            {currentFarm && (
+              <div className="flex items-center gap-1">
+                <FarmPresenceBadge farmId={currentFarm.id} />
+                <FarmChatIconButton
+                  farmId={currentFarm.id}
+                  onClick={() => setChatOpen(true)}
+                  size="md"
+                  tone="dark"
+                />
+              </div>
             )}
 
             <div className="flex items-center gap-2">
@@ -632,7 +648,71 @@ export function AppLayout() {
         <Outlet />
       </main>
     </div>
+
+    {/* 工区チャット */}
+    {chatOpen && currentFarm && (
+      <FarmChatSheet
+        farmId={currentFarm.id}
+        farmName={currentFarm.name}
+        projectId={currentFarm.project_id}
+        onClose={() => setChatOpen(false)}
+      />
+    )}
   </div>
+  )
+}
+
+/** ヘッダの 「サイト管理者」 メニュー。 サイトオーナー 専用 の 管理画面
+ *  (組織・メンバー / 申込 / 地番マップ) を 1 つ に 集約 する。 */
+function SiteAdminMenu() {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  // 外側クリックで閉じる
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (!rootRef.current) return
+      if (!rootRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const items = [
+    { to: '/admin/organizations', label: '組織・メンバー', icon: Users },
+    { to: '/admin/signups', label: '申込', icon: ClipboardList },
+    { to: '/admin/parcel-maps', label: '地番マップ', icon: LandPlot },
+  ]
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+        title="サイト管理者向けの管理画面"
+      >
+        <ShieldCheck className="h-4 w-4" />
+        サイト管理者
+        <ChevronDown className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-52 bg-white text-slate-800 border border-slate-200 rounded-md shadow-lg z-[5000] overflow-hidden">
+          {items.map((it) => (
+            <Link
+              key={it.to}
+              to={it.to}
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50"
+            >
+              <it.icon className="h-4 w-4 text-slate-500" />
+              {it.label}
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
