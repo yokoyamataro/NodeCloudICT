@@ -27,6 +27,7 @@ import {
   usedBytes,
   type FarmFileRow,
 } from '@/lib/farmFiles'
+import { OrthophotoUploadSection } from '@/features/orthophoto/OrthophotoUploadSection'
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -284,6 +285,12 @@ export function FarmFilesPage() {
             })}
           </div>
         )}
+
+        {/* オルソ画像。 ファイル (PDF/DXF 等) とは 別枠 の 保存先 だが、
+            「工区に 取り込む 資料」 という 意味では 同じ なので ここに 集約する */}
+        <div className="mt-4">
+          <OrthophotoUploadSection farmId={farmId} />
+        </div>
       </div>
 
       {/* DXF ビューア。横断図の DXF 取込と 同じ 部品を そのまま 使う */}

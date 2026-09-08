@@ -3,7 +3,6 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, HardDrive, Layers, Loader2, Pencil, RefreshCw, Trash2, Eye } from 'lucide-react'
-import { OrthophotoUploadSection } from '@/features/orthophoto/OrthophotoUploadSection'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useNavigate } from 'react-router-dom'
@@ -262,56 +261,6 @@ export function FarmSettingsPage() {
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1 overflow-auto p-4 space-y-4">
-        {/* オルソ画像のアップロード。日常的に押すものではないので全体図から移した */}
-        <OrthophotoUploadSection farmId={currentFarm.id} />
-
-        {/* この工区について: 作成 と 閲覧の 履歴。編集は しない 表示だけの 欄 */}
-        <section className="bg-white border rounded-lg p-4 space-y-2">
-          <div className="flex items-center gap-2">
-            <Eye className="h-4 w-4 text-slate-500" />
-            <h2 className="text-base font-semibold">この工区について</h2>
-          </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-            <div className="flex gap-2">
-              <span className="text-slate-500 w-20 shrink-0">作成日</span>
-              <span className="font-mono">{formatDateTime(currentFarm.created_at)}</span>
-            </div>
-            <div className="flex gap-2">
-              <span className="text-slate-500 w-20 shrink-0">作成者</span>
-              <span className="truncate">{creatorName ?? '(不明)'}</span>
-            </div>
-            <div className="flex gap-2">
-              <span className="text-slate-500 w-20 shrink-0">最終閲覧日</span>
-              <span className="font-mono">
-                {views.length > 0 ? formatDateTime(views[0].viewedAt) : '-'}
-              </span>
-            </div>
-            <div className="flex gap-2">
-              <span className="text-slate-500 w-20 shrink-0">閲覧者</span>
-              <span className="truncate">
-                {views.length > 0 ? views[0].userName ?? '(不明)' : '-'}
-              </span>
-            </div>
-          </div>
-          {views.length > 1 && (
-            <details className="text-xs text-slate-600">
-              <summary className="cursor-pointer text-slate-500">
-                これまでの閲覧者 ({views.length})
-              </summary>
-              <ul className="mt-1 space-y-0.5">
-                {views.map((v) => (
-                  <li key={v.userId} className="flex gap-2">
-                    <span className="font-mono text-slate-500 shrink-0">
-                      {formatDateTime(v.viewedAt)}
-                    </span>
-                    <span className="truncate">{v.userName ?? '(不明)'}</span>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </section>
-
         {/* 工区情報 (工区名 / 説明 / 着手日 / 完成日) — blur で即保存 */}
         <section className="bg-white border rounded-lg p-4 space-y-3">
           <div className="flex items-center gap-2">
@@ -382,6 +331,53 @@ export function FarmSettingsPage() {
               />
             </div>
           </div>
+        </section>
+
+        {/* この工区について: 作成 と 閲覧の 履歴。編集は しない 表示だけの 欄 */}
+        <section className="bg-white border rounded-lg p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <Eye className="h-4 w-4 text-slate-500" />
+            <h2 className="text-base font-semibold">この工区について</h2>
+          </div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-20 shrink-0">作成日</span>
+              <span className="font-mono">{formatDateTime(currentFarm.created_at)}</span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-20 shrink-0">作成者</span>
+              <span className="truncate">{creatorName ?? '(不明)'}</span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-20 shrink-0">最終閲覧日</span>
+              <span className="font-mono">
+                {views.length > 0 ? formatDateTime(views[0].viewedAt) : '-'}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-20 shrink-0">閲覧者</span>
+              <span className="truncate">
+                {views.length > 0 ? views[0].userName ?? '(不明)' : '-'}
+              </span>
+            </div>
+          </div>
+          {views.length > 1 && (
+            <details className="text-xs text-slate-600">
+              <summary className="cursor-pointer text-slate-500">
+                これまでの閲覧者 ({views.length})
+              </summary>
+              <ul className="mt-1 space-y-0.5">
+                {views.map((v) => (
+                  <li key={v.userId} className="flex gap-2">
+                    <span className="font-mono text-slate-500 shrink-0">
+                      {formatDateTime(v.viewedAt)}
+                    </span>
+                    <span className="truncate">{v.userName ?? '(不明)'}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </section>
 
         {/* 座標数 / 地番数 の工区使用量 (旧: 地番管理ページ ヘッダ に表示) */}
@@ -520,7 +516,7 @@ export function FarmSettingsPage() {
               </table>
               <p className="mt-3 text-[11px] text-slate-500 leading-relaxed">
                 ※ オルソタイル (登録済オルソ画像) はここには含まれません。オルソ画像は
-                このページ上部の「オルソ画像」から追加・削除できます。
+                「ファイル」画面の「オルソ画像」から追加・削除できます。
                 <br />
                 ※「ファイル」は 工区単位で 別枠の 上限 (20MB) が あり、
                 アップロードから 3 ヶ月で 失効します。左メニューの「ファイル」から
