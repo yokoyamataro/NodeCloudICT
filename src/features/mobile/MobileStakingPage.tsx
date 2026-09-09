@@ -80,6 +80,7 @@ import {
   type CalcPickedLine,
   type CalcSelection,
 } from '@/features/coordinates/CoordinateCalcModal'
+import { fetchUserNames } from '@/lib/farmViews'
 import { useAttachmentStore } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
@@ -941,6 +942,31 @@ export function MobileStakingPage() {
     useState<((line: CalcPickedLine) => void) | null>(null)
   /** 座標計算で 今 選ばれている 点 / 線 / 結果。地図に 重ねて 出す */
   const [calcSelection, setCalcSelection] = useState<CalcSelection | null>(null)
+  // 座標一覧の 「更新者」。 ID の 断片 では 誰か 分からない ので、
+  // profiles.full_name (氏名) を 引いて 出す。
+  const [updaterNames, setUpdaterNames] = useState<Map<string, string>>(new Map())
+  const updaterIdsKey = useMemo(
+    () =>
+      Array.from(new Set(coordinates.map((c) => c.updatedBy).filter(Boolean) as string[]))
+        .sort()
+        .join(','),
+    [coordinates],
+  )
+  useEffect(() => {
+    const ids = updaterIdsKey ? updaterIdsKey.split(',') : []
+    if (ids.length === 0) {
+      setUpdaterNames(new Map())
+      return
+    }
+    let cancelled = false
+    void fetchUserNames(ids).then((m) => {
+      if (!cancelled) setUpdaterNames(m)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [updaterIdsKey])
+
   /** 座標計算に 渡す 点。 毎描画 作り直すと 子側の 参照が 変わり続ける ので 固定する */
   const calcCoordinates = useMemo(
     () =>
@@ -7167,9 +7193,8 @@ export function MobileStakingPage() {
                           })
                         : ''
                       const updatedByLabel = rawCoord?.updatedBy
-                        ? rawCoord.updatedBy === user?.id
-                          ? '自分'
-                          : rawCoord.updatedBy.slice(0, 6)
+                        ? updaterNames.get(rawCoord.updatedBy) ??
+                          (rawCoord.updatedBy === user?.id ? '自分' : rawCoord.updatedBy.slice(0, 6))
                         : ''
                       return (
                         <tr
