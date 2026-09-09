@@ -186,6 +186,11 @@ interface Props {
    */
   variant?: 'floating' | 'bar'
   /**
+   * プルダウン (色 / 線種 / 形状 …) を 上向きに 開くか。
+   * 画面の 下端に 置く スマホの ペイント欄では、下向きだと 画面外に 出てしまう。
+   */
+  dropUp?: boolean
+  /**
    * 共通属性 (レイヤ / 色 / 線種 / 太さ) をツールバーに出すか。
    * 別の場所 (全体図の左パネル) に置く画面では false にする。
    */
@@ -257,6 +262,7 @@ export function MapDrawingToolbar({
   showUndoRedo = true,
   onMemo,
   variant = 'floating',
+  dropUp = false,
   showAttributes = true,
   selectMethod = 'point',
   onChangeSelectMethod,
@@ -281,6 +287,8 @@ export function MapDrawingToolbar({
   // ボタンをタップした時に「今どの形状に入るか」を決めるために保持する。
   const [currentShape, setCurrentShape] = useState<ShapeMode>('line')
   const rootRef = useRef<HTMLDivElement>(null)
+  /** プルダウンの 出る 向き。 dropUp なら ボタンの 上に 出す */
+  const popSide = dropUp ? 'bottom-full mb-1' : 'top-full mt-1'
 
   // mode が形状系に切り替わったら currentShape を追従させる (外部から強制設定された場合)
   useEffect(() => {
@@ -380,7 +388,7 @@ export function MapDrawingToolbar({
           </button>
         )}
         {selectPickerOpen && onChangeSelectMethod && (
-          <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]">
+          <div className={`absolute ${popSide} left-0 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]`}>
             {(['point', 'line', 'rect', 'polygon'] as const).map((m) => (
               <button
                 key={m}
@@ -447,7 +455,7 @@ export function MapDrawingToolbar({
           <ChevronDown className="h-3 w-3" />
         </button>
         {shapePickerOpen && (
-          <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]">
+          <div className={`absolute ${popSide} left-0 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]`}>
             {(['line', 'parallel', 'perp', 'rect', 'circle', 'arc', 'polygon'] as const).map((s) => (
               <button
                 key={s}
@@ -503,7 +511,7 @@ export function MapDrawingToolbar({
           <ChevronDown className="h-3 w-3" />
         </button>
         {measurePickerOpen && (
-          <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]">
+          <div className={`absolute ${popSide} left-0 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]`}>
             {(['measure-dist', 'measure-area', 'measure-perp'] as const).map((m) => (
               <button
                 key={m}
@@ -655,7 +663,7 @@ export function MapDrawingToolbar({
             </button>
           )}
           {snapPickerOpen && onToggleSnapType && (
-            <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[8rem]">
+            <div className={`absolute ${popSide} left-0 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[8rem]`}>
               <div className="px-3 py-1 text-[10px] text-slate-500">吸着させる対象</div>
               {(['vertex', 'intersection', 'center', 'edge'] as const).map((t) => (
                 <label
@@ -750,7 +758,7 @@ export function MapDrawingToolbar({
             <span className="sr-only">色を選ぶ</span>
           </button>
           {colorPickerOpen && (
-            <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg p-2 flex flex-col gap-1 min-w-[9rem]">
+            <div className={`absolute ${popSide} left-0 z-[3000] bg-white border rounded shadow-lg p-2 flex flex-col gap-1 min-w-[9rem]`}>
               <div className="grid grid-cols-4 gap-1">
                 {COLOR_PRESETS.map((c) => (
                   <button
@@ -793,7 +801,7 @@ export function MapDrawingToolbar({
             <ChevronDown className="h-3 w-3" />
           </button>
           {linePickerOpen && (
-            <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]">
+            <div className={`absolute ${popSide} left-0 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]`}>
               {(['solid', 'dashed', 'dotted'] as const).map((s) => (
                 <button
                   key={s}

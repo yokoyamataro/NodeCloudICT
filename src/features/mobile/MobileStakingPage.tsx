@@ -25,7 +25,6 @@ import {
   Download,
   Image as ImageIcon,
   X,
-  GripHorizontal,
   Plus,
   Pen,
   StickyNote,
@@ -873,53 +872,6 @@ export function MobileStakingPage() {
   // ツールバーは常時表示のペイントボタン → モーダルに集約したので、
   // 以前の showDrawing (ツールバーの表示切替) は廃止した。
   const [paintOpen, setPaintOpen] = useState(false)
-  // ペイントの 道具パネル は 指で 動かせる。 地図の 見たい ところに 被った まま
-  // だと 描けない ため。 null = 既定位置 (画面下端 中央)。
-  const paintPanelRef = useRef<HTMLDivElement | null>(null)
-  const paintDragRef = useRef<{ dx: number; dy: number } | null>(null)
-  const [paintPos, setPaintPos] = useState<{ x: number; y: number } | null>(() => {
-    try {
-      const raw = localStorage.getItem('mobile:staking:paintPos')
-      if (!raw) return null
-      const p = JSON.parse(raw) as { x?: number; y?: number }
-      return typeof p.x === 'number' && typeof p.y === 'number' ? { x: p.x, y: p.y } : null
-    } catch { return null }
-  })
-  /** 画面外に 出し切らない よう、掴める 部分を 必ず 残す */
-  const clampPaintPos = useCallback((x: number, y: number) => {
-    const el = paintPanelRef.current
-    const w = el?.offsetWidth ?? 320
-    const KEEP = 80
-    return {
-      x: Math.min(Math.max(x, KEEP - w), window.innerWidth - KEEP),
-      y: Math.min(Math.max(y, 0), window.innerHeight - 44),
-    }
-  }, [])
-  const onPaintDragStart = useCallback((e: React.PointerEvent) => {
-    const el = paintPanelRef.current
-    if (!el) return
-    const r = el.getBoundingClientRect()
-    paintDragRef.current = { dx: e.clientX - r.left, dy: e.clientY - r.top }
-    // 既定位置 (bottom 固定) から 掴んだ 瞬間に、今の 見た目の 位置を 数値化する
-    setPaintPos({ x: r.left, y: r.top })
-    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
-  }, [])
-  const onPaintDragMove = useCallback((e: React.PointerEvent) => {
-    const d = paintDragRef.current
-    if (!d) return
-    e.preventDefault()
-    setPaintPos(clampPaintPos(e.clientX - d.dx, e.clientY - d.dy))
-  }, [clampPaintPos])
-  const onPaintDragEnd = useCallback(() => {
-    if (!paintDragRef.current) return
-    paintDragRef.current = null
-    setPaintPos((p) => {
-      if (p) {
-        try { localStorage.setItem('mobile:staking:paintPos', JSON.stringify(p)) } catch { /* ignore */ }
-      }
-      return p
-    })
-  }, [])
   const [drawingMode, setDrawingMode] = useState<DrawingMode>('off')
   /** 描画中か。ターゲット操作や長押しメニューを止める判定に使う */
   const paintActive = drawingMode !== 'off'
@@ -4388,128 +4340,6 @@ export function MobileStakingPage() {
         />
       )}
 
-      {/* ペイントの道具パネル。既存のツールバーをそのまま入れる。
-          暗幕なし の 浮かぶ パネル で、見出しを 掴んで 好きな 位置に 動かせる。
-          道具を 選んでも 閉じない (描きながら 太さ や 色 を 変えられる) */}
-      {paintOpen && (
-        <div
-          ref={paintPanelRef}
-          className={`fixed z-[3500] bg-white shadow-2xl border border-slate-300 p-3 space-y-3 w-full max-w-md max-h-[80vh] overflow-auto ${
-            paintPos ? 'rounded-2xl' : 'left-1/2 -translate-x-1/2 bottom-0 rounded-t-2xl'
-          }`}
-          style={paintPos ? { left: paintPos.x, top: paintPos.y } : undefined}
-        >
-            <div
-              className="flex items-center justify-between cursor-move select-none"
-              style={{ touchAction: 'none' }}
-              onPointerDown={onPaintDragStart}
-              onPointerMove={onPaintDragMove}
-              onPointerUp={onPaintDragEnd}
-              onPointerCancel={onPaintDragEnd}
-            >
-              {/* 元に戻す / やり直し は 道具の 列に 埋もれると 押しにくいので、
-                  タイトルの 右の 余白に 置く */}
-              <div className="flex items-center gap-1">
-                <GripHorizontal className="h-4 w-4 text-slate-400" />
-                <h3 className="text-sm font-semibold">ペイント</h3>
-                <button
-                  type="button"
-                  onClick={() => void drawingUndo()}
-                  disabled={drawingUndoLen === 0}
-                  title="元に戻す (この画面での操作のみ)"
-                  aria-label="元に戻す"
-                  className="ml-2 w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 disabled:opacity-30"
-                >
-                  <Undo2 className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void drawingRedo()}
-                  disabled={drawingRedoLen === 0}
-                  title="やり直す"
-                  aria-label="やり直す"
-                  className="w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 disabled:opacity-30"
-                >
-                  <Redo2 className="h-4 w-4" />
-                </button>
-              </div>
-              <button
-                onClick={() => setPaintOpen(false)}
-                className="p-1 rounded hover:bg-slate-100"
-                aria-label="閉じる"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            {farm?.id && (
-              <MapDrawingToolbar
-                mode={drawingMode}
-                onChangeMode={(m) => {
-                  setDrawingMode(m)
-                  // 道具を 選んでも パネルは 開いたまま。 描いている 途中で
-                  // 色 や 太さ を 変えたい ことが 多く、毎回 開き直すのは 手間。
-                  // ペイントを やめる (off) ときだけ 畳む
-                  if (m === 'off') setPaintOpen(false)
-                }}
-                color={drawingColor}
-                onChangeColor={(c) => {
-                  setDrawingColor(c)
-                  applyToSelection({ color: c })
-                }}
-                widthPx={drawingWidth}
-                onChangeWidth={(px) => {
-                  setDrawingWidth(px)
-                  applyToSelection({ widthPx: px })
-                }}
-                lineStyle={drawingLineStyle}
-                onChangeLineStyle={(v) => {
-                  setDrawingLineStyle(v)
-                  applyToSelection({ lineStyle: v })
-                }}
-                canUndo={drawingUndoLen > 0}
-                canRedo={drawingRedoLen > 0}
-                onUndo={() => void drawingUndo()}
-                onRedo={() => void drawingRedo()}
-                // 図枠は 用紙に 印刷する 全体図 向けの 道具なので スマホでは 出さない。
-                // undo / redo は 上の タイトル行に 移した
-                showFrame={false}
-                showUndoRedo={false}
-                selectMethod={selectMethod}
-                onChangeSelectMethod={setSelectMethod}
-                snapEnabled={snapEnabled}
-                onToggleSnap={() => setSnapEnabled((v) => !v)}
-                snapTypes={snapTypes}
-                onToggleSnapType={toggleSnapType}
-                layer={drawLayer}
-                onChangeLayer={(l) => {
-                  setDrawLayer(l)
-                  applyToSelection({ layer: l })
-                }}
-                existingLayers={existingLayers}
-                onMemo={() => {
-                  setPaintOpen(false)
-                  setMemoModalState({
-                    lat: currentPos ? currentPos[0] : null,
-                    lng: currentPos ? currentPos[1] : null,
-                  })
-                }}
-              />
-            )}
-            {paintActive && (
-              <button
-                type="button"
-                onClick={() => {
-                  setDrawingMode('off')
-                  setPaintOpen(false)
-                }}
-                className="w-full px-3 py-2 text-sm border rounded-lg text-slate-600 hover:bg-slate-50"
-              >
-                ペイントを終了
-              </button>
-            )}
-        </div>
-      )}
-
       {/* 長押し時の選択シート（測点を追加 / メモを残す） */}
       {longPressChoice && (
         <div
@@ -7393,9 +7223,118 @@ export function MobileStakingPage() {
           </div>
         )}
 
-        {/* MAP モード行: ターゲット設定 → 誘導表示 */}
-        {/* 描画モード中は「ターゲットを選択」の代わりにペイントツールバーを表示 */}
-        {showMap && (selectedTarget ? (
+        {/* ペイント中は 下部の 測定 / カメラ / ターゲット / 現在地 を まるごと
+            ペイント用に 置き換える。 地図を 広く 使いたい ので パネルは 増やさない */}
+        {paintOpen && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              {/* 元に戻す / やり直し は 道具の 列に 埋もれると 押しにくいので、
+                  タイトルの 右の 余白に 置く */}
+              <div className="flex items-center gap-1">
+                <h3 className="text-sm font-semibold">ペイント</h3>
+                <button
+                  type="button"
+                  onClick={() => void drawingUndo()}
+                  disabled={drawingUndoLen === 0}
+                  title="元に戻す (この画面での操作のみ)"
+                  aria-label="元に戻す"
+                  className="ml-2 w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 disabled:opacity-30"
+                >
+                  <Undo2 className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void drawingRedo()}
+                  disabled={drawingRedoLen === 0}
+                  title="やり直す"
+                  aria-label="やり直す"
+                  className="w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 disabled:opacity-30"
+                >
+                  <Redo2 className="h-4 w-4" />
+                </button>
+              </div>
+              <button
+                onClick={() => setPaintOpen(false)}
+                className="p-1 rounded hover:bg-slate-100"
+                aria-label="閉じる"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {farm?.id && (
+              <MapDrawingToolbar
+                // 画面の 下端に 置く ので、プルダウンは 上に 開かせる
+                dropUp
+                mode={drawingMode}
+                onChangeMode={(m) => {
+                  setDrawingMode(m)
+                  // 道具を 選んでも パネルは 開いたまま。 描いている 途中で
+                  // 色 や 太さ を 変えたい ことが 多く、毎回 開き直すのは 手間。
+                  // ペイントを やめる (off) ときだけ 畳む
+                  if (m === 'off') setPaintOpen(false)
+                }}
+                color={drawingColor}
+                onChangeColor={(c) => {
+                  setDrawingColor(c)
+                  applyToSelection({ color: c })
+                }}
+                widthPx={drawingWidth}
+                onChangeWidth={(px) => {
+                  setDrawingWidth(px)
+                  applyToSelection({ widthPx: px })
+                }}
+                lineStyle={drawingLineStyle}
+                onChangeLineStyle={(v) => {
+                  setDrawingLineStyle(v)
+                  applyToSelection({ lineStyle: v })
+                }}
+                canUndo={drawingUndoLen > 0}
+                canRedo={drawingRedoLen > 0}
+                onUndo={() => void drawingUndo()}
+                onRedo={() => void drawingRedo()}
+                // 図枠は 用紙に 印刷する 全体図 向けの 道具なので スマホでは 出さない。
+                // undo / redo は 上の タイトル行に 移した
+                showFrame={false}
+                showUndoRedo={false}
+                selectMethod={selectMethod}
+                onChangeSelectMethod={setSelectMethod}
+                snapEnabled={snapEnabled}
+                onToggleSnap={() => setSnapEnabled((v) => !v)}
+                snapTypes={snapTypes}
+                onToggleSnapType={toggleSnapType}
+                layer={drawLayer}
+                onChangeLayer={(l) => {
+                  setDrawLayer(l)
+                  applyToSelection({ layer: l })
+                }}
+                existingLayers={existingLayers}
+                onMemo={() => {
+                  setPaintOpen(false)
+                  setMemoModalState({
+                    lat: currentPos ? currentPos[0] : null,
+                    lng: currentPos ? currentPos[1] : null,
+                  })
+                }}
+              />
+            )}
+            {paintActive && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDrawingMode('off')
+                  setPaintOpen(false)
+                }}
+                className="w-full px-3 py-2 text-sm border rounded-lg text-slate-600 hover:bg-slate-50"
+              >
+                ペイントを終了
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* MAP モード行: ターゲット設定 → 誘導表示。
+            ペイント中は 上の ペイント欄 に 置き換わる */}
+        {showMap && !paintOpen && (selectedTarget ? (
           <div className="flex flex-col gap-1">
             {/* 1 行目: 前/次 矢印 + 点名 (伸縮) + 解除 X + 矢印/距離。
                 前/次矢印は filteredTargets の並びで 1 つ隣のターゲットに切替。
@@ -7608,6 +7547,7 @@ export function MobileStakingPage() {
         ))}
 
         {/* 現在地 XYZ + 精度（1 行で収めるため余白とコロンを詰める） */}
+        {!paintOpen && (
         <div className="mt-1 text-[11px] font-mono text-slate-600 flex items-center gap-1.5 border-t pt-1 whitespace-nowrap overflow-hidden">
           <span className="text-slate-500">現在地</span>
           {currentXY ? (
@@ -7686,12 +7626,13 @@ export function MobileStakingPage() {
             <span className="text-slate-400">取得中...</span>
           )}
         </div>
+        )}
 
         {/* 操作ボタン: 測定 / カメラ / メモ を等幅で横並びに。
             ターゲット選択中はターゲット行の左に測定ボタンがあるので、この行自体を消す。
             ターゲット未選択時のみ表示（フリー点の記録 or カメラ / メモ）。
             測定中はどちらの状態でも進捗表示は必要なので出す。 */}
-        {(recording || !selectedTarget) && (
+        {!paintOpen && (recording || !selectedTarget) && (
         <div className="mt-1 flex gap-2">
           {!recording ? (
             <>
