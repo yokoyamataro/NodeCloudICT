@@ -316,8 +316,15 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
     onClose()
   }
 
-  // 地図選択中は全画面を覆わず、上部バナーのみ表示（地図をクリック可能にする）
-  if (pickingLabel) {
+  /** 地図から 何かを 選んでいる 最中か */
+  const picking = pickingLabel != null || pickingLineLabel != null
+  /** 選んでいる 間は 説明・結果・追加欄 を 畳んで、地図を 広く 空ける */
+  const hideExtras = compact && picking
+
+  // 中央モーダルは 地図を 覆って しまう ので、選択中は バナーだけ に する。
+  // 下端パネル (スマホ) は 元から 地図が 見えている ので 出したまま にして、
+  // 1 点目を 選んだ 時点で 入力欄に 反映されるように する。
+  if (pickingLabel && !compact) {
     return (
       <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[3000] bg-blue-600 text-white px-4 py-2 rounded-full shadow-lg text-sm flex items-center gap-3">
         <MapPin className="h-4 w-4" />
@@ -328,7 +335,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
       </div>
     )
   }
-  if (pickingLineLabel) {
+  if (pickingLineLabel && !compact) {
     return (
       <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[3000] bg-blue-600 text-white px-4 py-2 rounded-full shadow-lg text-sm flex items-center gap-3">
         <MapPin className="h-4 w-4" />
@@ -362,6 +369,19 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
         <div className={`${compact ? 'px-3 py-1.5' : 'px-4 py-3'} border-b flex items-center gap-2`}>
           <Calculator className="h-4 w-4 text-blue-600" />
           <span className="font-semibold text-sm">座標計算</span>
+          {picking && (
+            <>
+              <span className="text-[11px] text-blue-700 truncate">
+                地図で {pickingLabel ?? pickingLineLabel} をタップ
+              </span>
+              <button
+                onClick={pickingLabel ? cancelPick : cancelLinePick}
+                className="shrink-0 px-1.5 py-0.5 text-[11px] border rounded text-slate-600 hover:bg-slate-100"
+              >
+                中止
+              </button>
+            </>
+          )}
           <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-700">
             <X className="h-5 w-5" />
           </button>
@@ -389,9 +409,11 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
         <div className={`${compact ? 'px-3 py-2 space-y-2' : 'p-4 space-y-3 max-h-[55vh]'} flex-1 overflow-y-auto`}>
           {mode === 'intersection' ? (
             <>
-              <p className={compact ? 'text-[11px] leading-snug text-slate-500' : 'text-xs text-slate-500'}>
-                2 本の線の交点。各線は右方向にオフセット (m) できます。
-              </p>
+              {!hideExtras && (
+                <p className={compact ? 'text-[11px] leading-snug text-slate-500' : 'text-xs text-slate-500'}>
+                  2 本の線の交点。各線は右方向にオフセット (m) できます。
+                </p>
+              )}
               {/* 線 1 本 = 1 行。 点名だけ 出す (座標は 地図で 見える)。
                   「点」= 2 点を 順に タップ、「線」= 地番の 辺 や ペイントの
                   線分 を そのまま 1 本として 選ぶ */}
@@ -412,6 +434,8 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
                 },
               ].map((ln) => {
                 const picked = lineLabelOf(ln.geom, ln.a, ln.b)
+                // この行を 選択中か (「線1 の始点」/「線1」 いずれも 拾う)
+                const rowPicking = (pickingLabel ?? pickingLineLabel ?? '').startsWith(ln.label)
                 return (
                   <div key={ln.key} className="flex items-center gap-1">
                     <span className="w-7 shrink-0 text-[11px] font-medium text-slate-600">
@@ -422,7 +446,9 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
                       onClick={() =>
                         startPointPairPick(ln.label, ln.sa, ln.sb, () => ln.sgeom(null))
                       }
-                      className="flex-1 min-w-0 truncate px-2 py-1 border rounded text-sm text-left hover:bg-blue-50"
+                      className={`flex-1 min-w-0 truncate px-2 py-1 border rounded text-sm text-left hover:bg-blue-50 ${
+                        rowPicking ? 'border-blue-500 ring-1 ring-blue-400 bg-blue-50' : ''
+                      }`}
                       title="2 点を 順に 地図で タップ"
                     >
                       {picked ?? <span className="text-slate-400">2 点を選択</span>}
@@ -498,6 +524,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
           )}
 
           {/* 結果 */}
+          {!hideExtras && (
           <div className={compact ? 'border-t pt-2' : 'border-t pt-3'}>
             <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
               {mode === 'distance' ? (
@@ -530,9 +557,10 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
               <div className="text-sm text-slate-400">点・線を選択してください（平行線は交点なし）</div>
             )}
           </div>
+          )}
 
           {/* 追加（距離モードでは非表示） */}
-          {mode !== 'distance' && (
+          {mode !== 'distance' && !hideExtras && (
           <div className="grid grid-cols-2 gap-2">
             <label className="text-xs text-slate-600">
               点名
@@ -556,6 +584,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
           )}
         </div>
 
+        {!hideExtras && (
         <div className={`${compact ? 'px-3 py-2' : 'px-4 py-3'} border-t flex justify-end gap-2`}>
           <button onClick={onClose} className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50">
             {mode === 'distance' ? '閉じる' : 'キャンセル'}
@@ -570,6 +599,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
             </button>
           )}
         </div>
+        )}
       </div>
     </div>
   )

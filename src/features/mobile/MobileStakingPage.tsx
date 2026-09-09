@@ -6348,24 +6348,23 @@ export function MobileStakingPage() {
                   />
                 )
               })}
+              {/* CircleMarker は overlayPane なので 測点マーカー の 後ろに
+                  隠れる。 仮点 (計算結果) は 前に 出したい ので、markerPane に
+                  入る Marker + zIndexOffset で 描く */}
               {calcSelection.points.map((pt) => {
                 const ll = converter.toLatLng(pt.x, pt.y)
                 const isResult = pt.key === 'result'
+                const color = isResult
+                  ? '#16a34a'
+                  : pt.key.startsWith('l2')
+                    ? '#ea580c'
+                    : '#2563eb'
                 return (
-                  <CircleMarker
+                  <Marker
                     key={`calc-pt-${pt.key}`}
-                    center={[ll.lat, ll.lng]}
-                    radius={isResult ? 7 : 5}
-                    pathOptions={{
-                      color: '#ffffff',
-                      weight: 2,
-                      fillColor: isResult
-                        ? '#16a34a'
-                        : pt.key.startsWith('l2')
-                          ? '#ea580c'
-                          : '#2563eb',
-                      fillOpacity: 1,
-                    }}
+                    position={[ll.lat, ll.lng]}
+                    icon={calcPointIcon(color, isResult)}
+                    zIndexOffset={isResult ? 12000 : 11000}
                     interactive={false}
                   />
                 )
@@ -9057,6 +9056,37 @@ function ChipToggle({
       {count != null && <span className="ml-1 opacity-75">{count}</span>}
     </button>
   )
+}
+
+/**
+ * 座標計算で 選んだ 点 / 計算結果 (仮点) の マーカー。
+ *
+ * CircleMarker だと overlayPane に 入って 測点マーカー の 後ろに 隠れる ため、
+ * markerPane に 入る divIcon で 描き、zIndexOffset で 最前面に 出す。
+ * 仮点は 一回り 大きく し、十字を 添えて 位置が 読めるように する。
+ */
+const calcPointIconCache = new Map<string, L.DivIcon>()
+function calcPointIcon(color: string, isResult: boolean): L.DivIcon {
+  const key = `${color}:${isResult ? 'r' : 'p'}`
+  const hit = calcPointIconCache.get(key)
+  if (hit) return hit
+  const size = isResult ? 20 : 14
+  const dot = isResult ? 10 : 8
+  const cross = isResult
+    ? `<span style="position:absolute;left:50%;top:0;width:2px;height:100%;margin-left:-1px;background:${color}"></span>
+       <span style="position:absolute;top:50%;left:0;height:2px;width:100%;margin-top:-1px;background:${color}"></span>`
+    : ''
+  const icon = L.divIcon({
+    className: '',
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    html: `<div style="position:relative;width:${size}px;height:${size}px">
+      ${cross}
+      <span style="position:absolute;left:50%;top:50%;width:${dot}px;height:${dot}px;margin:-${dot / 2}px 0 0 -${dot / 2}px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 2px rgba(0,0,0,0.5)"></span>
+    </div>`,
+  })
+  calcPointIconCache.set(key, icon)
+  return icon
 }
 
 /**
