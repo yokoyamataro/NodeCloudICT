@@ -941,6 +941,14 @@ export function MobileStakingPage() {
     useState<((line: CalcPickedLine) => void) | null>(null)
   /** 座標計算で 今 選ばれている 点 / 線 / 結果。地図に 重ねて 出す */
   const [calcSelection, setCalcSelection] = useState<CalcSelection | null>(null)
+  /** 座標計算に 渡す 点。 毎描画 作り直すと 子側の 参照が 変わり続ける ので 固定する */
+  const calcCoordinates = useMemo(
+    () =>
+      coordinates
+        .filter((c) => Number.isFinite(c.x) && Number.isFinite(c.y))
+        .map((c) => ({ id: c.id, pointNumber: c.pointNumber, x: c.x, y: c.y })),
+    [coordinates],
+  )
   // 地籍測量か 土木工事か。表示モードの 出し分けに 使うので ここで 出す
   const isCadastralProject = project?.category === 'cadastral'
 
@@ -4785,9 +4793,7 @@ export function MobileStakingPage() {
       {/* 座標計算モーダル（交点・線上） */}
       {showCalcModal && (
         <CoordinateCalcModal
-          coordinates={coordinates
-            .filter((c) => Number.isFinite(c.x) && Number.isFinite(c.y))
-            .map((c) => ({ id: c.id, pointNumber: c.pointNumber, x: c.x, y: c.y }))}
+          coordinates={calcCoordinates}
           typeOptions={typeOptions}
           defaultType={'control'}
           onAdd={(p) => {

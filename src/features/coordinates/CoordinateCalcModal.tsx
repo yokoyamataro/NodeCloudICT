@@ -1,7 +1,7 @@
 // 座標計算モーダル: 交点計算 / 線上計算 / 2点距離。
 // - 交点・線上: 既存座標から点・線を選び、結果を新規点として追加
 // - 2点距離   : 起点→終点の平面距離と方向角（度分秒）を表示（座標追加はしない）
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { X, Calculator, MapPin, Ruler } from 'lucide-react'
 import { intersectionCalc, onLineCalc, len, type XY } from '@/lib/coordCalc'
 
@@ -235,7 +235,13 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
     return `${a?.pointNumber ?? '?'} → ${b?.pointNumber ?? '…'}`
   }
 
-  // 選んでいる 点 / 線 と 計算結果 を 地図に 出して もらう
+  // 選んでいる 点 / 線 と 計算結果 を 地図に 出して もらう。
+  //
+  // 親は coordinates を その場で map して 渡す ことが 多く、親が 再描画 する 度に
+  // byId / result の 実体が 変わる。 そのまま 通知 すると
+  //   通知 → 親が setState → 親 再描画 → 実体 が 変わる → 通知 …
+  // で 無限ループ に なって 画面が 固まる ので、中身が 実際に 変わった ときだけ 呼ぶ。
+  const lastSelRef = useRef<string>('')
   useEffect(() => {
     if (!onSelectionChange) return
     const lines: CalcSelection['lines'] = []
@@ -272,7 +278,11 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
       }
     }
     if (result) points.push({ key: 'result', label: '計算結果', x: result.x, y: result.y })
-    onSelectionChange({ lines, points })
+    const sel = { lines, points }
+    const key = JSON.stringify(sel)
+    if (key === lastSelRef.current) return
+    lastSelRef.current = key
+    onSelectionChange(sel)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, l1a, l1b, l2a, l2b, l1geom, l2geom, oa, ob, da, db, result, byId])
 
