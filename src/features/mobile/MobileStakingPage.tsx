@@ -25,6 +25,7 @@ import {
   Download,
   Image as ImageIcon,
   X,
+  GripHorizontal,
   Plus,
   Pen,
   StickyNote,
@@ -872,6 +873,53 @@ export function MobileStakingPage() {
   // ツールバーは常時表示のペイントボタン → モーダルに集約したので、
   // 以前の showDrawing (ツールバーの表示切替) は廃止した。
   const [paintOpen, setPaintOpen] = useState(false)
+  // ペイントの 道具パネル は 指で 動かせる。 地図の 見たい ところに 被った まま
+  // だと 描けない ため。 null = 既定位置 (画面下端 中央)。
+  const paintPanelRef = useRef<HTMLDivElement | null>(null)
+  const paintDragRef = useRef<{ dx: number; dy: number } | null>(null)
+  const [paintPos, setPaintPos] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const raw = localStorage.getItem('mobile:staking:paintPos')
+      if (!raw) return null
+      const p = JSON.parse(raw) as { x?: number; y?: number }
+      return typeof p.x === 'number' && typeof p.y === 'number' ? { x: p.x, y: p.y } : null
+    } catch { return null }
+  })
+  /** 画面外に 出し切らない よう、掴める 部分を 必ず 残す */
+  const clampPaintPos = useCallback((x: number, y: number) => {
+    const el = paintPanelRef.current
+    const w = el?.offsetWidth ?? 320
+    const KEEP = 80
+    return {
+      x: Math.min(Math.max(x, KEEP - w), window.innerWidth - KEEP),
+      y: Math.min(Math.max(y, 0), window.innerHeight - 44),
+    }
+  }, [])
+  const onPaintDragStart = useCallback((e: React.PointerEvent) => {
+    const el = paintPanelRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    paintDragRef.current = { dx: e.clientX - r.left, dy: e.clientY - r.top }
+    // 既定位置 (bottom 固定) から 掴んだ 瞬間に、今の 見た目の 位置を 数値化する
+    setPaintPos({ x: r.left, y: r.top })
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+  }, [])
+  const onPaintDragMove = useCallback((e: React.PointerEvent) => {
+    const d = paintDragRef.current
+    if (!d) return
+    e.preventDefault()
+    setPaintPos(clampPaintPos(e.clientX - d.dx, e.clientY - d.dy))
+  }, [clampPaintPos])
+  const onPaintDragEnd = useCallback(() => {
+    if (!paintDragRef.current) return
+    paintDragRef.current = null
+    setPaintPos((p) => {
+      if (p) {
+        try { localStorage.setItem('mobile:staking:paintPos', JSON.stringify(p)) } catch { /* ignore */ }
+      }
+      return p
+    })
+  }, [])
   const [drawingMode, setDrawingMode] = useState<DrawingMode>('off')
   /** 描画中か。ターゲット操作や長押しメニューを止める判定に使う */
   const paintActive = drawingMode !== 'off'
@@ -4340,21 +4388,29 @@ export function MobileStakingPage() {
         />
       )}
 
-      {/* ペイントの道具モーダル。既存のツールバーをそのまま入れる。
-          道具を選んだら閉じて地図に戻る (描いている間は邪魔しない) */}
+      {/* ペイントの道具パネル。既存のツールバーをそのまま入れる。
+          暗幕なし の 浮かぶ パネル で、見出しを 掴んで 好きな 位置に 動かせる。
+          道具を 選んでも 閉じない (描きながら 太さ や 色 を 変えられる) */}
       {paintOpen && (
         <div
-          className="fixed inset-0 z-[3500] bg-black/40 flex items-end justify-center"
-          onClick={() => setPaintOpen(false)}
+          ref={paintPanelRef}
+          className={`fixed z-[3500] bg-white shadow-2xl border border-slate-300 p-3 space-y-3 w-full max-w-md max-h-[80vh] overflow-auto ${
+            paintPos ? 'rounded-2xl' : 'left-1/2 -translate-x-1/2 bottom-0 rounded-t-2xl'
+          }`}
+          style={paintPos ? { left: paintPos.x, top: paintPos.y } : undefined}
         >
-          <div
-            className="bg-white w-full rounded-t-2xl p-3 space-y-3 max-w-md"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between">
+            <div
+              className="flex items-center justify-between cursor-move select-none"
+              style={{ touchAction: 'none' }}
+              onPointerDown={onPaintDragStart}
+              onPointerMove={onPaintDragMove}
+              onPointerUp={onPaintDragEnd}
+              onPointerCancel={onPaintDragEnd}
+            >
               {/* 元に戻す / やり直し は 道具の 列に 埋もれると 押しにくいので、
                   タイトルの 右の 余白に 置く */}
               <div className="flex items-center gap-1">
+                <GripHorizontal className="h-4 w-4 text-slate-400" />
                 <h3 className="text-sm font-semibold">ペイント</h3>
                 <button
                   type="button"
@@ -4390,8 +4446,10 @@ export function MobileStakingPage() {
                 mode={drawingMode}
                 onChangeMode={(m) => {
                   setDrawingMode(m)
-                  // 道具を選んだら地図に戻す。off (描画やめる) のときも閉じる
-                  setPaintOpen(false)
+                  // 道具を 選んでも パネルは 開いたまま。 描いている 途中で
+                  // 色 や 太さ を 変えたい ことが 多く、毎回 開き直すのは 手間。
+                  // ペイントを やめる (off) ときだけ 畳む
+                  if (m === 'off') setPaintOpen(false)
                 }}
                 color={drawingColor}
                 onChangeColor={(c) => {
@@ -4449,7 +4507,6 @@ export function MobileStakingPage() {
                 ペイントを終了
               </button>
             )}
-          </div>
         </div>
       )}
 
