@@ -97,6 +97,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
   const [ob, setOb] = useState('') // 方向先
   const [ext, setExt] = useState('0')
   const [lat, setLat] = useState('0')
+  const [ogeom, setOgeom] = useState<CalcPickedLine | null>(null)
 
   // 2点距離用
   const [da, setDa] = useState('') // 起点
@@ -136,15 +137,15 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
         { a: s2.a, b: s2.b, offset: num(l2off) },
       )
     } else if (mode === 'online') {
-      const a = xy(oa), b = xy(ob)
-      if (!a || !b) return null
-      return onLineCalc(a, b, num(ext), num(lat))
+      const seg = lineSeg(ogeom, oa, ob)
+      if (!seg) return null
+      return onLineCalc(seg.a, seg.b, num(ext), num(lat))
     } else {
       // 距離モードは新規点を作らないので座標結果は返さない
       return null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, l1a, l1b, l1off, l2a, l2b, l2off, l1geom, l2geom, oa, ob, ext, lat, byId])
+  }, [mode, l1a, l1b, l1off, l2a, l2b, l2off, l1geom, l2geom, oa, ob, ogeom, ext, lat, byId])
 
   // 2 点距離の計算結果（距離 [m] と方向角 [deg]）。両点未選択のとき null
   const distanceResult = useMemo<{ dist: number; bearing: number } | null>(() => {
@@ -193,15 +194,16 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
     setA: (v: string) => void,
     setB: (v: string) => void,
     clearGeom: () => void,
+    names: [string, string] = ['の始点', 'の終点'],
   ) => {
     if (!onPickRequest) return
     clearGeom()
     setA('')
     setB('')
-    setPickingLabel(`${label} の始点`)
+    setPickingLabel(`${label} ${names[0]}`)
     onPickRequest((id1: string) => {
       setA(id1)
-      setPickingLabel(`${label} の終点`)
+      setPickingLabel(`${label} ${names[1]}`)
       onPickRequest((id2: string) => {
         setB(id2)
         setPickingLabel(null)
@@ -263,11 +265,13 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
         }
       }
     } else if (mode === 'online') {
-      const a = xy(oa), b = xy(ob)
-      if (a && b) lines.push({ key: 'o', label: '基準線', a, b })
-      for (const [k, id] of [['oa', oa], ['ob', ob]] as [string, string][]) {
-        const c = id ? byId.get(id) : null
-        if (c) points.push({ key: k, label: c.pointNumber, x: c.x, y: c.y })
+      const seg = lineSeg(ogeom, oa, ob)
+      if (seg) lines.push({ key: 'o', label: '基準線', a: seg.a, b: seg.b })
+      if (!ogeom) {
+        for (const [k, id] of [['oa', oa], ['ob', ob]] as [string, string][]) {
+          const c = id ? byId.get(id) : null
+          if (c) points.push({ key: k, label: c.pointNumber, x: c.x, y: c.y })
+        }
       }
     } else {
       const a = xy(da), b = xy(db)
@@ -284,7 +288,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
     lastSelRef.current = key
     onSelectionChange(sel)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, l1a, l1b, l2a, l2b, l1geom, l2geom, oa, ob, da, db, result, byId])
+  }, [mode, l1a, l1b, l2a, l2b, l1geom, l2geom, oa, ob, ogeom, da, db, result, byId])
 
   // 境界線選択ボタン（共通）
   const LinePickButton = ({ label, setA, setB }: { label: string; setA: (v: string) => void; setB: (v: string) => void }) =>
@@ -309,7 +313,8 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
         className="w-full flex items-center justify-between gap-2 px-2 py-1.5 border rounded text-sm text-left hover:bg-blue-50"
       >
         <span className={c ? 'font-medium text-slate-800' : 'text-slate-400'}>
-          {c ? `${c.pointNumber}（${c.x.toFixed(2)}, ${c.y.toFixed(2)}）` : placeholder}
+          {/* 座標は 地図で 見える ので 点名だけ */}
+          {c ? c.pointNumber : placeholder}
         </span>
         <span className="flex items-center gap-0.5 text-blue-600 text-xs whitespace-nowrap">
           <MapPin className="h-3.5 w-3.5" />
@@ -502,22 +507,65 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
               <p className={compact ? 'text-[11px] leading-snug text-slate-500' : 'text-xs text-slate-500'}>
                 基準線の起点から 延長 (+前) ・ 左右 (+右) にずらした点。
               </p>
-              <div className={`border rounded ${compact ? 'p-1.5 space-y-1.5' : 'p-2 space-y-2'}`}>
-                <LinePickButton label="基準線（起点→方向先）" setA={setOa} setB={setOb} />
-                <PointSelect value={oa} onChange={setOa} placeholder="起点を選択" label="起点" />
-                <PointSelect value={ob} onChange={setOb} placeholder="方向先（終点）を選択" label="方向先" />
-                <div className="flex gap-3">
-                  <label className="flex items-center gap-2 text-xs">
-                    延長(m,+前)
-                    <input type="number" step="0.001" value={ext} onChange={(e) => setExt(e.target.value)}
-                      className="px-2 py-1 border rounded text-sm w-24 text-right font-mono" />
-                  </label>
-                  <label className="flex items-center gap-2 text-xs">
-                    左右(m,+右)
-                    <input type="number" step="0.001" value={lat} onChange={(e) => setLat(e.target.value)}
-                      className="px-2 py-1 border rounded text-sm w-24 text-right font-mono" />
-                  </label>
-                </div>
+              {/* 交点計算と 同じく 基準線 は 1 行。 点名 だけ 出す */}
+              {(() => {
+                const picked = lineLabelOf(ogeom, oa, ob)
+                const rowPicking = (pickingLabel ?? pickingLineLabel ?? '').startsWith('基準線')
+                return (
+                  <div className="flex items-center gap-1">
+                    <span className="w-12 shrink-0 text-[11px] font-medium text-slate-600">
+                      基準線
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        startPointPairPick('基準線', setOa, setOb, () => setOgeom(null), [
+                          'の起点',
+                          'の方向先',
+                        ])
+                      }
+                      className={`flex-1 min-w-0 truncate px-2 py-1 border rounded text-sm text-left hover:bg-blue-50 ${
+                        rowPicking ? 'border-blue-500 ring-1 ring-blue-400 bg-blue-50' : ''
+                      }`}
+                      title="起点 → 方向先 の 順に 地図で タップ"
+                    >
+                      {picked ?? <span className="text-slate-400">起点 → 方向先 を選択</span>}
+                    </button>
+                    {(onGeomLineRequest || onLineRequest) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onGeomLineRequest) {
+                            startGeomLinePick('基準線', setOgeom, () => {
+                              setOa('')
+                              setOb('')
+                            })
+                          } else {
+                            setOgeom(null)
+                            startLinePick('基準線', setOa, setOb)
+                          }
+                        }}
+                        className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-1 border border-dashed border-blue-400 rounded text-[11px] text-blue-600 hover:bg-blue-50"
+                        title="地番の辺 / ペイントの線分 を そのまま 選ぶ"
+                      >
+                        <MapPin className="h-3 w-3" />
+                        線
+                      </button>
+                    )}
+                  </div>
+                )
+              })()}
+              <div className="flex items-center gap-1">
+                <label className="flex-1 min-w-0 flex items-center gap-1 text-[11px] text-slate-600">
+                  延長(+前)
+                  <input type="number" step="0.001" value={ext} onChange={(e) => setExt(e.target.value)}
+                    className="flex-1 min-w-0 px-1 py-1 border rounded text-xs text-right font-mono" />
+                </label>
+                <label className="flex-1 min-w-0 flex items-center gap-1 text-[11px] text-slate-600">
+                  左右(+右)
+                  <input type="number" step="0.001" value={lat} onChange={(e) => setLat(e.target.value)}
+                    className="flex-1 min-w-0 px-1 py-1 border rounded text-xs text-right font-mono" />
+                </label>
               </div>
             </>
           ) : (
