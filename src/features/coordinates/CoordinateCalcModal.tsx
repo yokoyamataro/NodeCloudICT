@@ -1,7 +1,7 @@
 // 座標計算モーダル: 交点計算 / 線上計算 / 2点距離。
 // - 交点・線上: 既存座標から点・線を選び、結果を新規点として追加
 // - 2点距離   : 起点→終点の平面距離と方向角（度分秒）を表示（座標追加はしない）
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { X, Calculator, MapPin, Ruler } from 'lucide-react'
 import { intersectionCalc, onLineCalc, len, type XY } from '@/lib/coordCalc'
 
@@ -10,6 +10,19 @@ export interface CalcCoordinate {
   pointNumber: string
   x: number
   y: number
+}
+
+/** 地図で 直接 選んだ 線分 (地番の 辺 / ペイントの 線分)。座標は 平面直角座標 */
+export interface CalcPickedLine {
+  label: string
+  a: XY
+  b: XY
+}
+
+/** 今 選ばれている もの。地図に 出す ため 親へ 渡す */
+export interface CalcSelection {
+  lines: { key: string; label: string; a: XY; b: XY }[]
+  points: { key: string; label: string; x: number; y: number }[]
 }
 
 interface Props {
@@ -28,6 +41,13 @@ interface Props {
    * 余白と 文字を 詰めて 地図が 隠れないように する。
    */
   placement?: 'center' | 'bottom'
+  /**
+   * 地図の 線 (地番の 辺 / ペイントの 線分) を 直接 選ばせる。
+   * 既存座標の 2 点に 縛られない ので、登録していない 線とも 交点が 出せる。
+   */
+  onGeomLineRequest?: (assign: ((line: CalcPickedLine) => void) | null) => void
+  /** 選択中の 点 / 線 と 計算結果 を 地図に 出す ため の 通知 */
+  onSelectionChange?: (sel: CalcSelection) => void
 }
 
 type Mode = 'intersection' | 'online' | 'distance'
@@ -52,7 +72,7 @@ function bearingDeg(a: XY, b: XY): number {
   return ((rad * 180) / Math.PI + 360) % 360
 }
 
-export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onAdd, onClose, onPickRequest, onLineRequest, placement = 'center' }: Props) {
+export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onAdd, onClose, onPickRequest, onLineRequest, placement = 'center', onGeomLineRequest, onSelectionChange }: Props) {
   /** スマホ向け: 下端 に 貼り付け、余白を 詰める */
   const compact = placement === 'bottom'
   const [mode, setMode] = useState<Mode>('intersection')
@@ -67,6 +87,10 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
   const [l2a, setL2a] = useState('')
   const [l2b, setL2b] = useState('')
   const [l2off, setL2off] = useState('0')
+  // 地図で 線そのもの を 選んだ 場合。 座標登録 の ない 線 (地番の 辺 /
+  // ペイントの 線分) も 相手に できる。 点で 選び直したら null に 戻す。
+  const [l1geom, setL1geom] = useState<CalcPickedLine | null>(null)
+  const [l2geom, setL2geom] = useState<CalcPickedLine | null>(null)
 
   // 線上計算用
   const [oa, setOa] = useState('') // 起点
@@ -95,13 +119,21 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
     return Number.isFinite(n) ? n : 0
   }
 
+  /** 交点計算の 1 本。地図で 選んだ 線 が あれば 優先、無ければ 2 点から 作る */
+  const lineSeg = (geom: CalcPickedLine | null, aId: string, bId: string): { a: XY; b: XY } | null => {
+    if (geom) return { a: geom.a, b: geom.b }
+    const a = xy(aId), b = xy(bId)
+    return a && b ? { a, b } : null
+  }
+
   const result = useMemo<XY | null>(() => {
     if (mode === 'intersection') {
-      const a1 = xy(l1a), b1 = xy(l1b), a2 = xy(l2a), b2 = xy(l2b)
-      if (!a1 || !b1 || !a2 || !b2) return null
+      const s1 = lineSeg(l1geom, l1a, l1b)
+      const s2 = lineSeg(l2geom, l2a, l2b)
+      if (!s1 || !s2) return null
       return intersectionCalc(
-        { a: a1, b: b1, offset: num(l1off) },
-        { a: a2, b: b2, offset: num(l2off) },
+        { a: s1.a, b: s1.b, offset: num(l1off) },
+        { a: s2.a, b: s2.b, offset: num(l2off) },
       )
     } else if (mode === 'online') {
       const a = xy(oa), b = xy(ob)
@@ -112,7 +144,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
       return null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, l1a, l1b, l1off, l2a, l2b, l2off, oa, ob, ext, lat, byId])
+  }, [mode, l1a, l1b, l1off, l2a, l2b, l2off, l1geom, l2geom, oa, ob, ext, lat, byId])
 
   // 2 点距離の計算結果（距離 [m] と方向角 [deg]）。両点未選択のとき null
   const distanceResult = useMemo<{ dist: number; bearing: number } | null>(() => {
@@ -153,6 +185,96 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
     setPickingLineLabel(null)
     onLineRequest?.(null)
   }
+
+  // 交点計算の 線 1 本を 「始点 → 終点」の 2 タップ で 選ぶ。
+  // 1 行に 収める ため、始点/終点 それぞれの ボタンは 置かない。
+  const startPointPairPick = (
+    label: string,
+    setA: (v: string) => void,
+    setB: (v: string) => void,
+    clearGeom: () => void,
+  ) => {
+    if (!onPickRequest) return
+    clearGeom()
+    setA('')
+    setB('')
+    setPickingLabel(`${label} の始点`)
+    onPickRequest((id1: string) => {
+      setA(id1)
+      setPickingLabel(`${label} の終点`)
+      onPickRequest((id2: string) => {
+        setB(id2)
+        setPickingLabel(null)
+        onPickRequest(null)
+      })
+    })
+  }
+
+  // 地図の 線 (地番の 辺 / ペイントの 線分) を そのまま 1 本 として 選ぶ
+  const startGeomLinePick = (
+    label: string,
+    setGeom: (l: CalcPickedLine) => void,
+    clearPoints: () => void,
+  ) => {
+    if (!onGeomLineRequest) return
+    setPickingLineLabel(label)
+    onGeomLineRequest((line: CalcPickedLine) => {
+      clearPoints()
+      setGeom(line)
+      setPickingLineLabel(null)
+      onGeomLineRequest(null)
+    })
+  }
+
+  /** 選択中の 線 を 1 行で 表す 文字列 */
+  const lineLabelOf = (geom: CalcPickedLine | null, aId: string, bId: string): string | null => {
+    if (geom) return geom.label
+    const a = aId ? byId.get(aId) : null
+    const b = bId ? byId.get(bId) : null
+    if (!a && !b) return null
+    return `${a?.pointNumber ?? '?'} → ${b?.pointNumber ?? '…'}`
+  }
+
+  // 選んでいる 点 / 線 と 計算結果 を 地図に 出して もらう
+  useEffect(() => {
+    if (!onSelectionChange) return
+    const lines: CalcSelection['lines'] = []
+    const points: CalcSelection['points'] = []
+    if (mode === 'intersection') {
+      const defs = [
+        { key: 'l1', label: '線1', geom: l1geom, aId: l1a, bId: l1b },
+        { key: 'l2', label: '線2', geom: l2geom, aId: l2a, bId: l2b },
+      ]
+      for (const d of defs) {
+        const seg = lineSeg(d.geom, d.aId, d.bId)
+        if (seg) lines.push({ key: d.key, label: d.label, a: seg.a, b: seg.b })
+        if (!d.geom) {
+          // 2 点で 選んでいる 途中も 出す (始点だけ 決まった 状態)
+          for (const [suffix, id] of [['a', d.aId], ['b', d.bId]] as [string, string][]) {
+            const c = id ? byId.get(id) : null
+            if (c) points.push({ key: `${d.key}${suffix}`, label: c.pointNumber, x: c.x, y: c.y })
+          }
+        }
+      }
+    } else if (mode === 'online') {
+      const a = xy(oa), b = xy(ob)
+      if (a && b) lines.push({ key: 'o', label: '基準線', a, b })
+      for (const [k, id] of [['oa', oa], ['ob', ob]] as [string, string][]) {
+        const c = id ? byId.get(id) : null
+        if (c) points.push({ key: k, label: c.pointNumber, x: c.x, y: c.y })
+      }
+    } else {
+      const a = xy(da), b = xy(db)
+      if (a && b) lines.push({ key: 'd', label: '計測区間', a, b })
+      for (const [k, id] of [['da', da], ['db', db]] as [string, string][]) {
+        const c = id ? byId.get(id) : null
+        if (c) points.push({ key: k, label: c.pointNumber, x: c.x, y: c.y })
+      }
+    }
+    if (result) points.push({ key: 'result', label: '計算結果', x: result.x, y: result.y })
+    onSelectionChange({ lines, points })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, l1a, l1b, l2a, l2b, l1geom, l2geom, oa, ob, da, db, result, byId])
 
   // 境界線選択ボタン（共通）
   const LinePickButton = ({ label, setA, setB }: { label: string; setA: (v: string) => void; setB: (v: string) => void }) =>
@@ -199,7 +321,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
     return (
       <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[3000] bg-blue-600 text-white px-4 py-2 rounded-full shadow-lg text-sm flex items-center gap-3">
         <MapPin className="h-4 w-4" />
-        <span>地図で「{pickingLabel}」の点をタップしてください</span>
+        <span>地図で「{pickingLabel}」をタップしてください</span>
         <button onClick={cancelPick} className="underline whitespace-nowrap">
           キャンセル
         </button>
@@ -210,7 +332,11 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
     return (
       <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[3000] bg-blue-600 text-white px-4 py-2 rounded-full shadow-lg text-sm flex items-center gap-3">
         <MapPin className="h-4 w-4" />
-        <span>地図で「{pickingLineLabel}」の境界線（辺）をタップしてください</span>
+        <span>
+          地図で「{pickingLineLabel}」にする線
+          {onGeomLineRequest ? '（地番の辺 / ペイント）' : '（境界線の辺）'}
+          をタップしてください
+        </span>
         <button onClick={cancelLinePick} className="underline whitespace-nowrap">
           キャンセル
         </button>
@@ -266,27 +392,74 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
               <p className={compact ? 'text-[11px] leading-snug text-slate-500' : 'text-xs text-slate-500'}>
                 2 本の線の交点。各線は右方向にオフセット (m) できます。
               </p>
+              {/* 線 1 本 = 1 行。 点名だけ 出す (座標は 地図で 見える)。
+                  「点」= 2 点を 順に タップ、「線」= 地番の 辺 や ペイントの
+                  線分 を そのまま 1 本として 選ぶ */}
               {[
-                { label: '線1', a: l1a, sa: setL1a, b: l1b, sb: setL1b, off: l1off, soff: setL1off },
-                { label: '線2', a: l2a, sa: setL2a, b: l2b, sb: setL2b, off: l2off, soff: setL2off },
-              ].map((ln) => (
-                <div key={ln.label} className={`border rounded ${compact ? 'p-1.5 space-y-1.5' : 'p-2 space-y-2'}`}>
-                  <div className="text-xs font-medium text-slate-600">{ln.label}</div>
-                  <LinePickButton label={ln.label} setA={ln.sa} setB={ln.sb} />
-                  <PointSelect value={ln.a} onChange={ln.sa} placeholder="始点を選択" label={`${ln.label} 始点`} />
-                  <PointSelect value={ln.b} onChange={ln.sb} placeholder="終点を選択" label={`${ln.label} 終点`} />
-                  <label className="flex items-center gap-2 text-xs">
-                    右オフセット(m)
+                {
+                  key: 'l1',
+                  label: '線1',
+                  a: l1a, sa: setL1a, b: l1b, sb: setL1b,
+                  geom: l1geom, sgeom: setL1geom,
+                  off: l1off, soff: setL1off,
+                },
+                {
+                  key: 'l2',
+                  label: '線2',
+                  a: l2a, sa: setL2a, b: l2b, sb: setL2b,
+                  geom: l2geom, sgeom: setL2geom,
+                  off: l2off, soff: setL2off,
+                },
+              ].map((ln) => {
+                const picked = lineLabelOf(ln.geom, ln.a, ln.b)
+                return (
+                  <div key={ln.key} className="flex items-center gap-1">
+                    <span className="w-7 shrink-0 text-[11px] font-medium text-slate-600">
+                      {ln.label}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        startPointPairPick(ln.label, ln.sa, ln.sb, () => ln.sgeom(null))
+                      }
+                      className="flex-1 min-w-0 truncate px-2 py-1 border rounded text-sm text-left hover:bg-blue-50"
+                      title="2 点を 順に 地図で タップ"
+                    >
+                      {picked ?? <span className="text-slate-400">2 点を選択</span>}
+                    </button>
+                    {(onGeomLineRequest || onLineRequest) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onGeomLineRequest) {
+                            startGeomLinePick(ln.label, ln.sgeom, () => {
+                              ln.sa('')
+                              ln.sb('')
+                            })
+                          } else {
+                            ln.sgeom(null)
+                            startLinePick(ln.label, ln.sa, ln.sb)
+                          }
+                        }}
+                        className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-1 border border-dashed border-blue-400 rounded text-[11px] text-blue-600 hover:bg-blue-50"
+                        title="地番の辺 / ペイントの線分 を そのまま 選ぶ"
+                      >
+                        <MapPin className="h-3 w-3" />
+                        線
+                      </button>
+                    )}
                     <input
                       type="number"
                       step="0.001"
                       value={ln.off}
                       onChange={(e) => ln.soff(e.target.value)}
-                      className="px-2 py-1 border rounded text-sm w-28 text-right font-mono"
+                      className="shrink-0 px-1 py-1 border rounded text-xs w-14 text-right font-mono"
+                      title="右オフセット (m)"
+                      aria-label={`${ln.label} 右オフセット (m)`}
                     />
-                  </label>
-                </div>
-              ))}
+                  </div>
+                )
+              })}
             </>
           ) : mode === 'online' ? (
             <>

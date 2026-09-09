@@ -75,7 +75,11 @@ import {
   getCoordinateTypeOptions,
 } from '@/stores/coordinatePointTypeStore'
 import { CoordinatePhotoModal } from '@/features/coordinates/CoordinatePhotoModal'
-import { CoordinateCalcModal } from '@/features/coordinates/CoordinateCalcModal'
+import {
+  CoordinateCalcModal,
+  type CalcPickedLine,
+  type CalcSelection,
+} from '@/features/coordinates/CoordinateCalcModal'
 import { useAttachmentStore } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
@@ -932,6 +936,11 @@ export function MobileStakingPage() {
   >([])
   // 計算モーダルで地図から点選択中の割り当て関数
   const [calcAssign, setCalcAssign] = useState<((id: string) => void) | null>(null)
+  /** 座標計算で 地図の 線 (地番の 辺 / ペイントの 線分) を 選ばせている 間の 受け口 */
+  const [calcLineAssign, setCalcLineAssign] =
+    useState<((line: CalcPickedLine) => void) | null>(null)
+  /** 座標計算で 今 選ばれている 点 / 線 / 結果。地図に 重ねて 出す */
+  const [calcSelection, setCalcSelection] = useState<CalcSelection | null>(null)
   // 地籍測量か 土木工事か。表示モードの 出し分けに 使うので ここで 出す
   const isCadastralProject = project?.category === 'cadastral'
 
@@ -1823,6 +1832,41 @@ export function MobileStakingPage() {
     },
     [farmPolygons],
   )
+
+  // 座標計算の 「線」ピックで 相手に する 線分。
+  // 地番 (区域ポリゴン) の 辺 と、ペイントの 折れ線 / 面 の 各辺。
+  // 選んでいる 間だけ 作る (フリーハンドの 線は 頂点が 多い ため)。
+  const calcLineSegments = useMemo(() => {
+    if (!calcLineAssign) return [] as { label: string; a: [number, number]; b: [number, number] }[]
+    const out: { label: string; a: [number, number]; b: [number, number] }[] = []
+    for (const poly of farmPolygons) {
+      const v = poly.positions
+      for (let i = 0; i < v.length; i += 1) {
+        const j = (i + 1) % v.length
+        out.push({ label: `${poly.name || '地番'} の辺`, a: v[i], b: v[j] })
+      }
+    }
+    for (const d of drawingItems) {
+      if (d.kind !== 'stroke' && d.kind !== 'polygon') continue
+      const pts = d.points
+      for (let i = 0; i < pts.length - 1; i += 1) {
+        out.push({
+          label: d.layer ? `ペイント (${d.layer})` : 'ペイント線',
+          a: [pts[i].lat, pts[i].lng],
+          b: [pts[i + 1].lat, pts[i + 1].lng],
+        })
+      }
+      if (d.kind === 'polygon' && pts.length > 2) {
+        const last = pts[pts.length - 1]
+        out.push({
+          label: d.layer ? `ペイント (${d.layer})` : 'ペイント線',
+          a: [last.lat, last.lng],
+          b: [pts[0].lat, pts[0].lng],
+        })
+      }
+    }
+    return out
+  }, [calcLineAssign, farmPolygons, drawingItems])
 
   // レイヤ名入力の候補
   const existingLayers = useMemo(() => {
@@ -4760,8 +4804,12 @@ export function MobileStakingPage() {
           onClose={() => {
             setShowCalcModal(false)
             setCalcAssign(null)
+            setCalcLineAssign(null)
+            setCalcSelection(null)
           }}
           onPickRequest={(fn) => setCalcAssign(() => fn)}
+          onGeomLineRequest={(fn) => setCalcLineAssign(() => fn)}
+          onSelectionChange={setCalcSelection}
           // スマホでは 画面下端 に 貼り付ける (ペイント欄と 同じ 置き方)
           placement="bottom"
         />
@@ -5719,7 +5767,9 @@ export function MobileStakingPage() {
                   weight: 2,
                 }}
                 eventHandlers={
-                  isParcel && !paintActive
+                  // 座標計算で 線を 選んでいる 間は 地番情報を 開かない
+                  // (辺を タップした つもりが モーダルに なる)
+                  isParcel && !paintActive && !calcLineAssign
                     ? {
                         click: () =>
                           setParcelInfoTarget({
@@ -6257,6 +6307,70 @@ export function MobileStakingPage() {
             extraSegments={extraSegments}
             hiddenLayers={effectiveHiddenPaintLayers}
           />
+          )}
+
+          {/* 座標計算: 「線」を 選んでいる 間 は 候補を 太く 出して、
+              一番 近い 線分 を タップで 拾う */}
+          {calcLineAssign && (
+            <>
+              {calcLineSegments.map((seg, i) => (
+                <Polyline
+                  key={`calc-cand-${i}`}
+                  positions={[seg.a, seg.b]}
+                  pathOptions={{ color: '#2563eb', weight: 6, opacity: 0.35 }}
+                  interactive={false}
+                />
+              ))}
+              <CalcLineTapPicker
+                segments={calcLineSegments}
+                onPick={(seg) => {
+                  const a = converter.toXY(seg.a[0], seg.a[1])
+                  const b = converter.toXY(seg.b[0], seg.b[1])
+                  calcLineAssign({ label: seg.label, a, b })
+                }}
+              />
+            </>
+          )}
+
+          {/* 座標計算で 選んでいる 点 / 線 と 計算結果 */}
+          {showCalcModal && calcSelection && (
+            <>
+              {calcSelection.lines.map((ln) => {
+                const a = converter.toLatLng(ln.a.x, ln.a.y)
+                const b = converter.toLatLng(ln.b.x, ln.b.y)
+                const color = ln.key === 'l2' ? '#ea580c' : '#2563eb'
+                return (
+                  <Polyline
+                    key={`calc-sel-${ln.key}`}
+                    positions={[[a.lat, a.lng], [b.lat, b.lng]]}
+                    pathOptions={{ color, weight: 3, opacity: 0.9, dashArray: '8 5' }}
+                    interactive={false}
+                  />
+                )
+              })}
+              {calcSelection.points.map((pt) => {
+                const ll = converter.toLatLng(pt.x, pt.y)
+                const isResult = pt.key === 'result'
+                return (
+                  <CircleMarker
+                    key={`calc-pt-${pt.key}`}
+                    center={[ll.lat, ll.lng]}
+                    radius={isResult ? 7 : 5}
+                    pathOptions={{
+                      color: '#ffffff',
+                      weight: 2,
+                      fillColor: isResult
+                        ? '#16a34a'
+                        : pt.key.startsWith('l2')
+                          ? '#ea580c'
+                          : '#2563eb',
+                      fillOpacity: 1,
+                    }}
+                    interactive={false}
+                  />
+                )
+              })}
+            </>
           )}
         </MapContainer>
 
@@ -8943,6 +9057,46 @@ function ChipToggle({
       {count != null && <span className="ml-1 opacity-75">{count}</span>}
     </button>
   )
+}
+
+/**
+ * 座標計算の 「線」ピック。
+ *
+ * 候補の 線分 は フリーハンド だと 数百 本に なる ので、1 本ずつ クリック可能な
+ * ポリライン を 敷く のでは なく、地図の クリック 位置から 一番 近い 線分 を
+ * 画面座標 で 探す。 24px より 遠ければ 何も 選ばない。
+ */
+function CalcLineTapPicker({
+  segments,
+  onPick,
+}: {
+  segments: { label: string; a: [number, number]; b: [number, number] }[]
+  onPick: (seg: { label: string; a: [number, number]; b: [number, number] }) => void
+}) {
+  useMapEvents({
+    click(e) {
+      const map = e.target as L.Map
+      const p = map.latLngToContainerPoint(e.latlng)
+      let best: { label: string; a: [number, number]; b: [number, number] } | null = null
+      let bestD = Infinity
+      for (const s of segments) {
+        const pa = map.latLngToContainerPoint(L.latLng(s.a[0], s.a[1]))
+        const pb = map.latLngToContainerPoint(L.latLng(s.b[0], s.b[1]))
+        const vx = pb.x - pa.x
+        const vy = pb.y - pa.y
+        const l2 = vx * vx + vy * vy
+        let t = l2 > 0 ? ((p.x - pa.x) * vx + (p.y - pa.y) * vy) / l2 : 0
+        t = Math.max(0, Math.min(1, t))
+        const d = Math.hypot(p.x - (pa.x + t * vx), p.y - (pa.y + t * vy))
+        if (d < bestD) {
+          bestD = d
+          best = s
+        }
+      }
+      if (best && bestD <= 24) onPick(best)
+    },
+  })
+  return null
 }
 
 // Leaflet 地図の長押し / 右クリック を拾うためだけのレイヤ。
