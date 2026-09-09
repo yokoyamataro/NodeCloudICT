@@ -5551,11 +5551,6 @@ export function MobileStakingPage() {
           </div>
         )}
 
-        {/* 今の道具の詳細入力 (文字の内容 / 円の半径 / 平行線の幅…)。
-            道具モーダルは選んだ時点で閉じるので、バーは地図の上端に単独で出す。
-            下端は測点の操作列が詰まっているのでここに置く */}
-        <MapDrawingCommandBar className="absolute top-1 left-1 right-1 z-[1200] rounded-lg bg-white/95 shadow border px-2 py-1.5 overflow-x-auto" />
-
         {/* 背景地図セレクタ（右下、Leaflet 帰属の上） */}
         <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-300 bg-white/95 text-[11px]">
           <span className="text-slate-500">背景</span>
@@ -7158,6 +7153,12 @@ export function MobileStakingPage() {
           />
         )}
       </div>
+
+      {/* 今の道具の詳細入力 (文字の内容 / 円の半径 / 平行線の幅…)。
+          ペイント欄の すぐ上 に 置く。 地図の 上端 だと 道具から 遠く、
+          目線と 指が 画面の 端から 端へ 往復する。
+          中身が 無い ときは empty:hidden で 高さを 持たない */}
+      <MapDrawingCommandBar className="shrink-0 border-t bg-white px-2 py-1.5 overflow-x-auto" />
 
       {/* 下部パネル（施工管理モードでは非表示） */}
       {screenMode !== 'construction' && (
