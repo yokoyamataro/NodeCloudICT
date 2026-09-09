@@ -81,6 +81,7 @@ import {
   type CalcSelection,
 } from '@/features/coordinates/CoordinateCalcModal'
 import { fetchUserNames } from '@/lib/farmViews'
+import { FarmPresenceBadge } from '@/components/layout/FarmPresenceBadge'
 import { useAttachmentStore } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
@@ -4297,27 +4298,32 @@ export function MobileStakingPage() {
             )}
           </button>
         )}
-        <button
-          onClick={handleShare}
-          className="shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
-          title="共有リンクを発行（他社にLINE等で送信）"
-        >
-          共有
-        </button>
-        {farmId && (
+        {/* 右端: いま 同じ 工区を 開いて いる 人 → 共有 → チャット。
+            1 行目 の GPS バッジ の 真下 に 来る */}
+        <div className="ml-auto shrink-0 flex items-center gap-1.5">
+          <FarmPresenceBadge farmId={farmId ?? null} variant="names" />
           <button
-            onClick={() => setShowChatSheet(true)}
-            className="relative shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600 inline-flex items-center gap-1"
-            title="工区チャットを開く"
+            onClick={handleShare}
+            className="shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
+            title="共有リンクを発行（他社にLINE等で送信）"
           >
-            <MessageSquare className="h-4 w-4" />
-            {farmUnreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
-                {farmUnreadCount > 99 ? '99+' : farmUnreadCount}
-              </span>
-            )}
+            共有
           </button>
-        )}
+          {farmId && (
+            <button
+              onClick={() => setShowChatSheet(true)}
+              className="relative shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600 inline-flex items-center gap-1"
+              title="工区チャットを開く"
+            >
+              <MessageSquare className="h-4 w-4" />
+              {farmUnreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
+                  {farmUnreadCount > 99 ? '99+' : farmUnreadCount}
+                </span>
+              )}
+            </button>
+          )}
+        </div>
       </div>
       {/* 共有結果トースト */}
       {shareToast && (

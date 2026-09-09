@@ -97,7 +97,17 @@ function useFarmPresence(farmId: string | null): PresencePayload[] {
  * ヘッダー 用 の 小さな バッジ。 他 セッション が 1 件 以上 ある ときのみ 描画。
  * 表示: 👤 <count>  (hover で 名前一覧 を tooltip)
  */
-export function FarmPresenceBadge({ farmId }: { farmId: string | null }) {
+export function FarmPresenceBadge({
+  farmId,
+  variant = 'compact',
+}: {
+  farmId: string | null
+  /**
+   * 'compact' は 人数 だけ (名前は ホバー)。
+   * 'names' は 名前も 出す — 触る 端末は ホバー が 無い ので スマホ 用。
+   */
+  variant?: 'compact' | 'names'
+}) {
   const others = useFarmPresence(farmId)
   const summary = useMemo(() => {
     if (others.length === 0) return ''
@@ -113,11 +123,14 @@ export function FarmPresenceBadge({ farmId }: { farmId: string | null }) {
 
   return (
     <span
-      className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] bg-amber-500/20 text-amber-200 border border-amber-500/40"
+      className={`ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] bg-amber-500/20 text-amber-200 border border-amber-500/40 ${
+        variant === 'names' ? 'max-w-[9rem]' : ''
+      }`}
       title={`他 に 開いて いる セッション: ${summary}`}
     >
-      <Users className="h-3 w-3" />
+      <Users className="h-3 w-3 shrink-0" />
       <span className="tabular-nums">{others.length}</span>
+      {variant === 'names' && <span className="truncate">{summary}</span>}
     </span>
   )
 }
