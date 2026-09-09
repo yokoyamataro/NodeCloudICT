@@ -7313,13 +7313,7 @@ export function MobileStakingPage() {
                   applyToSelection({ layer: l })
                 }}
                 existingLayers={existingLayers}
-                onMemo={() => {
-                  setPaintOpen(false)
-                  setMemoModalState({
-                    lat: currentPos ? currentPos[0] : null,
-                    lng: currentPos ? currentPos[1] : null,
-                  })
-                }}
+                // メモは 地図の 長押し から 残せる ので、道具の 列には 出さない
               />
             )}
           </div>
