@@ -5764,7 +5764,7 @@ export function MobileStakingPage() {
             const fillOpacity = attrColor ? 0.4 : 0.18
             return (
               <Polygon
-                key={polygon.id}
+                key={paintActive ? `${polygon.id}-nohit` : polygon.id}
                 positions={polygon.positions}
                 pathOptions={{
                   color,
@@ -5921,7 +5921,7 @@ export function MobileStakingPage() {
               />,
               // タップ判定用の太い透明ライン（指タップでも確実に拾える）
               <Polyline
-                key={`pipe-hit-${p.id}`}
+                key={`pipe-hit-${p.id}${paintActive ? '-nohit' : ''}`}
                 positions={p.positions}
                 pathOptions={{
                   color: '#000',
@@ -6100,7 +6100,9 @@ export function MobileStakingPage() {
             const iconSize = HIT
             return (
               <Marker
-                key={t.id}
+                // interactive は Leaflet の 生成時オプション で 後から 変わらない。
+                // ペイントの 出入りで 作り直す ため key に 混ぜる
+                key={paintActive ? `${t.id}-nohit` : t.id}
                 position={[t.lat, t.lng]}
                 icon={L.divIcon({
                   className: 'staking-target',
@@ -6114,6 +6116,9 @@ export function MobileStakingPage() {
                 interactive={!paintActive}
                 eventHandlers={{
                   click: () => {
+                    // ペイント描画中は ターゲット指定 を 走らせない
+                    // (押した点に 地図が 寄って 頂点が 置けない ように 見える)
+                    if (paintActive) return
                     // 求積モード: タップで面積の構成点として追加
                     if (areaModeActive) {
                       setAreaVertices((prev) => [

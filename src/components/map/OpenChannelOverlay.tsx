@@ -31,13 +31,16 @@ export function OpenChannelOverlay({
    */
   disableClicks?: boolean
 }) {
+  // Leaflet の interactive は 生成時 にしか 効かない ので、切り替えたら
+  // key を 変えて 作り直す
+  const kx = disableClicks ? '-nohit' : ''
   return (
     <>
       {overlay.lines
         .filter((l) => subOn(`ch:${l.channelId}`) && subOn(`ch:${l.channelId}:center`))
         .map((line) => (
           <LeafletPolyline
-            key={`oc-line-${line.id}`}
+            key={`oc-line-${line.id}${kx}`}
             positions={line.positions}
             pathOptions={{ color: '#6366f1', weight: 3, opacity: 0.9 }}
             interactive={!disableClicks}
@@ -51,7 +54,7 @@ export function OpenChannelOverlay({
         .filter((s) => subOn(`ch:${s.channelId}`) && subOn(`ch:${s.channelId}:stakes`))
         .map((s) => (
           <CircleMarker
-            key={s.key}
+            key={`${s.key}${kx}`}
             center={[s.lat, s.lng]}
             radius={4}
             pathOptions={{
@@ -78,7 +81,7 @@ export function OpenChannelOverlay({
           // 塗り無し (ring) + 太めのストローク で 座標ドット を 囲む形 に する。
           return (
             <CircleMarker
-              key={v.key}
+              key={`${v.key}${kx}`}
               center={[v.lat, v.lng]}
               radius={9}
               pathOptions={{ color, weight: 2.5, fillOpacity: 0 }}
@@ -96,7 +99,7 @@ export function OpenChannelOverlay({
         .filter((s) => subOn(`ch:${s.channelId}`) && subOn(`ch:${s.channelId}:stations`))
         .map((s) => (
           <CircleMarker
-            key={s.key}
+            key={`${s.key}${kx}`}
             center={[s.lat, s.lng]}
             // タップ受けを 付けるときは 指で 押せる 大きさに する
             radius={onStationClick ? 7 : 3}
