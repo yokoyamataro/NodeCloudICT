@@ -14,6 +14,7 @@ export function OpenChannelOverlay({
   overlay,
   subOn,
   onStationClick,
+  disableClicks,
 }: {
   overlay: ChannelOverlay
   /** そのキーを 表示するか。呼び出し側の 「隠しているキー」集合で 判定する */
@@ -23,6 +24,12 @@ export function OpenChannelOverlay({
    * スマホの 2D モードで 「この 測点の 断面」を 作るのに 使う。
    */
   onStationClick?: (station: ChannelStation) => void
+  /**
+   * すべての 図形の クリック判定 を 切る。
+   * ペイント描画中は 図形が タップを 飲み込む と 地図まで 届かず、
+   * 頂点が 置けない (吸着先の 点を 押した つもりが 何も 起きない)。
+   */
+  disableClicks?: boolean
 }) {
   return (
     <>
@@ -33,6 +40,7 @@ export function OpenChannelOverlay({
             key={`oc-line-${line.id}`}
             positions={line.positions}
             pathOptions={{ color: '#6366f1', weight: 3, opacity: 0.9 }}
+            interactive={!disableClicks}
           >
             <Tooltip sticky direction="top" opacity={0.9}>
               {line.name}
@@ -52,6 +60,7 @@ export function OpenChannelOverlay({
               fillColor: '#fbbf24',
               fillOpacity: 0.9,
             }}
+            interactive={!disableClicks}
           >
             <Tooltip direction="top" offset={[0, -4]} opacity={0.9}>
               <span className="text-[10px] font-mono">
@@ -73,6 +82,7 @@ export function OpenChannelOverlay({
               center={[v.lat, v.lng]}
               radius={9}
               pathOptions={{ color, weight: 2.5, fillOpacity: 0 }}
+              interactive={!disableClicks}
             >
               <Tooltip direction="top" offset={[0, -9]} opacity={0.9}>
                 <span className="text-[11px] font-mono font-semibold" style={{ color }}>
@@ -96,7 +106,7 @@ export function OpenChannelOverlay({
               fillColor: '#818cf8',
               fillOpacity: 0.9,
             }}
-            interactive={onStationClick != null}
+            interactive={onStationClick != null && !disableClicks}
             eventHandlers={
               onStationClick ? { click: () => onStationClick(s) } : undefined
             }

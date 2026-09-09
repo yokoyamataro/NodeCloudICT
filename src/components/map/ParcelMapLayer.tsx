@@ -466,9 +466,11 @@ function GeoJsonInner({
   const layerRef = useRef<L.GeoJSON | null>(null)
 
   // FeatureCollection が変わったら key を変えて再マウント
+  // disableClicks も 混ぜる: Leaflet の interactive は 生成時にしか 効かない ので、
+  // ペイント中に クリックを 素通し させる には 作り直す 必要が ある
   const key = useMemo(
-    () => `parcel-map-${data.features.length}-${Date.now()}`,
-    [data],
+    () => `parcel-map-${data.features.length}-${Date.now()}-${disableClicks ? 'noclick' : 'click'}`,
+    [data, disableClicks],
   )
 
   // 選択 / 取込済セットが変わったら明示的に setStyle して再描画する
@@ -673,6 +675,9 @@ function GeoJsonInner({
   return (
     <GeoJSON
       key={key}
+      // ペイント描画中は クリックを 無視 する だけ では 足りない。
+      // 図形が イベントを 飲み込んで 地図まで 届かず、頂点が 置けなくなる
+      interactive={!disableClicks}
       ref={(ref: L.GeoJSON | null) => {
         layerRef.current = ref
       }}

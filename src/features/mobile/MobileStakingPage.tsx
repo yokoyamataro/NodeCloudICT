@@ -5772,6 +5772,7 @@ export function MobileStakingPage() {
                   fillOpacity,
                   weight: 2,
                 }}
+                interactive={!paintActive}
                 eventHandlers={
                   // 座標計算で 線を 選んでいる 間は 地番情報を 開かない
                   // (辺を タップした つもりが モーダルに なる)
@@ -5927,6 +5928,7 @@ export function MobileStakingPage() {
                   weight: 20,
                   opacity: 0,
                 }}
+                interactive={!paintActive}
                 eventHandlers={{
                   click: () => setSelectedPipeId(p.id),
                 }}
@@ -6106,6 +6108,10 @@ export function MobileStakingPage() {
                   iconSize: [iconSize, iconSize],
                   iconAnchor: [iconSize / 2, iconSize / 2],
                 })}
+                // ペイント描画中は マーカーが タップを 飲み込むと 地図まで 届かず、
+                // 吸着先の 点を 押した つもりが 何も 起きない (地図が その点に
+                // 寄るだけ に 見える)。 クリック判定 ごと 外して 素通しさせる
+                interactive={!paintActive}
                 eventHandlers={{
                   click: () => {
                     // 求積モード: タップで面積の構成点として追加
@@ -6256,6 +6262,7 @@ export function MobileStakingPage() {
             <OpenChannelOverlay
               overlay={channelOverlay}
               subOn={subOn}
+              disableClicks={paintActive}
               // 2D の 断面作成中だけ 中間点を 押せるように する
               onStationClick={sectionPickingMode ? createSectionFromStation : undefined}
             />

@@ -1389,7 +1389,11 @@ export function OrthophotoPage() {
               重ね順は レイヤ一覧 で 変更可 (channelsZIndex) */}
           <Pane name="ov-channels" style={{ zIndex: channelsZIndex }}>
             {showChannelsLayer && (
-              <OpenChannelOverlay overlay={channelOverlay} subOn={subOn} />
+              <OpenChannelOverlay
+                overlay={channelOverlay}
+                subOn={subOn}
+                disableClicks={drawingMode !== 'off'}
+              />
             )}
           </Pane>
           {/* TIN 編集モード の プレビュー: 三角形 (半透明 emerald) + 頂点 (数字ラベル)。
