@@ -22,6 +22,12 @@ interface Props {
   onPickRequest?: (assign: ((coordId: string) => void) | null) => void
   /** 地図からの境界線選択を要求する。assign に辺の2点座標IDを渡すと確定。null でキャンセル/解除 */
   onLineRequest?: (assign: ((id1: string, id2: string) => void) | null) => void
+  /**
+   * 置き方。'center' は 画面中央の モーダル (既定、PC)。
+   * 'bottom' は 画面下端に 貼り付く パネル (スマホ)。 暗幕は 出さず、
+   * 余白と 文字を 詰めて 地図が 隠れないように する。
+   */
+  placement?: 'center' | 'bottom'
 }
 
 type Mode = 'intersection' | 'online' | 'distance'
@@ -46,7 +52,9 @@ function bearingDeg(a: XY, b: XY): number {
   return ((rad * 180) / Math.PI + 360) % 360
 }
 
-export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onAdd, onClose, onPickRequest, onLineRequest }: Props) {
+export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onAdd, onClose, onPickRequest, onLineRequest, placement = 'center' }: Props) {
+  /** スマホ向け: 下端 に 貼り付け、余白を 詰める */
+  const compact = placement === 'bottom'
   const [mode, setMode] = useState<Mode>('intersection')
   // 地図から選択中のスロット名（null=通常表示）
   const [pickingLabel, setPickingLabel] = useState<string | null>(null)
@@ -211,9 +219,21 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
   }
 
   return (
-    <div className="fixed inset-0 z-[3000] bg-black/40 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
-        <div className="px-4 py-3 border-b flex items-center gap-2">
+    <div
+      className={
+        compact
+          ? 'fixed left-0 right-0 bottom-0 z-[3000]'
+          : 'fixed inset-0 z-[3000] bg-black/40 flex items-center justify-center p-4'
+      }
+    >
+      <div
+        className={
+          compact
+            ? 'bg-white w-full border-t border-slate-300 rounded-t-xl shadow-[0_-4px_16px_rgba(0,0,0,0.18)] flex flex-col max-h-[62vh]'
+            : 'bg-white rounded-lg shadow-xl w-full max-w-lg'
+        }
+      >
+        <div className={`${compact ? 'px-3 py-1.5' : 'px-4 py-3'} border-b flex items-center gap-2`}>
           <Calculator className="h-4 w-4 text-blue-600" />
           <span className="font-semibold text-sm">座標計算</span>
           <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-700">
@@ -222,7 +242,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
         </div>
 
         {/* モード切替 */}
-        <div className="px-4 pt-3 flex gap-2 text-sm flex-wrap">
+        <div className={`${compact ? 'px-3 pt-2 gap-1 text-xs' : 'px-4 pt-3 gap-2 text-sm'} flex flex-wrap`}>
           {([
             ['intersection', '交点計算'],
             ['online', '線上計算'],
@@ -231,7 +251,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
             <button
               key={m}
               onClick={() => setMode(m)}
-              className={`px-3 py-1 rounded border ${
+              className={`${compact ? 'px-2.5 py-0.5' : 'px-3 py-1'} rounded border ${
                 mode === m ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-slate-300'
               }`}
             >
@@ -240,17 +260,17 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
           ))}
         </div>
 
-        <div className="p-4 space-y-3 max-h-[55vh] overflow-y-auto">
+        <div className={`${compact ? 'px-3 py-2 space-y-2' : 'p-4 space-y-3 max-h-[55vh]'} flex-1 overflow-y-auto`}>
           {mode === 'intersection' ? (
             <>
-              <p className="text-xs text-slate-500">
-                2本の線（各2点）の交点を計算します。線を右方向に平行移動（オフセット, m）も指定できます。
+              <p className={compact ? 'text-[11px] leading-snug text-slate-500' : 'text-xs text-slate-500'}>
+                2 本の線の交点。各線は右方向にオフセット (m) できます。
               </p>
               {[
                 { label: '線1', a: l1a, sa: setL1a, b: l1b, sb: setL1b, off: l1off, soff: setL1off },
                 { label: '線2', a: l2a, sa: setL2a, b: l2b, sb: setL2b, off: l2off, soff: setL2off },
               ].map((ln) => (
-                <div key={ln.label} className="border rounded p-2 space-y-2">
+                <div key={ln.label} className={`border rounded ${compact ? 'p-1.5 space-y-1.5' : 'p-2 space-y-2'}`}>
                   <div className="text-xs font-medium text-slate-600">{ln.label}</div>
                   <LinePickButton label={ln.label} setA={ln.sa} setB={ln.sb} />
                   <PointSelect value={ln.a} onChange={ln.sa} placeholder="始点を選択" label={`${ln.label} 始点`} />
@@ -270,10 +290,10 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
             </>
           ) : mode === 'online' ? (
             <>
-              <p className="text-xs text-slate-500">
-                線（2点）を選び、起点から延長方向(+前方) ・ 左右(+右) にずらした点を計算します。
+              <p className={compact ? 'text-[11px] leading-snug text-slate-500' : 'text-xs text-slate-500'}>
+                基準線の起点から 延長 (+前) ・ 左右 (+右) にずらした点。
               </p>
-              <div className="border rounded p-2 space-y-2">
+              <div className={`border rounded ${compact ? 'p-1.5 space-y-1.5' : 'p-2 space-y-2'}`}>
                 <LinePickButton label="基準線（起点→方向先）" setA={setOa} setB={setOb} />
                 <PointSelect value={oa} onChange={setOa} placeholder="起点を選択" label="起点" />
                 <PointSelect value={ob} onChange={setOb} placeholder="方向先（終点）を選択" label="方向先" />
@@ -293,10 +313,10 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
             </>
           ) : (
             <>
-              <p className="text-xs text-slate-500">
-                2 点を選び、起点→終点の平面距離と方向角（北から時計回り）を表示します。
+              <p className={compact ? 'text-[11px] leading-snug text-slate-500' : 'text-xs text-slate-500'}>
+                2 点間の平面距離と方向角 (北から時計回り)。
               </p>
-              <div className="border rounded p-2 space-y-2">
+              <div className={`border rounded ${compact ? 'p-1.5 space-y-1.5' : 'p-2 space-y-2'}`}>
                 <LinePickButton label="計測区間（起点→終点）" setA={setDa} setB={setDb} />
                 <PointSelect value={da} onChange={setDa} placeholder="起点を選択" label="起点" />
                 <PointSelect value={db} onChange={setDb} placeholder="終点を選択" label="終点" />
@@ -305,7 +325,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
           )}
 
           {/* 結果 */}
-          <div className="border-t pt-3">
+          <div className={compact ? 'border-t pt-2' : 'border-t pt-3'}>
             <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
               {mode === 'distance' ? (
                 <>
@@ -363,7 +383,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
           )}
         </div>
 
-        <div className="px-4 py-3 border-t flex justify-end gap-2">
+        <div className={`${compact ? 'px-3 py-2' : 'px-4 py-3'} border-t flex justify-end gap-2`}>
           <button onClick={onClose} className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50">
             {mode === 'distance' ? '閉じる' : 'キャンセル'}
           </button>

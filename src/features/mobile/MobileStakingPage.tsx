@@ -4762,6 +4762,8 @@ export function MobileStakingPage() {
             setCalcAssign(null)
           }}
           onPickRequest={(fn) => setCalcAssign(() => fn)}
+          // スマホでは 画面下端 に 貼り付ける (ペイント欄と 同じ 置き方)
+          placement="bottom"
         />
       )}
       {/* ルート保存 (名前入力) ダイアログ */}
