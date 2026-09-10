@@ -417,6 +417,7 @@ function HighDensityList<T>({
   threshold,
   zoomMin,
   labelZoomMin,
+  labelZoomMinAlways,
   getLatLng,
   getPolygonPositions,
   render,
@@ -433,6 +434,12 @@ function HighDensityList<T>({
    * 未指定なら常に true。
    */
   labelZoomMin?: number
+  /**
+   * 件数に かかわらず この zoom 未満 では ラベルを 出さない。
+   * labelZoomMin は 「件数が 多いときだけ」の 制限 なので、常に 効かせたい
+   * ラベル (地番名 など) は こちらを 使う。
+   */
+  labelZoomMinAlways?: number
   /** 点項目用: 単一の (lat, lng) を返す */
   getLatLng?: (item: T) => [number, number]
   /** ポリゴン項目用: positions を返す（バウンディングボックス判定用） */
@@ -476,7 +483,10 @@ function HighDensityList<T>({
 
   // 件数が少ない (~threshold 未満) 場合はラベルも常に許可。
   // 多い場合は labelZoomMin 以上でのみ許可。
-  const showLabel = !isDense || labelZoomMin == null || zoom >= labelZoomMin
+  // labelZoomMinAlways は 件数に 関係なく 効く 下限。
+  const showLabel =
+    (labelZoomMinAlways == null || zoom >= labelZoomMinAlways) &&
+    (!isDense || labelZoomMin == null || zoom >= labelZoomMin)
   const ctx = { showLabel }
   return <>{visible.map((it) => render(it, ctx))}</>
 }
@@ -799,13 +809,15 @@ export function CoordinateMap({
 
       {/* 外部から渡されたポリゴン（workAreaStore など）。地番ポリゴンは
           4000+ になるので、500 件超なら zoom 16 以上 + 画面内のみ描画する。
-          ラベル（地番名）はさらに重いので zoom 17 以上に絞る。 */}
+          地番名は 引いた 図では 潰れて 読めない ので、件数に かかわらず
+          zoom 19 以上 でのみ 出す。 */}
       <InPane name="cm-parcels" zIndex={elementPanes?.parcels}>
       <HighDensityList
         items={externalPolygons.filter((p) => p.positions.length >= 3)}
         threshold={500}
         zoomMin={16}
-        labelZoomMin={17}
+        labelZoomMin={19}
+        labelZoomMinAlways={19}
         getPolygonPositions={(p) => p.positions}
         render={(polygon, { showLabel }) => {
           const isEditing = polygon.id === editingExternalPolygonId
