@@ -81,6 +81,7 @@ import {
   type CalcSelection,
 } from '@/features/coordinates/CoordinateCalcModal'
 import { fetchUserNames } from '@/lib/farmViews'
+import { STAKE_TYPE_OPTIONS } from '@/lib/stakeTypes'
 import { FarmPresenceBadge } from '@/components/layout/FarmPresenceBadge'
 import { useAttachmentStore } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
@@ -8275,22 +8276,34 @@ export function MobileStakingPage() {
                         ))}
                       </select>
                     </div>
-                    {/* 杭種 (自由入力。任意) */}
-                    <div className="flex items-center gap-2">
-                      <span className="w-10 shrink-0 text-[11px] text-slate-500">杭種</span>
-                      <input
-                        type="text"
-                        defaultValue={liveCoord?.stakeType ?? ''}
-                        onBlur={(e) => {
-                          const v = e.target.value.trim()
-                          const cur = liveCoord?.stakeType ?? ''
-                          if (v === cur) return
-                          void updateStakeTypeStore(t.refId, v.length > 0 ? v : null)
-                        }}
-                        placeholder="任意 (例: プラ杭 / 木杭)"
-                        className="flex-1 min-w-0 px-2 py-1 text-sm border rounded bg-white"
-                      />
-                    </div>
+                    {/* 杭種。 現場で 打つ ものは 決まって いる ので 選択式。
+                        PC で 自由入力 された 値は そのまま 選択肢に 足して 残す */}
+                    {(() => {
+                      const cur = liveCoord?.stakeType ?? ''
+                      const known = STAKE_TYPE_OPTIONS.some((o) => o.label === cur)
+                      return (
+                        <div className="flex items-center gap-2">
+                          <span className="w-10 shrink-0 text-[11px] text-slate-500">杭種</span>
+                          <select
+                            value={cur}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              if (v === cur) return
+                              void updateStakeTypeStore(t.refId, v.length > 0 ? v : null)
+                            }}
+                            className="flex-1 min-w-0 px-2 py-1 text-sm border rounded bg-white"
+                          >
+                            <option value="">(未設定)</option>
+                            {STAKE_TYPE_OPTIONS.map((o) => (
+                              <option key={o.label} value={o.label}>
+                                {o.label}
+                              </option>
+                            ))}
+                            {cur !== '' && !known && <option value={cur}>{cur}</option>}
+                          </select>
+                        </div>
+                      )
+                    })()}
                   </>
                 ) : (
                   <div className="flex items-center gap-2 text-sm">
