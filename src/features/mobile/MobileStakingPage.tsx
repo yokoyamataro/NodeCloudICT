@@ -1395,6 +1395,13 @@ export function MobileStakingPage() {
   // 大量点（数千点）で permanent tooltip を全 marker に付けると固まるため、
   // 画面に映っているマーカーだけ label を出すようにする。
   const [mapBounds, setMapBounds] = useState<L.LatLngBounds | null>(null)
+  /**
+   * 描画用 の 画面範囲 (少し 広め)。
+   * 画面外の マーカー / ポリゴン を 描いても 見えない のに、測点 3000 点 や
+   * 地番 1000 筆 だと DOM ノード が 増えすぎて 地図ごと 固まる。
+   * パン中に 出現する のを 抑える ため 25% ぶん 余裕を 取る。
+   */
+  const drawBounds = useMemo(() => (mapBounds ? mapBounds.pad(0.25) : null), [mapBounds])
   const [showRouteLine, setShowRouteLine] = useState(true)
 
   // 施工管理モード用：中心線形 / 床掘 TIN / 現況 TIN
@@ -5680,6 +5687,10 @@ export function MobileStakingPage() {
           center={mapCenter}
           zoom={17}
           maxZoom={24}
+          // ベクタ (地番ポリゴン / 線形物 / ペイント) を SVG では なく canvas で 描く。
+          // 法務省地図が 数千 図形でも 軽い のは canvas の ため。
+          // 1 図形 = 1 DOM ノード に ならず、再描画も まとめて 走る
+          preferCanvas
           // leaflet-rotate の 有効化。rotate:true が 無いと setBearing が 効かない。
           // 右上に 出る 回転コントロールは 自前ボタン列と 被るので 抑制する
           {...({ rotate: true, bearing: 0, rotateControl: false } as Record<string, unknown>)}
@@ -5768,7 +5779,13 @@ export function MobileStakingPage() {
           />
 
           {/* 工事区域ポリゴン（境界測量=属性色 / その他=工種色）。showParcelPolygons でまとめて非表示にできる */}
-          {showParcelPolygons && farmPolygons.map((polygon) => {
+          {showParcelPolygons && farmPolygons
+            .filter(
+              (polygon) =>
+                drawBounds == null ||
+                polygon.positions.some(([lat, lng]) => drawBounds.contains([lat, lng])),
+            )
+            .map((polygon) => {
             const workTypeColor =
               polygon.workType === 'boundary_survey'
                 ? '#0ea5e9'
@@ -6046,7 +6063,15 @@ export function MobileStakingPage() {
             const labelsActive = showTargets && mapZoom >= LABEL_MIN_ZOOM
             const labelBounds =
               labelsActive && mapBounds ? mapBounds.pad(0.15) : null
-            return filteredTargets.map((t) => {
+            // マーカー 自体も 画面内 だけ。 選択中の 1 点 は 画面外 でも 残す
+            // (誘導の 基準 なので 消えると 追えなく なる)
+            const shown =
+              drawBounds == null
+                ? filteredTargets
+                : filteredTargets.filter(
+                    (t) => t.id === selectedTargetId || drawBounds.contains([t.lat, t.lng]),
+                  )
+            return shown.map((t) => {
             const isSelected = t.id === selectedTargetId
             const isStaked = stakedTargetIds.has(t.id)
             const draftIdx = routeCreationMode

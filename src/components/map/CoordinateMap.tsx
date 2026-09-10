@@ -418,6 +418,7 @@ function HighDensityList<T>({
   zoomMin,
   labelZoomMin,
   labelZoomMinAlways,
+  keep,
   getLatLng,
   getPolygonPositions,
   render,
@@ -440,6 +441,11 @@ function HighDensityList<T>({
    * ラベル (地番名 など) は こちらを 使う。
    */
   labelZoomMinAlways?: number
+  /**
+   * 画面外でも 必ず 描く もの (編集中 / 選択中 の 図形 など)。
+   * culling で 消えると 編集の 途中で 対象を 見失う。
+   */
+  keep?: (item: T) => boolean
   /** 点項目用: 単一の (lat, lng) を返す */
   getLatLng?: (item: T) => [number, number]
   /** ポリゴン項目用: positions を返す（バウンディングボックス判定用） */
@@ -462,24 +468,26 @@ function HighDensityList<T>({
   const isDense = items.length > threshold
   if (isDense && zoom < zoomMin) return null
 
-  // 件数が多いときだけビューポート culling を効かせる
-  const visible = !isDense
-    ? items
-    : items.filter((it) => {
-        if (getLatLng) {
-          const [lat, lng] = getLatLng(it)
-          return bounds.contains([lat, lng])
-        }
-        if (getPolygonPositions) {
-          const ps = getPolygonPositions(it)
-          // 1 点でも画面内ならポリゴンとして可視扱い（粗い判定だが十分速い）
-          for (const [lat, lng] of ps) {
-            if (bounds.contains([lat, lng])) return true
-          }
-          return false
-        }
-        return true
-      })
+  // ビューポート culling は 件数に かかわらず かける。
+  // 画面外の 図形を 描いても 見えない のに、DOM / SVG ノード だけ 増えて
+  // 地図操作が 重くなる。 少し 広め (0.25) に 取って パン中の 出現を 抑える。
+  const padded = bounds.pad(0.25)
+  const visible = items.filter((it) => {
+    if (keep?.(it)) return true
+    if (getLatLng) {
+      const [lat, lng] = getLatLng(it)
+      return padded.contains([lat, lng])
+    }
+    if (getPolygonPositions) {
+      const ps = getPolygonPositions(it)
+      // 1 点でも画面内ならポリゴンとして可視扱い（粗い判定だが十分速い）
+      for (const [lat, lng] of ps) {
+        if (padded.contains([lat, lng])) return true
+      }
+      return false
+    }
+    return true
+  })
 
   // 件数が少ない (~threshold 未満) 場合はラベルも常に許可。
   // 多い場合は labelZoomMin 以上でのみ許可。
@@ -755,6 +763,10 @@ export function CoordinateMap({
       maxZoom={24}
       className="h-full w-full"
       style={{ minHeight: '400px' }}
+      // ベクタ (地番ポリゴン / 線) を SVG では なく canvas で 描く。
+      // 法務省地図が 数千 図形でも 軽い のは canvas の ため。
+      // 1 図形 = 1 DOM ノード に ならず、再描画も まとめて 走る
+      preferCanvas
       // leaflet-rotate の 有効化:
       //   rotate:true         — setBearing が 実際に 反映される (これ が 無い と no-op)
       //   bearing:0           — 初期 bearing (北向き)
@@ -818,6 +830,11 @@ export function CoordinateMap({
         zoomMin={16}
         labelZoomMin={19}
         labelZoomMinAlways={19}
+        keep={(p) =>
+          p.id === editingExternalPolygonId ||
+          p.id === selectedExternalPolygonId ||
+          (checkedExternalPolygonIds?.has(p.id) ?? false)
+        }
         getPolygonPositions={(p) => p.positions}
         render={(polygon, { showLabel }) => {
           const isEditing = polygon.id === editingExternalPolygonId
@@ -1035,6 +1052,7 @@ export function CoordinateMap({
         threshold={1000}
         zoomMin={17}
         labelZoomMin={19}
+        keep={(c) => c.id === selectedPointId || c.id === selectedConstituentPointId}
         getLatLng={(c) => [c.lat, c.lng]}
         render={(coord, { showLabel }) => {
           const isSelectedConstituent = coord.id === selectedConstituentPointId
