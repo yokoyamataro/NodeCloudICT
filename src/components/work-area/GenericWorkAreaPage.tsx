@@ -21,8 +21,6 @@ import {
   CadastralRowFields,
   CADASTRAL_COLUMN_KEYS,
   CADASTRAL_COLUMN_WIDTH,
-  CADASTRAL_STICKY_COLUMNS,
-  cadastralStickyLeftPx,
   type CadastralColumnKey,
 } from '@/features/boundary-survey/CadastralRowFields'
 import { CadastralHeader } from '@/features/boundary-survey/CadastralHeader'
@@ -858,8 +856,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
               }
             >
               {/* 地籍: ヘッダー + 行を同じ横スクロール領域に入れる。
-                  sticky 列（編集 / 地番）が両側で同期するため、見出しと行で
-                  別々の overflow-x-auto を持たせない。 */}
+                  見出しと行で 別々の overflow-x-auto を 持たせない ため。 */}
               <div className={isBoundarySurvey ? 'min-w-max' : ''}>
                 {isBoundarySurvey && (
                   <CadastralHeader visibleColumns={visibleColumns} leadingWidth={isSiteOwner ? 'w-28' : 'w-20'} />
@@ -894,9 +891,9 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                     >
                       {isBoundarySurvey && (
                         // 行頭の「構成点編集」+「登記PDFを開く」(+ site owner のみ「登記取得」)。
-                        // 横スクロール時も見えるよう sticky。ボタン数に応じて幅を可変。
+                        // 横スクロールでの 貼り付け は しない。 ボタン数に応じて 幅は 可変。
                         <div
-                          className={`${isSiteOwner ? 'w-28' : 'w-20'} shrink-0 flex items-center justify-center gap-1 sticky left-3 z-10`}
+                          className={`${isSiteOwner ? 'w-28' : 'w-20'} shrink-0 flex items-center justify-center gap-1`}
                           onClick={(e) => e.stopPropagation()}
                         >
                           <button
@@ -1525,7 +1522,7 @@ function NewCadastralAreaRow({
   return (
     <div className="flex items-center gap-1 px-3 py-2 border-b bg-amber-50/40">
       <div
-        className="w-10 shrink-0 flex items-center justify-center py-1 rounded border border-dashed border-slate-300 sticky left-3 z-10 bg-amber-50/80"
+        className="w-10 shrink-0 flex items-center justify-center py-1 rounded border border-dashed border-slate-300"
         title="地番を入力して Enter で追加"
       >
         <Plus className="h-3.5 w-3.5 text-slate-400" />
@@ -1533,19 +1530,8 @@ function NewCadastralAreaRow({
       <div className="flex items-center gap-1 text-xs whitespace-nowrap">
         {CADASTRAL_COLUMN_KEYS.filter((k) => visibleColumns.has(k)).map((key) => {
           const isParcel = key === 'parcel_number'
-          const isSticky = CADASTRAL_STICKY_COLUMNS.has(key)
           return (
-            <div
-              key={key}
-              className={`${CADASTRAL_COLUMN_WIDTH[key]} shrink-0 ${
-                isSticky ? 'sticky z-10 bg-amber-50/80' : ''
-              }`}
-              style={
-                isSticky
-                  ? { left: cadastralStickyLeftPx(key, visibleColumns) + 'px' }
-                  : undefined
-              }
-            >
+            <div key={key} className={`${CADASTRAL_COLUMN_WIDTH[key]} shrink-0`}>
               {isParcel ? (
                 <input
                   type="text"
