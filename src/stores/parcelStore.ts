@@ -11,6 +11,7 @@
 
 import { create } from 'zustand'
 import { errorMessage } from '@/lib/errorMessage'
+import { withRetry } from '@/lib/retry'
 import { supabase } from '@/lib/supabase'
 import type { Parcel } from '@/types/database'
 
@@ -111,12 +112,14 @@ export const useParcelStore = create<ParcelState>((set, get) => ({
         const ids = workAreaIds.slice(i, i + ID_CHUNK)
         let from = 0
         for (;;) {
-          const { data, error } = await supabase
-            .from('parcels')
-            .select('*')
-            .in('work_area_id', ids)
-            .order('work_area_id')
-            .range(from, from + PAGE - 1)
+          const { data, error } = await withRetry(() =>
+            supabase
+              .from('parcels')
+              .select('*')
+              .in('work_area_id', ids)
+              .order('work_area_id')
+              .range(from, from + PAGE - 1),
+          )
           if (error) throw error
           const page = (data ?? []) as RawParcel[]
           rows.push(...page)

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
+import { withRetry } from '@/lib/retry'
 import { STAKE_STATUS_OPTIONS, type CoordinateType, type DesignCoordinate, type StakeStatus } from '@/types/database'
 
 // PostgrestError は Error 継承ではないので instanceof Error が false になり、
@@ -264,11 +265,13 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       // 総件数を先に取って、ページング中に done/total を伝えられるようにする
       let totalCount = 0
       {
-        const { count } = await supabase
-          .from('design_coordinates')
-          .select('id', { count: 'exact', head: true })
-          .eq('farm_id', farmId)
-          .is('deleted_at', null)
+        const { count } = await withRetry(() =>
+          supabase
+            .from('design_coordinates')
+            .select('id', { count: 'exact', head: true })
+            .eq('farm_id', farmId)
+            .is('deleted_at', null),
+        )
         totalCount = count ?? 0
       }
       if (totalCount > 0) {
@@ -281,13 +284,16 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       let from = 0
       // 安全弁: 最大 100 万行で打ち切り
       while (from < 1_000_000) {
-        const { data, error } = await supabase
-          .from('design_coordinates')
-          .select('*')
-          .eq('farm_id', farmId)
-          .is('deleted_at', null) // soft-deleted は 除外 (削除履歴からのみ 見える)
-          .order('point_number')
-          .range(from, from + PAGE - 1)
+        // 1 ページ の 瞬断 で 全部 やり直し に ならない よう 再試行する
+        const { data, error } = await withRetry(() =>
+          supabase
+            .from('design_coordinates')
+            .select('*')
+            .eq('farm_id', farmId)
+            .is('deleted_at', null) // soft-deleted は 除外 (削除履歴からのみ 見える)
+            .order('point_number')
+            .range(from, from + PAGE - 1),
+        )
         if (error) throw error
         const rows = (data || []) as DesignCoordinate[]
         all.push(...rows)

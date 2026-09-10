@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { errorMessage } from '@/lib/errorMessage'
+import { withRetry } from '@/lib/retry'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore } from './farmStore'
 import { useProjectListStore } from './projectListStore'
@@ -191,13 +192,15 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         const PAGE = 1000
         let from = 0
         while (from < 1_000_000) {
-          const { data: areas, error: areaError } = await supabase
-            .from('design_work_areas')
-            .select('*')
-            .eq('farm_id', farmId)
-            .order('work_type')
-            .order('zone_number')
-            .range(from, from + PAGE - 1)
+          const { data: areas, error: areaError } = await withRetry(() =>
+            supabase
+              .from('design_work_areas')
+              .select('*')
+              .eq('farm_id', farmId)
+              .order('work_type')
+              .order('zone_number')
+              .range(from, from + PAGE - 1),
+          )
           if (areaError) throw areaError
           const rows = (areas || []) as DesignWorkArea[]
           typedAreas.push(...rows)
@@ -224,12 +227,14 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         const PAGE = 1000
         let from = 0
         while (from < 1_000_000) {
-          const { data: coords, error: coordError } = await supabase
-            .from('design_coordinates')
-            .select('id, point_number, x, y, z')
-            .eq('farm_id', farmId)
-            .order('id')
-            .range(from, from + PAGE - 1)
+          const { data: coords, error: coordError } = await withRetry(() =>
+            supabase
+              .from('design_coordinates')
+              .select('id, point_number, x, y, z')
+              .eq('farm_id', farmId)
+              .order('id')
+              .range(from, from + PAGE - 1),
+          )
           if (coordError) throw coordError
           // buildWorkAreasRecord が 読む のは この 5 列 だけ
           const rows = (coords || []) as unknown as DesignCoordinate[]
