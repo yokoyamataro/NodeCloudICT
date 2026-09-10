@@ -32,7 +32,10 @@ import {
 } from '@/features/boundary-survey/CadastralColumnPicker'
 import type { WorkType } from '@/types/database'
 import { WORK_TYPE_NAMES } from '@/types/database'
-import { generateCoordinateAreaBookExcel } from '@/lib/coordinateAreaBookExport'
+import {
+  bearingDegreesToDMS,
+  generateCoordinateAreaBookExcel,
+} from '@/lib/coordinateAreaBookExport'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { compareByLocationAndParcel } from '@/lib/parcelSort'
 import { useMapViewStore } from '@/stores/mapViewStore'
@@ -560,6 +563,18 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
   const editArea = editingAreaId ? areas.find((a) => a.id === editingAreaId) ?? null : null
   const editAreaPoints = editArea ? getAreaPoints(editArea.id) : []
 
+  /**
+   * 地番 を 選ぶ (一覧の 行 / 地図の ポリゴン)。
+   * 選んだ 時点で 構成点の パネル も 開く —— 選んで から もう一度
+   * 鉛筆 を 押す 手間 を 省く。
+   */
+  const selectArea = useCallback((id: string | null) => {
+    setSelectedAreaId(id)
+    setEditingAreaId(id)
+    setSelectedConstituentPointId(null)
+    setPendingInsertIdx(null)
+  }, [])
+
   /** 構成点の 編集を 終える (Enter / 確定ボタン)。 後始末は ESC と 同じ */
   const finishEditingArea = useCallback(() => {
     setEditingAreaId(null)
@@ -873,7 +888,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                       }
                       onClick={
                         isBoundarySurvey
-                          ? () => setSelectedAreaId(area.id)
+                          ? () => selectArea(area.id)
                           : () => setEditingAreaId(isEditing ? null : area.id)
                       }
                     >
@@ -1133,7 +1148,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
               onPolygonToggleCheck
                 ? onPolygonToggleCheck
                 : isBoundarySurvey
-                ? setSelectedAreaId
+                ? selectArea
                 : undefined
             }
             farmId={farmId ?? null}
@@ -1362,28 +1377,69 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
               </div>
             ) : (
               <ul className="space-y-1">
-                {editAreaPoints.map((point, index) => (
-                  <li
-                    key={point.id}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, point.id)}
-                    onDragOver={handleDragOver}
-                    onDrop={(e) => handleDrop(e, editArea.id, index)}
-                    className="flex items-center gap-2 px-2 py-1.5 text-sm bg-white border rounded cursor-move hover:bg-slate-50"
-                  >
-                    <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="w-5 text-xs text-muted-foreground">
-                      {index + 1}.
-                    </span>
-                    <span className="font-medium">{point.pointNumber}</span>
-                    <button
-                      onClick={() => removePoint(editArea.id, point.id)}
-                      className="ml-auto p-0.5 text-red-500 hover:bg-red-50 rounded"
+                {/* 列見出し。 距離 / 方向角 は 「次の点まで」 */}
+                <li className="flex items-center gap-1.5 px-2 text-[10px] text-slate-400">
+                  <span className="w-3.5 shrink-0" />
+                  <span className="w-5 shrink-0" />
+                  <span className="flex-1 min-w-0">点名</span>
+                  <span className="w-16 shrink-0 text-right">距離(m)</span>
+                  <span className="w-20 shrink-0 text-right">方向角</span>
+                  <span className="w-4 shrink-0" />
+                </li>
+                {editAreaPoints.map((point, index) => {
+                  // 次の 点 まで の 辺長 と 方向角。 最後の 点 は 閉合辺
+                  // (最終点 → 始点) を 見る。 面積計算書 と 同じ 計算・表記。
+                  const next = editAreaPoints[(index + 1) % editAreaPoints.length]
+                  const hasEdge =
+                    editAreaPoints.length >= 2 &&
+                    next != null &&
+                    Number.isFinite(point.x) &&
+                    Number.isFinite(point.y) &&
+                    Number.isFinite(next.x) &&
+                    Number.isFinite(next.y)
+                  const dx = hasEdge ? next.x - point.x : 0
+                  const dy = hasEdge ? next.y - point.y : 0
+                  const dist = hasEdge ? Math.hypot(dx, dy) : null
+                  const bearing = hasEdge
+                    ? bearingDegreesToDMS(Math.atan2(dy, dx) * (180 / Math.PI))
+                    : null
+                  return (
+                    <li
+                      key={point.id}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, point.id)}
+                      onDragOver={handleDragOver}
+                      onDrop={(e) => handleDrop(e, editArea.id, index)}
+                      className="flex items-center gap-1.5 px-2 py-1.5 text-sm bg-white border rounded cursor-move hover:bg-slate-50"
                     >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </li>
-                ))}
+                      <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="w-5 shrink-0 text-xs text-muted-foreground">
+                        {index + 1}.
+                      </span>
+                      <span className="flex-1 min-w-0 truncate font-medium">
+                        {point.pointNumber}
+                      </span>
+                      <span
+                        className="w-16 shrink-0 text-right text-xs font-mono text-slate-600"
+                        title="次の点までの距離 (m)"
+                      >
+                        {dist != null ? dist.toFixed(3) : '-'}
+                      </span>
+                      <span
+                        className="w-20 shrink-0 text-right text-xs font-mono text-slate-600"
+                        title="次の点への方向角 (度-分-秒)"
+                      >
+                        {bearing ?? '-'}
+                      </span>
+                      <button
+                        onClick={() => removePoint(editArea.id, point.id)}
+                        className="shrink-0 p-0.5 text-red-500 hover:bg-red-50 rounded"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </li>
+                  )
+                })}
               </ul>
             )}
 

@@ -35,8 +35,9 @@ interface ComputedRow {
   bearingDMS: string // 方向角 (D-MM-SS)
 }
 
-/** 方向角 (X=北, Y=東) を [0, 360) の DMS 文字列 "D-MM-SS" に整形 */
-function bearingDegreesToDMS(deg: number): string {
+/** 方向角 (X=北, Y=東) を [0, 360) の DMS 文字列 "D-MM-SS" に整形。
+ *  地番管理の 構成点パネル でも 同じ 表記 を 使う ので export する */
+export function bearingDegreesToDMS(deg: number): string {
   let d = ((deg % 360) + 360) % 360
   const D = Math.floor(d)
   const mF = (d - D) * 60
