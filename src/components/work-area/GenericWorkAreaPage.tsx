@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useCallback, useState, useEffect, useMemo } from 'react'
 import { Plus, Trash2, GripVertical, Calculator, Download, Image as ImageIcon, Ruler, Pencil, Tag, Hash, FileText, KeyRound } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
@@ -556,27 +556,61 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     }
   }
 
+  // 編集中の 区域 と その 構成点 (右の 縦長パネル が 使う)
+  const editArea = editingAreaId ? areas.find((a) => a.id === editingAreaId) ?? null : null
+  const editAreaPoints = editArea ? getAreaPoints(editArea.id) : []
+
+  /** 構成点の 編集を 終える (Enter / 確定ボタン)。 後始末は ESC と 同じ */
+  const finishEditingArea = useCallback(() => {
+    setEditingAreaId(null)
+    setSelectedConstituentPointId(null)
+    setHoverPos(null)
+    setPendingInsertIdx(null)
+  }, [])
+
   // 編集を抜けたら選択もクリア
   useEffect(() => {
     if (!editingAreaId) setSelectedConstituentPointId(null)
   }, [editingAreaId])
 
-  // DEL / BACKSPACE で選択中の構成点を削除
+  // 構成点の 作成 / 編集中 の キー操作。
+  //   Enter     … 地番確定 (編集を 終える)
+  //   Backspace … 前の点 (最後に 足した 点) を 削除 —— 打ち間違えたら すぐ 戻せる
+  //   Delete    … 選択中の 構成点 を 削除
   useEffect(() => {
-    if (!editingAreaId || !selectedConstituentPointId) return
+    if (!editingAreaId) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return
       // 入力フィールドにフォーカスがあるときはスルー
       const t = e.target as HTMLElement | null
       const tag = t?.tagName?.toLowerCase()
       if (tag === 'input' || tag === 'textarea' || t?.isContentEditable) return
-      e.preventDefault()
-      removePoint(editingAreaId, selectedConstituentPointId)
-      setSelectedConstituentPointId(null)
+
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        finishEditingArea()
+        return
+      }
+      if (e.key === 'Backspace') {
+        e.preventDefault()
+        // getAreaPoints は 毎描画 作り直される ので 依存に 入れない。
+        // 最後の 構成点 は point_ids の 末尾 で 足りる
+        const ids = areas.find((a) => a.id === editingAreaId)?.pointIds ?? []
+        const last = ids[ids.length - 1]
+        if (!last) return
+        if (last === selectedConstituentPointId) setSelectedConstituentPointId(null)
+        removePoint(editingAreaId, last)
+        return
+      }
+      if (e.key === 'Delete') {
+        if (!selectedConstituentPointId) return
+        e.preventDefault()
+        removePoint(editingAreaId, selectedConstituentPointId)
+        setSelectedConstituentPointId(null)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [editingAreaId, selectedConstituentPointId, removePoint])
+  }, [editingAreaId, selectedConstituentPointId, removePoint, areas, finishEditingArea])
 
   // ESC で「挿入待機 → 構成点選択 → 編集モード」を段階的に解除
   useEffect(() => {
@@ -819,7 +853,6 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
               {sortedAreas.map((area) => {
                 const isEditing = editingAreaId === area.id
                 const isSelected = !isEditing && selectedAreaId === area.id
-                const areaPoints = getAreaPoints(area.id)
 
                 return (
                   <div
@@ -979,125 +1012,6 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                         </button>
                       </div>
                     </div>
-
-                    {/* 編集中の区域: 構成点リスト（インライン展開）。
-                        地籍も同じ場所に出すことで、モーダルが地図クリックを
-                        塞いで点が選べない問題を避ける */}
-                    {isEditing && (
-                      <div className="border-t px-3 py-2 bg-slate-50">
-                        <div className="text-xs text-muted-foreground mb-2 flex items-center gap-2">
-                          <span>構成点（地図上の点をクリックして追加、ドラッグで順序変更）</span>
-                          {isBoundarySurvey && (
-                            <span className="ml-auto text-[10px] text-slate-400">
-                              <kbd className="px-1 bg-slate-100 border rounded">Esc</kbd> で編集終了
-                            </span>
-                          )}
-                        </div>
-                        {isBoundarySurvey && (
-                          <div className="mb-2 px-2 py-1.5 text-[11px] rounded border bg-white">
-                            {pendingInsertIdx != null ? (
-                              <span className="text-emerald-700">
-                                <span className="font-semibold">挿入待機:</span>{' '}
-                                第 {pendingInsertIdx} 点目と {pendingInsertIdx + 1} 点目の間に挿入
-                                {' — '}
-                                <span className="text-slate-600">
-                                  挿入する座標をクリック、または <kbd className="px-1 bg-slate-100 border rounded">Esc</kbd> でキャンセル
-                                </span>
-                              </span>
-                            ) : selectedConstituentPointId ? (
-                              <span className="text-orange-700">
-                                <span className="font-semibold">選択中:</span>{' '}
-                                {coordinates.find((c) => c.id === selectedConstituentPointId)?.pointNumber ?? ''}
-                                {' — '}
-                                <span className="text-slate-600">
-                                  別の座標をクリックで <b>置換</b>、または <kbd className="px-1 bg-slate-100 border rounded">Del</kbd> /
-                                  <kbd className="px-1 bg-slate-100 border rounded">Backspace</kbd> で削除
-                                </span>
-                              </span>
-                            ) : (
-                              <span className="text-slate-500">
-                                構成点クリックで選択 → 別座標クリックで置換、または <kbd className="px-1 bg-slate-100 border rounded">Del</kbd> 削除。
-                                辺の中点 <span className="text-emerald-700 font-semibold">+</span> をクリック → 座標クリックで挿入。
-                              </span>
-                            )}
-                          </div>
-                        )}
-                        {areaPoints.length === 0 ? (
-                          <div className="py-4 text-center text-sm text-muted-foreground border border-dashed rounded">
-                            点を選択してください
-                          </div>
-                        ) : (
-                          <ul className="space-y-1">
-                            {areaPoints.map((point, index) => (
-                              <li
-                                key={point.id}
-                                draggable
-                                onDragStart={(e) => handleDragStart(e, point.id)}
-                                onDragOver={handleDragOver}
-                                onDrop={(e) => handleDrop(e, area.id, index)}
-                                className="flex items-center gap-2 px-2 py-1.5 text-sm bg-white border rounded cursor-move hover:bg-slate-50"
-                              >
-                                <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
-                                <span className="w-5 text-xs text-muted-foreground">
-                                  {index + 1}.
-                                </span>
-                                <span className="font-medium">{point.pointNumber}</span>
-                                <button
-                                  onClick={() => removePoint(area.id, point.id)}
-                                  className="ml-auto p-0.5 text-red-500 hover:bg-red-50 rounded"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-
-                        {/* 点名入力フィールド */}
-                        <div className="mt-2 flex gap-2">
-                          <input
-                            type="text"
-                            value={pointNameInput}
-                            onChange={(e) => setPointNameInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault()
-                                handleAddPointByName(area.id)
-                              }
-                            }}
-                            placeholder="点名を入力 (例: K1)"
-                            className="flex-1 px-2 py-1 text-sm border rounded"
-                          />
-                          <button
-                            onClick={() => handleAddPointByName(area.id)}
-                            disabled={!pointNameInput.trim()}
-                            className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            追加
-                          </button>
-                        </div>
-
-                        {/* 面積情報 */}
-                        {area.areaSqm !== null && (
-                          <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded text-xs">
-                            <div className="grid grid-cols-3 gap-2">
-                              <div>
-                                <span className="text-muted-foreground">面積:</span>{' '}
-                                <span className="font-medium">{area.areaSqm.toFixed(2)} m²</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">面積:</span>{' '}
-                                <span className="font-medium">{area.areaHa?.toFixed(4)} ha</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">周長:</span>{' '}
-                                <span className="font-medium">{area.perimeterM?.toFixed(2)} m</span>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
 
                   </div>
                 )
@@ -1384,6 +1298,147 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
           />
         )
       })()}
+
+      {/* 構成点の 編集。 地番の 下に 展開 する と 一覧が 縦に 伸びて
+          追えなく なる ので、右側 に 縦長の パネル で 出す。
+          暗幕 は 置かない —— 地図を クリック して 点を 選ぶ のが 主な 操作 なので、
+          覆って しまう と 何も できなく なる。 */}
+      {editArea && (
+        <div className="fixed right-3 top-16 bottom-3 z-[1500] w-80 max-w-[90vw] bg-white border border-slate-300 rounded-lg shadow-2xl flex flex-col overflow-hidden">
+          <div className="px-3 py-2 border-b flex items-center gap-2 bg-white shrink-0">
+            <Pencil className="h-4 w-4 text-blue-600" />
+            <span className="text-sm font-semibold truncate">
+              {parcelByWorkAreaId.get(editArea.id)?.parcel_number ||
+                editArea.zoneNumber ||
+                editArea.name ||
+                '構成点'}
+            </span>
+            <button
+              type="button"
+              onClick={finishEditingArea}
+              className="ml-auto shrink-0 px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+              title="構成点の編集を終える (Enter)"
+            >
+              確定
+            </button>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-auto px-3 py-2 bg-slate-50">
+            <div className="text-xs text-muted-foreground mb-2 flex items-center gap-2">
+              <span>構成点（地図上の点をクリックして追加、ドラッグで順序変更）</span>
+            </div>
+            {isBoundarySurvey && (
+              <div className="mb-2 px-2 py-1.5 text-[11px] rounded border bg-white">
+                {pendingInsertIdx != null ? (
+                  <span className="text-emerald-700">
+                    <span className="font-semibold">挿入待機:</span>{' '}
+                    第 {pendingInsertIdx} 点目と {pendingInsertIdx + 1} 点目の間に挿入
+                    {' — '}
+                    <span className="text-slate-600">
+                      挿入する座標をクリック、または <kbd className="px-1 bg-slate-100 border rounded">Esc</kbd> でキャンセル
+                    </span>
+                  </span>
+                ) : selectedConstituentPointId ? (
+                  <span className="text-orange-700">
+                    <span className="font-semibold">選択中:</span>{' '}
+                    {coordinates.find((c) => c.id === selectedConstituentPointId)?.pointNumber ?? ''}
+                    {' — '}
+                <span className="text-slate-600">
+                  別の座標をクリックで <b>置換</b>、または{' '}
+                  <kbd className="px-1 bg-slate-100 border rounded">Del</kbd> で削除
+                </span>
+                  </span>
+                ) : (
+                  <span className="text-slate-500">
+    構成点クリックで選択 → 別座標クリックで置換、または <kbd className="px-1 bg-slate-100 border rounded">Del</kbd> 削除。
+                    辺の中点 <span className="text-emerald-700 font-semibold">+</span> をクリック → 座標クリックで挿入。
+                  </span>
+                )}
+              </div>
+            )}
+            {editAreaPoints.length === 0 ? (
+              <div className="py-4 text-center text-sm text-muted-foreground border border-dashed rounded">
+                点を選択してください
+              </div>
+            ) : (
+              <ul className="space-y-1">
+                {editAreaPoints.map((point, index) => (
+                  <li
+                    key={point.id}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, point.id)}
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, editArea.id, index)}
+                    className="flex items-center gap-2 px-2 py-1.5 text-sm bg-white border rounded cursor-move hover:bg-slate-50"
+                  >
+                    <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="w-5 text-xs text-muted-foreground">
+                      {index + 1}.
+                    </span>
+                    <span className="font-medium">{point.pointNumber}</span>
+                    <button
+                      onClick={() => removePoint(editArea.id, point.id)}
+                      className="ml-auto p-0.5 text-red-500 hover:bg-red-50 rounded"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {/* 点名入力フィールド */}
+            <div className="mt-2 flex gap-2">
+              <input
+                type="text"
+                value={pointNameInput}
+                onChange={(e) => setPointNameInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    handleAddPointByName(editArea.id)
+                  }
+                }}
+                placeholder="点名を入力 (例: K1)"
+                className="flex-1 px-2 py-1 text-sm border rounded"
+              />
+              <button
+                onClick={() => handleAddPointByName(editArea.id)}
+                disabled={!pointNameInput.trim()}
+                className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                追加
+              </button>
+            </div>
+
+            {/* 面積情報 */}
+            {editArea.areaSqm !== null && (
+              <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded text-xs">
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <span className="text-muted-foreground">面積:</span>{' '}
+                    <span className="font-medium">{editArea.areaSqm.toFixed(2)} m²</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">面積:</span>{' '}
+                    <span className="font-medium">{editArea.areaHa?.toFixed(4)} ha</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">周長:</span>{' '}
+                    <span className="font-medium">{editArea.perimeterM?.toFixed(2)} m</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="px-3 py-1.5 border-t bg-white text-[10px] text-slate-500 leading-snug shrink-0">
+            <kbd className="px-1 bg-slate-100 border rounded">Enter</kbd> 確定 ／{' '}
+            <kbd className="px-1 bg-slate-100 border rounded">Backspace</kbd> 前の点を削除 ／{' '}
+            <kbd className="px-1 bg-slate-100 border rounded">Del</kbd> 選択中の点を削除 ／{' '}
+            <kbd className="px-1 bg-slate-100 border rounded">Esc</kbd> 取消
+          </div>
+        </div>
+      )}
     </div>
   )
 }
