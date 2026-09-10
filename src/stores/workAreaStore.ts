@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { errorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore } from './farmStore'
 import { useProjectListStore } from './projectListStore'
@@ -214,6 +215,10 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       // 安定ページングのため id 昇順で取得する。
       // （ORDER BY なしだとページ境界で行が抜け、地番ポリゴンの構成点
       //   不足で polygon が捨てられて画面に地番が出なくなる）
+      //
+      // 列は ポリゴン 組み立てに 使う 5 つ だけ。 select('*') だと 備考 や
+      // 杭種 まで 全部 運ぶ ことに なり、地番 2000 筆 規模 では 転送量 が
+      // 効いて 取得が 落ちる (statement timeout) こと が ある。
       const coordinatesMap: Record<string, DesignCoordinate> = {}
       {
         const PAGE = 1000
@@ -221,12 +226,13 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         while (from < 1_000_000) {
           const { data: coords, error: coordError } = await supabase
             .from('design_coordinates')
-            .select('*')
+            .select('id, point_number, x, y, z')
             .eq('farm_id', farmId)
             .order('id')
             .range(from, from + PAGE - 1)
           if (coordError) throw coordError
-          const rows = (coords || []) as DesignCoordinate[]
+          // buildWorkAreasRecord が 読む のは この 5 列 だけ
+          const rows = (coords || []) as unknown as DesignCoordinate[]
           for (const c of rows) coordinatesMap[c.id] = c
           if (rows.length < PAGE) break
           from += PAGE
@@ -237,8 +243,13 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
 
       set({ workAreas: workAreasRecord, loading: false, hasChanges: false, pendingWorkAreaIds: [], loadedFarmId: farmId })
     } catch (err) {
+      // Supabase の エラー は Error では なく ただの オブジェクト
+      // ({ message, details, hint, code })。 instanceof Error で 弾くと
+      // 「工事区域の取得に失敗しました」 しか 出ず、原因 (RLS / timeout /
+      // 列違い) が 全く 分からない。 中身を 出す。
+      console.error('[workAreaStore] fetchWorkAreas failed', err)
       set({
-        error: err instanceof Error ? err.message : '工事区域の取得に失敗しました',
+        error: `工事区域の取得に失敗しました: ${errorMessage(err)}`,
         loading: false,
       })
     }

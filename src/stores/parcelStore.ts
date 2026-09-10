@@ -10,6 +10,7 @@
 //   - 楽観更新（先にローカル反映 → サーバ）
 
 import { create } from 'zustand'
+import { errorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
 import type { Parcel } from '@/types/database'
 
@@ -128,7 +129,7 @@ export const useParcelStore = create<ParcelState>((set, get) => ({
       set({ byWorkAreaId: next, loading: false })
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : 'parcels の取得に失敗しました',
+        error: `parcels の取得に失敗しました: ${errorMessage(err)}`,
         loading: false,
       })
     }
