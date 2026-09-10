@@ -419,6 +419,7 @@ function HighDensityList<T>({
   labelZoomMin,
   labelZoomMinAlways,
   keep,
+  labelMaxInView,
   getLatLng,
   getPolygonPositions,
   render,
@@ -446,6 +447,12 @@ function HighDensityList<T>({
    * culling で 消えると 編集の 途中で 対象を 見失う。
    */
   keep?: (item: T) => boolean
+  /**
+   * 画面内に これ を 超える 数が ある ときは ラベルを 出さない。
+   * ラベル (permanent tooltip) は 1 件 1 DOM ノード で、密集して いる
+   * ところ では どのみち 重なって 読めない。
+   */
+  labelMaxInView?: number
   /** 点項目用: 単一の (lat, lng) を返す */
   getLatLng?: (item: T) => [number, number]
   /** ポリゴン項目用: positions を返す（バウンディングボックス判定用） */
@@ -494,6 +501,7 @@ function HighDensityList<T>({
   // labelZoomMinAlways は 件数に 関係なく 効く 下限。
   const showLabel =
     (labelZoomMinAlways == null || zoom >= labelZoomMinAlways) &&
+    (labelMaxInView == null || visible.length <= labelMaxInView) &&
     (!isDense || labelZoomMin == null || zoom >= labelZoomMin)
   const ctx = { showLabel }
   return <>{visible.map((it) => render(it, ctx))}</>
@@ -1052,6 +1060,7 @@ export function CoordinateMap({
         threshold={1000}
         zoomMin={17}
         labelZoomMin={19}
+        labelMaxInView={100}
         keep={(c) => c.id === selectedPointId || c.id === selectedConstituentPointId}
         getLatLng={(c) => [c.lat, c.lng]}
         render={(coord, { showLabel }) => {
