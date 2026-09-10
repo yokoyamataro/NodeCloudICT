@@ -66,13 +66,12 @@ interface GenericWorkAreaPageProps {
   areaListActions?: React.ReactNode
   /** 閲覧のみモード: 全ての編集/追加/削除操作を無効化する */
   readOnly?: boolean
-  /** true のとき: 地図は同じ画面に並置せず 表を全幅表示。
-   *  地図を見たいときは 別ウィンドウ (?panel=map) を開くボタンを提供する。
-   *  縦断図と同じパターン。 */
-  mapInSeparateWindow?: boolean
+  /** true のとき: 地図を 上、一覧を 下 に 縦に 積む (実測記録と 同じ 見た目)。
+   *  既定 (false) は 左に 一覧、右に 地図 の 横並び。 */
+  stacked?: boolean
 }
 
-export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions, readOnly = false, mapInSeparateWindow = false }: GenericWorkAreaPageProps) {
+export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions, readOnly = false, stacked = false }: GenericWorkAreaPageProps) {
   // URL ?panel=table|map で 「1 パネルのみ全画面」表示に切替
   const fullscreenPanel = useMemo<'table' | 'map' | null>(() => {
     if (typeof window === 'undefined') return null
@@ -84,30 +83,12 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     typeof window !== 'undefined' &&
     !!new URLSearchParams(window.location.search).get('panel')
 
-  // 地図を 別ウィンドウで開く
-  const openMapInNewWindow = () => {
-    if (typeof window === 'undefined') return
-    const url = new URL(window.location.href)
-    url.searchParams.set('panel', 'map')
-    const w = 1200
-    const h = 900
-    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2)
-    const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2)
-    window.open(
-      url.toString(),
-      'nc_workarea_map',
-      `popup=yes,width=${w},height=${h},left=${left},top=${top}`,
-    )
-  }
-
   // 表示モード決定:
-  //   showTable / showMap
-  //   ?panel=map      → 地図のみ
-  //   ?panel=table    → 表のみ
-  //   mapInSeparateWindow=true → 表のみ (地図は別ウィンドウ)
-  //   それ以外         → 表 + 地図 (従来)
-  const showTable = fullscreenPanel === 'table' || (fullscreenPanel === null && !mapInSeparateWindow) || (fullscreenPanel === null && mapInSeparateWindow)
-  const showMap = fullscreenPanel === 'map' || (fullscreenPanel === null && !mapInSeparateWindow)
+  //   ?panel=map   → 地図のみ
+  //   ?panel=table → 表のみ
+  //   それ以外      → 表 + 地図
+  const showTable = fullscreenPanel !== 'map'
+  const showMap = fullscreenPanel !== 'table'
   const { user } = useAuth()
   const isSiteOwner = isAdmin(user?.email)
   // 「登記取得」モーダルを開く対象 work_area id。1 度に 1 件だけ。
@@ -757,24 +738,23 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
         </div>
       )}
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* 左側: 区域一覧 (fullscreen 'map' なら非表示) */}
+      {/* stacked: 地図が 上、一覧が 下 (order で 入れ替える。 JSX の 並びは 変えない)。
+          既定は 左が 一覧、右が 地図 */}
+      <div className={`flex-1 flex overflow-hidden ${stacked ? 'flex-col' : ''}`}>
+        {/* 一覧 (fullscreen 'map' なら非表示) */}
         {showTable && (
-        <div className={`${showMap ? 'w-1/2 border-r' : 'w-full'} flex flex-col overflow-hidden p-4`}>
+        <div
+          className={`${
+            showMap
+              ? stacked
+                ? 'order-2 flex-1 min-h-0 border-t-2 border-slate-300'
+                : 'w-1/2 border-r'
+              : 'w-full'
+          } flex flex-col overflow-hidden p-4`}
+        >
           <div className="flex items-center justify-between mb-4 gap-2">
             <h3 className="text-lg font-semibold">区域登録</h3>
             <div className="flex items-center gap-2">
-              {mapInSeparateWindow && !isPopupWindow && (
-                <button
-                  type="button"
-                  onClick={openMapInNewWindow}
-                  className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 bg-white"
-                  title="地図を別ウィンドウで開く"
-                >
-                  <MapIcon className="h-3.5 w-3.5" />
-                  地図を別ウィンドウ
-                </button>
-              )}
               {isBoundarySurvey && (
                 <>
                   {/* 点種フィルター・設置状態フィルターは座標管理ページに集約。
@@ -1135,9 +1115,13 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
         </div>
 
         )}
-        {/* 右側: 地図 (fullscreen 'table' or mapInSeparateWindow なら非表示) */}
+        {/* 地図 (fullscreen 'table' なら非表示) */}
         {showMap && (
-        <div className={`${showTable ? 'w-1/2' : 'w-full'} bg-slate-100 relative`}>
+        <div
+          className={`${
+            showTable ? (stacked ? 'order-1 flex-1 min-h-0' : 'w-1/2') : 'w-full'
+          } bg-slate-100 relative overflow-hidden isolate`}
+        >
           <div className="absolute top-2 right-2 z-[1000] flex items-center gap-2">
             {/* 地籍時のみ: 点名 / 地番名のラベル表示切替 */}
             {isBoundarySurvey && (
