@@ -5732,10 +5732,6 @@ export function MobileStakingPage() {
           center={mapCenter}
           zoom={17}
           maxZoom={24}
-          // ベクタ (地番ポリゴン / 線形物 / ペイント) を SVG では なく canvas で 描く。
-          // 法務省地図が 数千 図形でも 軽い のは canvas の ため。
-          // 1 図形 = 1 DOM ノード に ならず、再描画も まとめて 走る
-          preferCanvas
           // leaflet-rotate の 有効化。rotate:true が 無いと setBearing が 効かない。
           // 右上に 出る 回転コントロールは 自前ボタン列と 被るので 抑制する
           {...({ rotate: true, bearing: 0, rotateControl: false } as Record<string, unknown>)}

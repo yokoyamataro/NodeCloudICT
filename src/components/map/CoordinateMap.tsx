@@ -771,16 +771,17 @@ export function CoordinateMap({
       maxZoom={24}
       className="h-full w-full"
       style={{ minHeight: '400px' }}
-      // ベクタ (地番ポリゴン / 線) を SVG では なく canvas で 描く。
-      // 法務省地図が 数千 図形でも 軽い のは canvas の ため。
-      // 1 図形 = 1 DOM ノード に ならず、再描画も まとめて 走る
-      preferCanvas
       // leaflet-rotate の 有効化:
       //   rotate:true         — setBearing が 実際に 反映される (これ が 無い と no-op)
       //   bearing:0           — 初期 bearing (北向き)
       //   rotateControl:false — 右上の 回転ハンドル UI は 抑制 (プログラム 回転のみ 許可)
       // (react-leaflet の 型に これら は 無い ので Record 経由で spread)
       {...({ rotate: true, bearing: 0, rotateControl: false } as Record<string, unknown>)}
+      // preferCanvas は 使わない。 canvas は 図形の 無い ところ でも
+      // 要素の 矩形 全体 で クリックを 受ける ため (SVG の path は
+      // pointer-events:none で 素通しする)、下に 重なる 法務省地図
+      // (ParcelMapLayer は 自前の L.canvas を 持つ) が 押せなく なる。
+      // 重さ対策は 画面外を 描かない culling で 行う
     >
       {baseLayer === 'osm' && (
         <TileLayer
