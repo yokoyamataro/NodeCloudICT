@@ -1320,6 +1320,8 @@ export function MobileStakingPage() {
    */
   const TARGET_MIN_ZOOM = 16
   const TARGET_DENSE_COUNT = 300
+  /** 画面内に これ を 超える 測点が ある ときは 点名を 出さない */
+  const MAX_LABELS_IN_VIEW = 150
   // ターゲット動的ズーム（ターゲットを中心にして、現在地も視野に収まるよう自動拡大縮小）
   // 地図ベースレイヤ（地理院の各種タイル / 背景なし）
   type BaseLayerKey = 'photo' | 'std' | 'pale' | 'blank' | 'none'
@@ -2850,6 +2852,25 @@ export function MobileStakingPage() {
   /** 点が 多い 工区 を 引いて 見ている 間は 測点マーカー を 出さない */
   const targetsHiddenByZoom =
     filteredTargets.length > TARGET_DENSE_COUNT && mapZoom < TARGET_MIN_ZOOM
+
+  /**
+   * 画面内に 入って いる 測点 の 数。 点名 (permanent tooltip) は 1 つ 1 つが
+   * DOM ノード なので、密集して いる ところ では 出さない。
+   * どのみち 重なって 読めない。
+   */
+  const targetsInView = useMemo(() => {
+    if (targetsHiddenByZoom) return 0
+    if (!drawBounds) return filteredTargets.length
+    let n = 0
+    for (const t of filteredTargets) if (drawBounds.contains([t.lat, t.lng])) n += 1
+    return n
+  }, [filteredTargets, drawBounds, targetsHiddenByZoom])
+  /** 点名を 出して よいか (ズーム 十分 + 画面内が 混み合って いない) */
+  const labelsAllowed =
+    !targetsHiddenByZoom && mapZoom >= LABEL_MIN_ZOOM && targetsInView <= MAX_LABELS_IN_VIEW
+  /** 点名だけ 抑えて いる 状態 (マーカー は 出ている) */
+  const labelsSuppressed =
+    !targetsHiddenByZoom && mapZoom >= LABEL_MIN_ZOOM && targetsInView > MAX_LABELS_IN_VIEW
 
 
   // 現在表示候補（major filter 適用後）における点種ごとの件数を集計
@@ -5661,9 +5682,11 @@ export function MobileStakingPage() {
 
         {/* 測点を ズームで 隠して いる ことを 伝える。 黙って 消えると
             「点が 無くなった」 と 誤解 される */}
-        {showTargets && targetsHiddenByZoom && (
+        {showTargets && (targetsHiddenByZoom || labelsSuppressed) && (
           <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1000] px-2 py-1 rounded-full bg-slate-900/75 text-white text-[11px] shadow whitespace-nowrap">
-            測点 {filteredTargets.length} 点 — 拡大すると表示
+            {targetsHiddenByZoom
+              ? `測点 ${filteredTargets.length} 点 — 拡大すると表示`
+              : `点名 非表示 (画面内 ${targetsInView} 点) — 拡大すると表示`}
           </div>
         )}
 
@@ -6081,9 +6104,8 @@ export function MobileStakingPage() {
             // 数千点を一気に permanent tooltip にすると DOM ノードが爆増して
             // 地図 (および同時に描画する地番ポリゴン) ごと固まるため。
             // 点名は 測点レイヤの 一部 (全体図と 同じ 扱い)。単独の トグルは 持たない
-            const labelsActive = showTargets && mapZoom >= LABEL_MIN_ZOOM
             const labelBounds =
-              labelsActive && mapBounds ? mapBounds.pad(0.15) : null
+              mapZoom >= LABEL_MIN_ZOOM && mapBounds ? mapBounds.pad(0.15) : null
             // マーカー 自体も 画面内 だけ。 選択中の 1 点 は 画面外 でも 残す
             // (誘導の 基準 なので 消えると 追えなく なる)
             const shown = (
@@ -6103,7 +6125,7 @@ export function MobileStakingPage() {
               ? draftRouteIds.indexOf(t.id)
               : -1
             const showLabel =
-              labelsActive &&
+              labelsAllowed &&
               (labelBounds == null || labelBounds.contains([t.lat, t.lng]))
             // 色: 選択中 = オレンジ、座標は点種で色分け、暗渠頂点 = 緑
             //   基準点(control) = 赤、境界点(boundary) = シアン、現況(current) = 青、その他 = 灰
