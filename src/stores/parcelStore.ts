@@ -99,12 +99,30 @@ export const useParcelStore = create<ParcelState>((set, get) => ({
     }
     set({ loading: true, error: null })
     try {
-      const { data, error } = await supabase
-        .from('parcels')
-        .select('*')
-        .in('work_area_id', workAreaIds)
-      if (error) throw error
-      const rows = (data ?? []) as RawParcel[]
+      // 工区あたり 2000 筆 まで 扱う。 そのままだと
+      //   * .in() の ID 列 が URL 長 を 超える
+      //   * PostgREST の 1 リクエスト 1000 行 上限 で 黙って 切られる
+      // ので、ID を 分割 し、さらに range() で ページング する。
+      const ID_CHUNK = 200
+      const PAGE = 1000
+      const rows: RawParcel[] = []
+      for (let i = 0; i < workAreaIds.length; i += ID_CHUNK) {
+        const ids = workAreaIds.slice(i, i + ID_CHUNK)
+        let from = 0
+        for (;;) {
+          const { data, error } = await supabase
+            .from('parcels')
+            .select('*')
+            .in('work_area_id', ids)
+            .order('work_area_id')
+            .range(from, from + PAGE - 1)
+          if (error) throw error
+          const page = (data ?? []) as RawParcel[]
+          rows.push(...page)
+          if (page.length < PAGE) break
+          from += PAGE
+        }
+      }
       const next = new Map<string, Parcel>()
       for (const r of rows) next.set(r.work_area_id, toParcel(r))
       set({ byWorkAreaId: next, loading: false })

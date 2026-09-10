@@ -10,6 +10,7 @@
 //   * 完了後、関連ストアのキャッシュを無効化 + 再取得
 
 import type { Feature, Polygon } from 'geojson'
+import { MAX_PARCELS_PER_FARM } from '@/lib/farmLimits'
 import { supabase } from '@/lib/supabase'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
@@ -25,7 +26,7 @@ import {
 import type { CoordinateRow } from '@/stores/coordinateStore'
 
 const MAX_COORDS_PER_FARM = 5000
-const MAX_PARCELS_PER_FARM = 1000
+
 
 export interface ImportParcelBatchDeps {
   farmId: string
