@@ -701,7 +701,14 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
         isBoundarySurvey && parcelRow?.attribute_code
           ? attributeColorByCode.get(parcelRow.attribute_code)
           : undefined
-      return { id: area.id, name: labelName, positions, edges, attributeColor }
+      return {
+        id: area.id,
+        name: labelName,
+        positions,
+        edges,
+        attributeColor,
+        boundaryKind: area.boundaryKind,
+      }
     })
     .filter(p => p.positions.length >= 3)
 

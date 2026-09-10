@@ -5861,6 +5861,8 @@ export function MobileStakingPage() {
                   fillColor: color,
                   fillOpacity,
                   weight: 2,
+                  // 仮境界 は 破線。 確定境界 (実線) と 一目で 見分ける
+                  dashArray: polygon.boundaryKind === 'provisional' ? '4, 4' : undefined,
                 }}
                 interactive={!paintActive}
                 eventHandlers={

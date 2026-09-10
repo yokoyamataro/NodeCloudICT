@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { toBoundaryKind, type BoundaryKind } from '@/lib/boundaryKind'
 import { persist } from 'zustand/middleware'
 import { supabase } from '@/lib/supabase'
 import { CoordinateConverter } from '@/lib/coordinates'
@@ -38,6 +39,8 @@ export interface WorkAreaPolygon {
   workType: string
   name: string
   positions: [number, number][]
+  /** 地番のみ 意味を持つ。仮境界 は 破線 で 描く */
+  boundaryKind: BoundaryKind
 }
 
 // プロジェクトIDから座標系を取得（projectListStore を優先し、不足分はDBから補完）
@@ -144,6 +147,7 @@ export function buildWorkAreaPolygon(
     zone_number: string
     name: string | null
     point_ids: string[] | null
+    boundary_kind?: string | null
   },
   coordsMap: Record<string, { x: number; y: number }>,
   zone: number,
@@ -166,6 +170,7 @@ export function buildWorkAreaPolygon(
     workType: area.work_type,
     name: area.name || area.zone_number || '',
     positions,
+    boundaryKind: toBoundaryKind(area.boundary_kind),
   }
 }
 
@@ -329,7 +334,7 @@ export const useFarmStore = create<FarmState>()(
       // 1 回で済む。
       const { data: areasData, error: areaError } = await supabase
         .from('design_work_areas')
-        .select('id, farm_id, work_type, zone_number, name, point_ids')
+        .select('id, farm_id, work_type, zone_number, name, point_ids, boundary_kind')
         .in('farm_id', targetFarms.map(f => f.id))
 
       if (areaError) throw areaError
@@ -341,6 +346,7 @@ export const useFarmStore = create<FarmState>()(
         zone_number: string
         name: string | null
         point_ids: string[] | null
+        boundary_kind: string | null
       }> | null
 
       if (areas && areas.length > 0) {

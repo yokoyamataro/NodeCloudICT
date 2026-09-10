@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { errorMessage } from '@/lib/errorMessage'
 import { withRetry } from '@/lib/retry'
+import { toBoundaryKind, type BoundaryKind } from '@/lib/boundaryKind'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore } from './farmStore'
 import { useProjectListStore } from './projectListStore'
@@ -32,6 +33,8 @@ export interface WorkAreaRow {
   areaHa: number | null
   perimeterM: number | null
   notes: string | null
+  /** 地番のみ 意味を持つ。仮境界 / 確定境界 */
+  boundaryKind: BoundaryKind
 }
 
 // 工種別の工事区域データ
@@ -152,6 +155,7 @@ export function buildWorkAreasRecord(
       areaHa: area.area_ha,
       perimeterM: area.perimeter_m,
       notes: area.notes,
+      boundaryKind: toBoundaryKind(area.boundary_kind),
     }
     if (!workAreasRecord[area.work_type]) workAreasRecord[area.work_type] = []
     workAreasRecord[area.work_type]!.push(workAreaRow)
@@ -288,6 +292,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           area_ha: null,
           perimeter_m: null,
           notes: null,
+          boundary_kind: 'provisional',
         } as never)
         .select()
         .single()
@@ -306,6 +311,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         areaHa: null,
         perimeterM: null,
         notes: null,
+        boundaryKind: 'provisional',
       }
 
       set((state) => {

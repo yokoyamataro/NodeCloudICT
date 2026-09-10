@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { BoundaryKind } from '@/lib/boundaryKind'
 import { MapContainer, TileLayer, Marker, Pane, Polygon, Polyline, useMap, useMapEvents, Tooltip, Popup } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -524,6 +525,8 @@ export interface ExternalPolygon {
   /** 属性色 '#rrggbb'。指定されると polygon の fill/stroke に使う。
    *  未指定 (未選択属性) の場合は従来のデフォルト色 (緑) にフォールバック。 */
   attributeColor?: string
+  /** 地番のみ: 仮境界 は 破線、確定境界 は 実線 で 描き分ける */
+  boundaryKind?: BoundaryKind
 }
 
 interface CoordinateMapProps {
@@ -879,7 +882,13 @@ export function CoordinateMap({
                 fillColor: color,
                 fillOpacity,
                 weight,
-                dashArray: isEditing ? '5, 5' : undefined,
+                // 編集中 は 緑の 破線。 それ以外 で 仮境界 なら 細かい 破線 に して
+                // 確定境界 (実線) と 一目で 見分けられる ように する
+                dashArray: isEditing
+                  ? '5, 5'
+                  : polygon.boundaryKind === 'provisional'
+                    ? '4, 4'
+                    : undefined,
               }}
               eventHandlers={
                 onPolygonSelect

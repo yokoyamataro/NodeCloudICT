@@ -11,6 +11,7 @@
 
 import type { Feature, Polygon } from 'geojson'
 import { MAX_PARCELS_PER_FARM } from '@/lib/farmLimits'
+import type { BoundaryKind } from '@/lib/boundaryKind'
 import { supabase } from '@/lib/supabase'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
@@ -169,6 +170,7 @@ export async function importParcelBatch(
     area_ha: null
     perimeter_m: null
     notes: null
+    boundary_kind: BoundaryKind
   }> = []
   const meta: Array<{
     parcelNumber: string
@@ -225,6 +227,8 @@ export async function importParcelBatch(
       area_ha: null,
       perimeter_m: null,
       notes: null,
+      // 法務省地図 から 起こした 形 は 暫定。 確定は 立会 の 結果 (SIM) だけ
+      boundary_kind: 'provisional',
     })
     const loc = resolveLocation(props.source_dataset_id)
     meta.push({

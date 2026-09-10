@@ -40,6 +40,7 @@ import { type Bbox } from '@/lib/tile-math'
 import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImportSelection'
 import { ParcelBatchImportBar } from '@/features/parcel-maps/ParcelBatchImportBar'
 import { useMapViewStore } from '@/stores/mapViewStore'
+import { BOUNDARY_KIND_LABEL, type BoundaryKind } from '@/lib/boundaryKind'
 
 export function BoundarySurveyWorkAreaPage() {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -155,7 +156,13 @@ export function BoundarySurveyWorkAreaPage() {
   const currentParcelCount = workAreas['boundary_survey']?.length ?? 0
   const currentCoordCount = coordinates.length
 
-  const handleOpenImport = () => fileRef.current?.click()
+  // SIM 取込 は 仮境界 / 確定境界 の どちら として 入れるか を 先に 決める。
+  // (地図XML / JPGIS.XML は 常に 仮境界)
+  const simKindRef = useRef<BoundaryKind>('provisional')
+  const handleOpenImport = (kind: BoundaryKind) => {
+    simKindRef.current = kind
+    fileRef.current?.click()
+  }
   const handleOpenJpgisImport = () => xmlFileRef.current?.click()
 
   // JPGIS (SIMA XML) 取り込み。SIMA テキストフローを踏襲しつつ、画地に owner / area が
@@ -250,6 +257,7 @@ export function BoundarySurveyWorkAreaPage() {
         area_ha: null
         perimeter_m: null
         notes: null
+        boundary_kind: BoundaryKind
       }> = []
       const meta: Array<{
         label: string
@@ -275,6 +283,8 @@ export function BoundarySurveyWorkAreaPage() {
           area_ha: null,
           perimeter_m: null,
           notes: null,
+          // 地図由来 の 形 は 暫定。 確定は 立会 の 結果 (SIM) でしか 入れない
+          boundary_kind: 'provisional',
         })
         meta.push({
           label,
@@ -459,6 +469,7 @@ export function BoundarySurveyWorkAreaPage() {
         area_ha: null
         perimeter_m: null
         notes: null
+        boundary_kind: BoundaryKind
       }> = []
       for (let i = 0; i < polyTotal; i++) {
         const poly = result.polygons[i]
@@ -480,6 +491,8 @@ export function BoundarySurveyWorkAreaPage() {
           area_ha: null,
           perimeter_m: null,
           notes: null,
+          // メニュー で 選んだ 種類 (仮境界 / 確定境界) で 入れる
+          boundary_kind: simKindRef.current,
         })
       }
 
@@ -719,16 +732,28 @@ export function BoundarySurveyWorkAreaPage() {
                   className="absolute right-0 top-full mt-1 w-52 bg-white border rounded shadow-lg z-[1200] text-sm"
                   onMouseLeave={() => setOpenMenu(null)}
                 >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOpenMenu(null)
-                      handleOpenImport()
-                    }}
-                    className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b"
-                  >
+                  <div className="px-3 pt-2 pb-1 text-[10px] text-slate-400 uppercase tracking-wide">
                     SIM取り込み (.sim)
-                  </button>
+                  </div>
+                  {(['provisional', 'confirmed'] as BoundaryKind[]).map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => {
+                        setOpenMenu(null)
+                        handleOpenImport(k)
+                      }}
+                      className="w-full text-left px-3 py-2 hover:bg-slate-50"
+                      title={
+                        k === 'provisional'
+                          ? '暫定の 形 として 取り込む'
+                          : '立会・確定測量 の 結果 として 取り込む (仮境界は 残る)'
+                      }
+                    >
+                      {BOUNDARY_KIND_LABEL[k]} として取り込む
+                    </button>
+                  ))}
+                  <div className="border-b" />
                   <button
                     type="button"
                     onClick={() => {
