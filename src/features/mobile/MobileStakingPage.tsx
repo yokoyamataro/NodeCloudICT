@@ -1321,7 +1321,7 @@ export function MobileStakingPage() {
   const TARGET_MIN_ZOOM = 16
   const TARGET_DENSE_COUNT = 300
   /** 画面内に これ を 超える 測点が ある ときは 点名を 出さない */
-  const MAX_LABELS_IN_VIEW = 150
+  const MAX_LABELS_IN_VIEW = 50
   // ターゲット動的ズーム（ターゲットを中心にして、現在地も視野に収まるよう自動拡大縮小）
   // 地図ベースレイヤ（地理院の各種タイル / 背景なし）
   type BaseLayerKey = 'photo' | 'std' | 'pale' | 'blank' | 'none'
