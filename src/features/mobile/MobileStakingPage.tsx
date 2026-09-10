@@ -1310,7 +1310,16 @@ export function MobileStakingPage() {
   }, [showParcelPolygons])
   // 地番名ラベル（境界測量ポリゴンの上に表示）。既定 OFF、低ズーム時は自動 OFF。
   const [showOrtho, setShowOrtho] = useState(true)
-  const PARCEL_LABEL_MIN_ZOOM = 17
+  // 地番名。 引いた 図 では 重なって 読めない ので PC の 全体図 と 同じ 19 以上
+  const PARCEL_LABEL_MIN_ZOOM = 19
+  /**
+   * 測点マーカー を 出す 最小 ズーム と、それを 効かせ 始める 点数。
+   * マーカー は canvas に できない (divIcon = DOM) ので、数が 多いまま
+   * 引くと DOM ノード が 一気に 増えて 固まる。 点が 少ない 工区では
+   * 従来どおり どの ズームでも 出す。
+   */
+  const TARGET_MIN_ZOOM = 16
+  const TARGET_DENSE_COUNT = 300
   // ターゲット動的ズーム（ターゲットを中心にして、現在地も視野に収まるよう自動拡大縮小）
   // 地図ベースレイヤ（地理院の各種タイル / 背景なし）
   type BaseLayerKey = 'photo' | 'std' | 'pale' | 'blank' | 'none'
@@ -2837,6 +2846,10 @@ export function MobileStakingPage() {
       return true
     })
   }, [orderedTargets, routeTargetIds, targetFilter, hiddenSubTypes, visibleStakeStatuses])
+
+  /** 点が 多い 工区 を 引いて 見ている 間は 測点マーカー を 出さない */
+  const targetsHiddenByZoom =
+    filteredTargets.length > TARGET_DENSE_COUNT && mapZoom < TARGET_MIN_ZOOM
 
 
   // 現在表示候補（major filter 適用後）における点種ごとの件数を集計
@@ -5646,6 +5659,14 @@ export function MobileStakingPage() {
           </div>
         )}
 
+        {/* 測点を ズームで 隠して いる ことを 伝える。 黙って 消えると
+            「点が 無くなった」 と 誤解 される */}
+        {showTargets && targetsHiddenByZoom && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1000] px-2 py-1 rounded-full bg-slate-900/75 text-white text-[11px] shadow whitespace-nowrap">
+            測点 {filteredTargets.length} 点 — 拡大すると表示
+          </div>
+        )}
+
         {/* 背景地図セレクタ（右下、Leaflet 帰属の上） */}
         <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-300 bg-white/95 text-[11px]">
           <span className="text-slate-500">背景</span>
@@ -6065,12 +6086,16 @@ export function MobileStakingPage() {
               labelsActive && mapBounds ? mapBounds.pad(0.15) : null
             // マーカー 自体も 画面内 だけ。 選択中の 1 点 は 画面外 でも 残す
             // (誘導の 基準 なので 消えると 追えなく なる)
-            const shown =
-              drawBounds == null
-                ? filteredTargets
-                : filteredTargets.filter(
-                    (t) => t.id === selectedTargetId || drawBounds.contains([t.lat, t.lng]),
-                  )
+            const shown = (
+              targetsHiddenByZoom
+                ? filteredTargets.filter((t) => t.id === selectedTargetId)
+                : filteredTargets
+            ).filter(
+              (t) =>
+                t.id === selectedTargetId ||
+                drawBounds == null ||
+                drawBounds.contains([t.lat, t.lng]),
+            )
             return shown.map((t) => {
             const isSelected = t.id === selectedTargetId
             const isStaked = stakedTargetIds.has(t.id)
