@@ -7,10 +7,10 @@
 //     .subscribe(async (status) => { if (SUBSCRIBED) await channel.track({ payload }) })
 //
 // 自分 の 別 端末 は 別 セッション として 表示 する (tabId で 区別)。
-// バッジ の 数字 は 自分以外 の セッション 数。 マウスホバー で 名前一覧 を 出す。
+// 自分以外 の 人 を 頭文字 の 丸 で 並べる。 ホバー で フルネーム。
+// 丸 を 押す と 親 が その人 宛て の チャット を 開く (onSelectUser)。
 
 import { useEffect, useMemo, useState } from 'react'
-import { Users } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 
@@ -97,40 +97,61 @@ function useFarmPresence(farmId: string | null): PresencePayload[] {
  * ヘッダー 用 の 小さな バッジ。 他 セッション が 1 件 以上 ある ときのみ 描画。
  * 表示: 👤 <count>  (hover で 名前一覧 を tooltip)
  */
+/** 表示名 の 先頭 1 文字。 英字 は 大文字 に する */
+function initialOf(name: string): string {
+  const c = Array.from(name.trim())[0] ?? '?'
+  return /[a-z]/.test(c) ? c.toUpperCase() : c
+}
+
 export function FarmPresenceBadge({
   farmId,
-  variant = 'compact',
+  onSelectUser,
 }: {
   farmId: string | null
   /**
-   * 'compact' は 人数 だけ (名前は ホバー)。
-   * 'names' は 名前も 出す — 触る 端末は ホバー が 無い ので スマホ 用。
+   * 丸 を 押した とき。 その人 宛て の メンション を 打つ 想定。
+   * 渡さ なければ ただの 表示 (押せない)。
    */
-  variant?: 'compact' | 'names'
+  onSelectUser?: (u: { userId: string; displayName: string }) => void
 }) {
   const others = useFarmPresence(farmId)
-  const summary = useMemo(() => {
-    if (others.length === 0) return ''
-    // 名前 は 重複 (同一ユーザー の 別 タブ) を 「◯◯ (2)」 の 形 に まとめる
-    const counts = new Map<string, number>()
-    for (const o of others) counts.set(o.displayName, (counts.get(o.displayName) ?? 0) + 1)
-    return Array.from(counts.entries())
-      .map(([name, n]) => (n > 1 ? `${name} (${n})` : name))
-      .join(', ')
+
+  // 同じ 人 が 複数 タブ で 開いて いる ことが ある ので 人 単位 に まとめる
+  const people = useMemo(() => {
+    const m = new Map<string, { userId: string; displayName: string; tabs: number }>()
+    for (const o of others) {
+      const hit = m.get(o.userId)
+      if (hit) hit.tabs += 1
+      else m.set(o.userId, { userId: o.userId, displayName: o.displayName, tabs: 1 })
+    }
+    return Array.from(m.values())
   }, [others])
 
-  if (others.length === 0) return null
+  if (people.length === 0) return null
 
   return (
-    <span
-      className={`ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] bg-amber-500/20 text-amber-200 border border-amber-500/40 ${
-        variant === 'names' ? 'max-w-[9rem]' : ''
-      }`}
-      title={`他 に 開いて いる セッション: ${summary}`}
-    >
-      <Users className="h-3 w-3 shrink-0" />
-      <span className="tabular-nums">{others.length}</span>
-      {variant === 'names' && <span className="truncate">{summary}</span>}
+    <span className="ml-2 inline-flex items-center gap-0.5">
+      {people.map((p) => {
+        const label = p.tabs > 1 ? `${p.displayName} (${p.tabs})` : p.displayName
+        return (
+          <button
+            key={p.userId}
+            type="button"
+            onClick={onSelectUser ? () => onSelectUser(p) : undefined}
+            title={
+              onSelectUser
+                ? `${label} — 押すと この人 宛て に チャットを 書く`
+                : label
+            }
+            aria-label={label}
+            className={`w-6 h-6 shrink-0 inline-flex items-center justify-center rounded-full text-[11px] font-bold bg-amber-500/25 text-amber-100 border border-amber-400/50 ${
+              onSelectUser ? 'hover:bg-amber-500/50 hover:text-white' : 'cursor-default'
+            }`}
+          >
+            {initialOf(p.displayName)}
+          </button>
+        )
+      })}
     </span>
   )
 }

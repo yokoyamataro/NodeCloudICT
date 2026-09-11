@@ -180,6 +180,8 @@ export function AppLayout() {
   const fetchUserRoles = useProjectListStore((s) => s.fetchUserRoles)
   const { currentFarm, setCurrentFarm, farms, fetchFarms } = useFarmStore()
   const [chatOpen, setChatOpen] = useState(false)
+  /** 共同作業者 の 丸 を 押して 開いた ときの 宛先。 入力欄 に @名前 を 入れて おく */
+  const [chatMention, setChatMention] = useState<string | null>(null)
   const subscribeFarmChat = useFarmChatStore((s) => s.subscribe)
   const unsubscribeFarmChat = useFarmChatStore((s) => s.unsubscribe)
 
@@ -446,7 +448,13 @@ export function AppLayout() {
                 ログインユーザー表示 の 左 に 置く */}
             {currentFarm && (
               <div className="flex items-center gap-1">
-                <FarmPresenceBadge farmId={currentFarm.id} />
+                <FarmPresenceBadge
+                  farmId={currentFarm.id}
+                  onSelectUser={(u) => {
+                    setChatMention(u.displayName)
+                    setChatOpen(true)
+                  }}
+                />
                 <FarmChatIconButton
                   farmId={currentFarm.id}
                   onClick={() => setChatOpen(true)}
@@ -642,10 +650,16 @@ export function AppLayout() {
     {/* 工区チャット */}
     {chatOpen && currentFarm && (
       <FarmChatSheet
+        // 宛先 が 変われば 入力欄 を 作り直す
+        key={chatMention ?? '-'}
         farmId={currentFarm.id}
         farmName={currentFarm.name}
         projectId={currentFarm.project_id}
-        onClose={() => setChatOpen(false)}
+        initialText={chatMention ? `@${chatMention} ` : undefined}
+        onClose={() => {
+          setChatOpen(false)
+          setChatMention(null)
+        }}
       />
     )}
   </div>

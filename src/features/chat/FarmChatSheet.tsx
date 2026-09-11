@@ -14,6 +14,8 @@ interface Props {
   /** メンション候補用にプロジェクトメンバーを引くための projectId。
    *  未指定なら @ メンションは無効化される (機能無し)。 */
   projectId?: string | null
+  /** 開いた ときに 入力欄 に 入れて おく 文字列 (例: 「@横山太郎 」) */
+  initialText?: string
   onClose: () => void
 }
 
@@ -23,7 +25,7 @@ interface MentionMember {
   display_name: string
 }
 
-export function FarmChatSheet({ farmId, farmName, projectId, onClose }: Props) {
+export function FarmChatSheet({ farmId, farmName, projectId, initialText, onClose }: Props) {
   const fetchMessages = useFarmChatStore((s) => s.fetchMessages)
   const fetchReads = useFarmChatStore((s) => s.fetchReads)
   const sendMessage = useFarmChatStore((s) => s.sendMessage)
@@ -35,7 +37,7 @@ export function FarmChatSheet({ farmId, farmName, projectId, onClose }: Props) {
     (s) => s.readsByFarm.get(farmId) ?? EMPTY_READS,
   )
 
-  const [text, setText] = useState('')
+  const [text, setText] = useState(initialText ?? '')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [myUserId, setMyUserId] = useState<string | null>(null)

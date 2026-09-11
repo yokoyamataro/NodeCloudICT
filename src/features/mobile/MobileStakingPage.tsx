@@ -852,6 +852,8 @@ export function MobileStakingPage() {
       .catch(() => { /* ignore - 補正できないだけで 動作は 継続 */ })
   }, [useGeoidCorrection, wantGeoid, geoidGrid])
   const [showChatSheet, setShowChatSheet] = useState(false)
+  /** 共同作業者 の 丸 を 押して 開いた ときの 宛先。 入力欄 に @名前 を 入れて おく */
+  const [chatMention, setChatMention] = useState<string | null>(null)
   const [showFarmEditModal, setShowFarmEditModal] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
   const [showRecordList, setShowRecordList] = useState(
@@ -4365,7 +4367,13 @@ export function MobileStakingPage() {
         {/* 右端: いま 同じ 工区を 開いて いる 人 → 共有 → チャット。
             1 行目 の GPS バッジ の 真下 に 来る */}
         <div className="ml-auto shrink-0 flex items-center gap-1.5">
-          <FarmPresenceBadge farmId={farmId ?? null} variant="names" />
+          <FarmPresenceBadge
+            farmId={farmId ?? null}
+            onSelectUser={(u) => {
+              setChatMention(u.displayName)
+              setShowChatSheet(true)
+            }}
+          />
           <button
             onClick={handleShare}
             className="shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
@@ -4408,10 +4416,16 @@ export function MobileStakingPage() {
       {/* 工区チャットシート */}
       {showChatSheet && farmId && (
         <FarmChatSheet
+          // 宛先 が 変われば 入力欄 を 作り直す
+          key={chatMention ?? '-'}
           farmId={farmId}
           farmName={farm?.name ?? ''}
           projectId={farm?.project_id ?? null}
-          onClose={() => setShowChatSheet(false)}
+          initialText={chatMention ? `@${chatMention} ` : undefined}
+          onClose={() => {
+            setShowChatSheet(false)
+            setChatMention(null)
+          }}
         />
       )}
 
