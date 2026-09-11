@@ -651,8 +651,6 @@ export function BoundarySurveyWorkAreaPage() {
       <GenericWorkAreaPage
         workType="boundary_survey"
         readOnly={readOnly}
-        // 実測記録 と 同じ 見た目: 上が 地図、下が 地番情報
-        stacked
         headerActions={
           <div className="flex items-center gap-2">
             {/* 座標数 / 地番数 の使用量表示は設定画面 (FarmSettingsPage) に集約。

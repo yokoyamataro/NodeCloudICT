@@ -83,12 +83,9 @@ interface GenericWorkAreaPageProps {
   areaListActions?: React.ReactNode
   /** 閲覧のみモード: 全ての編集/追加/削除操作を無効化する */
   readOnly?: boolean
-  /** true のとき: 地図を 上、一覧を 下 に 縦に 積む (実測記録と 同じ 見た目)。
-   *  既定 (false) は 左に 一覧、右に 地図 の 横並び。 */
-  stacked?: boolean
 }
 
-export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions, readOnly = false, stacked = false }: GenericWorkAreaPageProps) {
+export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions, readOnly = false }: GenericWorkAreaPageProps) {
   // URL ?panel=table|map で 「1 パネルのみ全画面」表示に切替
   const fullscreenPanel = useMemo<'table' | 'map' | null>(() => {
     if (typeof window === 'undefined') return null
@@ -826,18 +823,16 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
 
       {/* 地図 + 一覧 の 左側 と、構成点の 常設パネル の 右側 */}
       <div className="flex-1 flex overflow-hidden min-w-0">
-      {/* stacked: 地図が 上、一覧が 下 (order で 入れ替える。 JSX の 並びは 変えない)。
-          既定は 左が 一覧、右が 地図 */}
-      <div className={`flex-1 min-w-0 flex overflow-hidden ${stacked ? 'flex-col' : ''}`}>
+      {/* 地図が 上、一覧が 下 (実測記録 と 同じ)。 JSX の 並び は 一覧 → 地図 の
+          まま で、order で 入れ替える */}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* 一覧 (fullscreen 'map' なら非表示) */}
         {showTable && (
         <div
           className={`${
             showMap
-              ? stacked
-                ? `order-2 ${listCollapsed ? 'shrink-0' : 'flex-1 min-h-0'} border-t-2 border-slate-300`
-                : 'w-1/2 border-r'
-              : 'w-full'
+              ? `order-2 ${listCollapsed ? 'shrink-0' : 'flex-1 min-h-0'} border-t-2 border-slate-300`
+              : 'flex-1 min-h-0'
           } flex flex-col overflow-hidden ${listCollapsed ? 'px-4 py-2' : 'p-4'}`}
         >
           <div
@@ -1107,7 +1102,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
         {showMap && (
         <div
           className={`${
-            showTable ? (stacked ? 'order-1 flex-1 min-h-0' : 'w-1/2') : 'w-full'
+            showTable ? 'order-1 flex-1 min-h-0' : 'flex-1 min-h-0'
           } bg-slate-100 relative overflow-hidden isolate`}
         >
           <div className="absolute top-2 right-2 z-[1000] flex items-center gap-2">
