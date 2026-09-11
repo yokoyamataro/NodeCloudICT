@@ -5564,13 +5564,32 @@ export function MobileStakingPage() {
           </button>
           <button
             type="button"
-            onClick={() => setFollowMode((m) => NEXT_FOLLOW_MODE[m])}
-            className={`w-9 h-9 flex items-center justify-center rounded shadow-md border ${
+            onClick={() => {
+              const next = NEXT_FOLLOW_MODE[followMode]
+              setFollowMode(next)
+              // 追尾を ON に した 瞬間 に その場 で 寄せる。
+              // FollowCurrent は 精度の 良い stablePos を 待つ ので、
+              // 受信機が FIX で ない 間 は 何も 起きない ように 見えて いた。
+              if (next === 'self') {
+                const to = stablePos ?? currentPos
+                if (to) {
+                  mapRef.current?.setView(to, Math.max(mapRef.current.getZoom(), 18), {
+                    animate: true,
+                  })
+                }
+              }
+            }}
+            disabled={!currentPos && !stablePos}
+            className={`w-9 h-9 flex items-center justify-center rounded shadow-md border disabled:opacity-40 ${
               followMode === 'self'
                 ? 'bg-blue-600 border-blue-600 text-white'
                 : 'bg-white border-slate-400 text-slate-700 hover:bg-slate-50'
             }`}
-            title={`地図表示モード: ${MAP_FOLLOW_LABEL[followMode]}（クリックで切替）`}
+            title={
+              !currentPos && !stablePos
+                ? '現在地が まだ 取れて いません'
+                : `地図表示モード: ${MAP_FOLLOW_LABEL[followMode]}（クリックで切替）`
+            }
             aria-label="現在地"
           >
             <Crosshair className="h-4 w-4" />
@@ -5835,7 +5854,13 @@ export function MobileStakingPage() {
           <FitOnce bounds={allBounds} />
           {/* 追従は安定位置(stablePos)で行う。FIX が外れると stablePos が更新されないため
               地図は最後の良好位置で止まり、外側へ大きくスクロールしない */}
-          <FollowCurrent position={stablePos} enabled={followMode === 'self'} />
+          {/* stablePos は FIX 相当 (精度 1m 以下) の ときだけ 更新される。
+              スマホ内蔵 GPS や FLOAT の 間は ずっと null な ので、
+              その ときは 生の 現在地 で 追う */}
+          <FollowCurrent
+            position={stablePos ?? currentPos}
+            enabled={followMode === 'self'}
+          />
           <ZoomWatcher onChange={setMapZoom} />
           <BoundsWatcher onChange={setMapBounds} />
           {/* ターゲット選択時はモードに関わらず 1 度だけ中心化（継続的な追尾はしない） */}
