@@ -20,10 +20,17 @@ import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
 import { RegistryFetchOneModal } from '@/features/parcel-maps/RegistryFetchOneModal'
 import { parseRegistryPdfViaAI } from '@/lib/registryPdf'
-import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
+import {
+  useWorkAreaStore,
+  type WorkAreaPoint,
+  type WorkAreaRow,
+} from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useParcelStore } from '@/stores/parcelStore'
+import { errorMessage } from '@/lib/errorMessage'
+import { BOUNDARY_KIND_BADGE, BOUNDARY_KIND_LABEL } from '@/lib/boundaryKind'
+import { supabase } from '@/lib/supabase'
 import {
   useParcelAttributeTypesStore,
   EMPTY_ATTRIBUTES,
@@ -178,6 +185,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     reorderPoints: _reorderPoints,
     calculateArea,
     getWorkAreasByType,
+    invalidateCache,
   } = useWorkAreaStore()
 
   // readOnly なら書込みを no-op に置換 (呼出側は変更不要)
@@ -601,6 +609,67 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     // 畳んで いても 地番を 選んだら 構成点 を 見たい はず なので 開く
     if (id) setPointPanelCollapsed(false)
   }, [])
+
+  /**
+   * 選んで いる 仮境界 の 地番 に 対して 「確定境界」 の 行 を 作る。
+   *
+   * 仮 と 確定 は design_work_areas の 別行 (boundary_kind) なので、
+   * 構成点 も それぞれ 別 に 持てる。 立会 の 結果 は 当初 の 点 から
+   * 1 点ずつ 置き換えて いく のが 実務 なので、構成点 は 複製して 渡す。
+   * 地番 の 属性 (所在 / 地目 / 地積 / 所有者) も 引き継ぐ。
+   */
+  const [creatingConfirmed, setCreatingConfirmed] = useState(false)
+  const createConfirmedBoundary = useCallback(
+    async (area: WorkAreaRow) => {
+      if (!farmId || readOnly) return
+      setCreatingConfirmed(true)
+      try {
+        const { data, error } = await supabase
+          .from('design_work_areas')
+          .insert({
+            farm_id: farmId,
+            work_type: area.workType,
+            zone_number: area.zoneNumber,
+            name: area.name,
+            point_ids: area.pointIds,
+            area_sqm: null,
+            area_ha: null,
+            perimeter_m: null,
+            notes: area.notes,
+            boundary_kind: 'confirmed',
+          } as never)
+          .select('id')
+          .single()
+        if (error) throw error
+        const newId = (data as { id: string }).id
+        // 地番の 属性 は 仮 から 引き継ぐ (行 は トリガで 既に ある)
+        const src = parcelByWorkAreaId.get(area.id)
+        if (src) {
+          await upsertParcel(newId, {
+            location: src.location,
+            parcel_number: src.parcel_number,
+            registered_land_category: src.registered_land_category,
+            registered_area_sqm: src.registered_area_sqm,
+            updated_land_category: src.updated_land_category,
+            updated_area_sqm: src.updated_area_sqm,
+            registered_owner_name: src.registered_owner_name,
+            registered_owner_address: src.registered_owner_address,
+            attribute_code: src.attribute_code,
+          })
+        }
+        invalidateCache()
+        await fetchWorkAreas(farmId)
+        selectArea(newId)
+      } catch (err) {
+        alert(`確定境界の作成に失敗しました: ${errorMessage(err)}`)
+      } finally {
+        setCreatingConfirmed(false)
+      }
+    },
+    // selectArea は 下 で 定義 する ので 依存 に 入れない (識別子 は 巻き上げ 済み)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [farmId, readOnly, parcelByWorkAreaId, upsertParcel, invalidateCache, fetchWorkAreas],
+  )
 
   /** 構成点の 編集を 終える (Enter / 確定ボタン)。 後始末は ESC と 同じ */
   const finishEditingArea = useCallback(() => {
@@ -1317,6 +1386,56 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                 </button>
               )}
             </div>
+
+            {/* 仮境界 と 確定境界 の 行き来。 同じ 地番名 の もう一方 が あれば
+                そちら へ 切り替え、無ければ 作る。 立会 の 結果 を 当初 の
+                構成点 と 別に 持つ ため の 導線。 */}
+            {editArea && isBoundarySurvey && (() => {
+              const label =
+                parcelByWorkAreaId.get(editArea.id)?.parcel_number ||
+                editArea.zoneNumber ||
+                editArea.name
+              const counterpartKind =
+                editArea.boundaryKind === 'confirmed' ? 'provisional' : 'confirmed'
+              const counterpart = areas.find(
+                (a) =>
+                  a.id !== editArea.id &&
+                  a.boundaryKind === counterpartKind &&
+                  (parcelByWorkAreaId.get(a.id)?.parcel_number || a.zoneNumber || a.name) === label,
+              )
+              return (
+                <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 shrink-0">
+                  <span
+                    className={`px-1.5 py-0.5 text-[10px] leading-none border rounded ${
+                      BOUNDARY_KIND_BADGE[editArea.boundaryKind]
+                    }`}
+                  >
+                    {BOUNDARY_KIND_LABEL[editArea.boundaryKind]}
+                  </span>
+                  {counterpart ? (
+                    <button
+                      type="button"
+                      onClick={() => selectArea(counterpart.id)}
+                      className="text-[11px] text-blue-600 hover:underline"
+                    >
+                      {BOUNDARY_KIND_LABEL[counterpartKind]}の構成点へ
+                    </button>
+                  ) : editArea.boundaryKind === 'provisional' && !readOnly ? (
+                    <button
+                      type="button"
+                      onClick={() => void createConfirmedBoundary(editArea)}
+                      disabled={creatingConfirmed}
+                      className="text-[11px] px-2 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                      title="当初の構成点を引き継いだ 確定境界 を 作る。 仮境界 は そのまま 残る"
+                    >
+                      {creatingConfirmed ? '作成中…' : '確定境界を作る'}
+                    </button>
+                  ) : (
+                    <span className="text-[11px] text-slate-400">対になる仮境界がありません</span>
+                  )}
+                </div>
+              )
+            })()}
             {!editArea ? (
               <div className="flex-1 flex items-center justify-center px-4 text-center text-xs text-slate-400">
                 地番を選ぶと構成点が出ます
