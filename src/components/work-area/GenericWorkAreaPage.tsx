@@ -270,6 +270,8 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
   /** 構成点 を 触る ときに 渡す 種別 (地番以外 は 常に 仮=従来の列) */
   const editKind: BoundaryKind = isBoundarySurvey ? boundaryView : 'provisional'
 
+
+
   // 地籍モードでは、表示中の地番（design_work_areas）に対応する parcels を一括取得
   const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
   const clearParcels = useParcelStore((s) => s.clear)
@@ -315,6 +317,22 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
   const refetchLandownerAssignments = useLandownerStore((s) => s.fetchAssignmentsByFarm)
   // 地番一覧の表示列（地籍時のみ使用）。localStorage に保存される
   const [visibleColumns, setVisibleColumns] = useCadastralVisibleColumns()
+
+  /**
+   * 一覧 に 実際に 出す 列。
+   * 仮境界 は 登記 の 地目 / 地積、確定境界 は 変更 の 地目 / 地積 を 出す。
+   * (登記 = 登記簿 の まま、変更 = 立会 の 結果。 一度に 両方 は 要らない)
+   */
+  const effectiveColumns = useMemo<ReadonlySet<CadastralColumnKey>>(() => {
+    if (!isBoundarySurvey) return visibleColumns
+    const drop: CadastralColumnKey[] =
+      editKind === 'confirmed'
+        ? ['registered_land_category', 'registered_area_sqm']
+        : ['updated_land_category', 'updated_area_sqm']
+    const next = new Set(visibleColumns)
+    for (const k of drop) next.delete(k)
+    return next
+  }, [visibleColumns, isBoundarySurvey, editKind])
   // 登記情報 PDF 取込モーダル
   const [showRegistryImport, setShowRegistryImport] = useState(false)
 
@@ -642,6 +660,23 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     // 畳んで いても 地番を 選んだら 構成点 を 見たい はず なので 開く
     if (id) setPointPanelCollapsed(false)
   }, [])
+
+  /**
+   * 変更地積 は 「確定境界 の 座標法面積」。
+   * 確定 の 構成点 を 触って 面積 が 変わったら parcels に 書き戻す。
+   * (対象 は いま 編集中 の 1 筆 だけ。 一覧 全体 を 監視 しない)
+   */
+  useEffect(() => {
+    if (!isBoundarySurvey || editKind !== 'confirmed' || readOnly) return
+    if (!editArea) return
+    const computed = editArea.confirmedAreaSqm
+    if (computed == null) return
+    const current = parcelByWorkAreaId.get(editArea.id)?.updated_area_sqm ?? null
+    // 小数 2 桁 で 比較 (表示 と 同じ 粒度)。 差 が 無ければ 書かない
+    if (current != null && Math.abs(current - computed) < 0.005) return
+    void upsertParcel(editArea.id, { updated_area_sqm: Number(computed.toFixed(2)) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBoundarySurvey, editKind, readOnly, editArea?.id, editArea?.confirmedAreaSqm])
 
   /** 構成点の 編集を 終える (Enter / 確定ボタン)。 後始末は ESC と 同じ */
   const finishEditingArea = useCallback(() => {
@@ -984,7 +1019,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                   見出しと行で 別々の overflow-x-auto を 持たせない ため。 */}
               <div className={isBoundarySurvey ? 'min-w-max' : ''}>
                 {isBoundarySurvey && (
-                  <CadastralHeader visibleColumns={visibleColumns} leadingWidth={isSiteOwner ? 'w-28' : 'w-20'} />
+                  <CadastralHeader visibleColumns={effectiveColumns} leadingWidth={isSiteOwner ? 'w-28' : 'w-20'} />
                 )}
                 <div>
               {sortedAreas.map((area) => {
@@ -1078,7 +1113,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                         // 地籍: 地番属性も含めて 1 行に横並びで inline 編集（表示列はピッカーで絞れる）
                         <CadastralRowFields
                           area={area}
-                          visibleColumns={visibleColumns}
+                          visibleColumns={effectiveColumns}
                           readOnly={readOnly}
                           boundaryView={editKind}
                         />
@@ -1158,7 +1193,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                   新規 work_area + parcels を作る。 */}
               {isBoundarySurvey && (
                 <NewCadastralAreaRow
-                  visibleColumns={visibleColumns}
+                  visibleColumns={effectiveColumns}
                   onCreate={async (parcelNumber) => {
                     const newArea = await addWorkArea('boundary_survey')
                     if (newArea) {

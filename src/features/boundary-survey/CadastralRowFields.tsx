@@ -277,6 +277,8 @@ export function CadastralRowFields({
           />
         )
       case 'updated_area_sqm':
+        // 変更地積 は 確定境界 の 座標法面積 が 自動で 入る。
+        // 手入力 も できる が、構成点 を 直す と 計算値 で 上書き される。
         return (
           <input
             type="number"
@@ -287,6 +289,7 @@ export function CadastralRowFields({
             onClick={stop}
             onBlur={() => save({ updated_area_sqm: num(updArea) })}
             onWheel={(e) => e.currentTarget.blur()}
+            title="確定境界の座標法面積が自動で入ります (手入力も可)"
             className="w-full px-1.5 py-1 border rounded text-right font-mono text-sm"
           />
         )
