@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useMemo } from 'react'
+import { useCallback, useState, useEffect, useMemo, useRef } from 'react'
 import {
   Plus,
   Trash2,
@@ -18,6 +18,8 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
+import L from 'leaflet'
+import { useMap } from 'react-leaflet'
 import { RegistryFetchOneModal } from '@/features/parcel-maps/RegistryFetchOneModal'
 import { parseRegistryPdfViaAI } from '@/lib/registryPdf'
 import {
@@ -623,9 +625,11 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
    * 選んだ 時点で 構成点の パネル も 開く —— 選んで から もう一度
    * 鉛筆 を 押す 手間 を 省く。
    */
+  const [zoomTick, setZoomTick] = useState(0)
   const selectArea = useCallback((id: string | null) => {
     setSelectedAreaId(id)
     setEditingAreaId(id)
+    if (id) setZoomTick((n) => n + 1)
     setSelectedConstituentPointId(null)
     setPendingInsertIdx(null)
     // 畳んで いても 地番を 選んだら 構成点 を 見たい はず なので 開く
@@ -1354,6 +1358,13 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                 : undefined
             }
           >
+            {/* 選んだ 地番 / 区域 に 地図を 寄せる */}
+            <FitToArea
+              positions={editArea?.points
+                .filter((p) => p.lat != null && p.lng != null)
+                .map((p) => [p.lat as number, p.lng as number] as [number, number])}
+              tick={zoomTick}
+            />
             {mapChildren}
             {/* デフォルト法務省地図レイヤ (consumer が拡張版を渡す場合は suppress) */}
             {hasActiveParcelDataset && showParcelMap && !suppressDefaultParcelMapLayer && (
@@ -1758,6 +1769,34 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
 
     </div>
   )
+}
+
+/**
+ * 選んだ 区域 に 地図を 寄せる。
+ *
+ * tick が 変わった ときだけ 動く ので、寄せた あと 手で 動かしても
+ * 勝手に 戻らない。 同じ 行 を もう一度 押せば また 寄る。
+ */
+function FitToArea({
+  positions,
+  tick,
+}: {
+  positions?: [number, number][]
+  tick: number
+}) {
+  const map = useMap()
+  const lastTickRef = useRef(-1)
+  useEffect(() => {
+    if (lastTickRef.current === tick) return
+    lastTickRef.current = tick
+    if (!positions || positions.length === 0) return
+    if (positions.length === 1) {
+      map.setView(positions[0], Math.max(map.getZoom(), 19))
+      return
+    }
+    map.fitBounds(L.latLngBounds(positions), { padding: [48, 48], maxZoom: 20 })
+  }, [tick, positions, map])
+  return null
 }
 
 // 地番管理の最下行に常に出す「新規地番」入力行。
