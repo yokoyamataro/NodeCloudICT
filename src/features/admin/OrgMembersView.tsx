@@ -324,8 +324,8 @@ export function OrgMembersView({
               <th className="text-left px-3 py-2 w-24">役割</th>
               <th className="text-left px-3 py-2 w-28">参加日</th>
               <th
-                className="text-left px-3 py-2 w-28"
-                title="最後に アプリ を 使った 日。 記録が 無い 古い ユーザー は サインインした 日 を 出す"
+                className="text-left px-3 py-2 w-40"
+                title="最後に アプリ を 使った 日時。 記録が 無い 古い ユーザー は サインインした 日時 を 出す"
               >
                 最終利用
               </th>
@@ -420,14 +420,23 @@ export function OrgMembersView({
                       const signIn = m.last_sign_in_at
                       const shown = seen ?? signIn
                       if (!shown) return '-'
+                      const d = new Date(shown)
                       return (
                         <span
+                          className="whitespace-nowrap"
                           title={
                             `最終利用: ${seen ? new Date(seen).toLocaleString('ja-JP') : '記録なし'}\n` +
                             `サインイン: ${signIn ? new Date(signIn).toLocaleString('ja-JP') : '記録なし'}`
                           }
                         >
-                          {new Date(shown).toLocaleDateString('ja-JP')}
+                          <span className="font-mono">{d.toLocaleDateString('ja-JP')}</span>
+                          {' '}
+                          <span className="font-mono text-slate-400">
+                            {d.toLocaleTimeString('ja-JP', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
                           {!seen && <span className="ml-1 text-[10px] text-slate-400">(ログイン)</span>}
                         </span>
                       )

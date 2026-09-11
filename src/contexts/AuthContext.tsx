@@ -65,19 +65,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user) return
     const KEY = `lastSeenTouchedAt:${user.id}`
-    const HOUR = 60 * 60 * 1000
-    try {
-      const prev = Number(localStorage.getItem(KEY) ?? '0')
-      if (Date.now() - prev < HOUR) return
-      localStorage.setItem(KEY, String(Date.now()))
-    } catch {
-      /* localStorage が 使えなくても 打つ */
+    // サーバ側 も 10 分 以内 の 再呼び出し は 無視 する ので 同じ 間隔 に する。
+    // 「時刻」 まで 見せる ので、開きっぱなし でも 10 分 ごと に 追従 させる。
+    const INTERVAL = 10 * 60 * 1000
+    const touch = () => {
+      try {
+        const prev = Number(localStorage.getItem(KEY) ?? '0')
+        if (Date.now() - prev < INTERVAL) return
+        localStorage.setItem(KEY, String(Date.now()))
+      } catch {
+        /* localStorage が 使えなくても 打つ */
+      }
+      void (supabase.rpc as unknown as (fn: string) => Promise<unknown>)('touch_last_seen').catch(
+        () => {
+          /* 記録できなくても 利用には 影響しない */
+        },
+      )
     }
-    void (supabase.rpc as unknown as (fn: string) => Promise<unknown>)('touch_last_seen').catch(
-      () => {
-        /* 記録できなくても 利用には 影響しない */
-      },
-    )
+    touch()
+    const timer = window.setInterval(touch, INTERVAL)
+    // 別タブ / バックグラウンド から 戻った ときも 打つ
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') touch()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [user])
 
   // ログイン中ユーザーの profile + 所属組織を取得
