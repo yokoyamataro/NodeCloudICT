@@ -33,7 +33,10 @@ interface OrgMemberRow {
   role: 'admin' | 'member'
   joined_at: string
   invited_by: string | null
+  /** サインイン処理 を した 日時 (セッション の 自動更新 では 動かない) */
   last_sign_in_at: string | null
+  /** 最後に アプリ を 使った 日時 (profiles.last_seen_at) */
+  last_seen_at: string | null
 }
 
 interface Props {
@@ -320,7 +323,12 @@ export function OrgMembersView({
               <th className="text-left px-3 py-2 w-36">電話番号</th>
               <th className="text-left px-3 py-2 w-24">役割</th>
               <th className="text-left px-3 py-2 w-28">参加日</th>
-              <th className="text-left px-3 py-2 w-28">最終ログイン</th>
+              <th
+                className="text-left px-3 py-2 w-28"
+                title="最後に アプリ を 使った 日。 記録が 無い 古い ユーザー は サインインした 日 を 出す"
+              >
+                最終利用
+              </th>
               <th className="text-left px-3 py-2 w-32"></th>
             </tr>
           </thead>
@@ -404,9 +412,26 @@ export function OrgMembersView({
                     {new Date(m.joined_at).toLocaleDateString('ja-JP')}
                   </td>
                   <td className="px-3 py-2 align-top text-xs text-slate-500">
-                    {m.last_sign_in_at
-                      ? new Date(m.last_sign_in_at).toLocaleDateString('ja-JP')
-                      : '-'}
+                    {(() => {
+                      // last_seen_at が 本当の 「最後に 使った 日」。
+                      // まだ 記録が 無い (この 機能 より 前 から の ユーザー) 間は
+                      // サインイン日 を 出し、どちら か 分かる ように 注記 する。
+                      const seen = m.last_seen_at
+                      const signIn = m.last_sign_in_at
+                      const shown = seen ?? signIn
+                      if (!shown) return '-'
+                      return (
+                        <span
+                          title={
+                            `最終利用: ${seen ? new Date(seen).toLocaleString('ja-JP') : '記録なし'}\n` +
+                            `サインイン: ${signIn ? new Date(signIn).toLocaleString('ja-JP') : '記録なし'}`
+                          }
+                        >
+                          {new Date(shown).toLocaleDateString('ja-JP')}
+                          {!seen && <span className="ml-1 text-[10px] text-slate-400">(ログイン)</span>}
+                        </span>
+                      )
+                    })()}
                   </td>
                   <td className="px-3 py-2 align-top">
                     <div className="flex items-center gap-1 flex-wrap">

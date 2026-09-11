@@ -56,6 +56,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe()
   }, [])
 
+  // 「最終利用」 の 記録。
+  //
+  // auth.users.last_sign_in_at は サインイン処理 の ときだけ 動く。
+  // セッション は 自動で リフレッシュ される ので、毎日 使って いても
+  // 何週間 も 前の 日付 の まま に なり、稼働状況 が 読めない。
+  // 自前で profiles.last_seen_at を 打つ (端末側でも 1 時間 に 1 回 に 間引く)。
+  useEffect(() => {
+    if (!user) return
+    const KEY = `lastSeenTouchedAt:${user.id}`
+    const HOUR = 60 * 60 * 1000
+    try {
+      const prev = Number(localStorage.getItem(KEY) ?? '0')
+      if (Date.now() - prev < HOUR) return
+      localStorage.setItem(KEY, String(Date.now()))
+    } catch {
+      /* localStorage が 使えなくても 打つ */
+    }
+    void (supabase.rpc as unknown as (fn: string) => Promise<unknown>)('touch_last_seen').catch(
+      () => {
+        /* 記録できなくても 利用には 影響しない */
+      },
+    )
+  }, [user])
+
   // ログイン中ユーザーの profile + 所属組織を取得
   useEffect(() => {
     if (!user) {
