@@ -81,6 +81,7 @@ import {
   type CalcSelection,
 } from '@/features/coordinates/CoordinateCalcModal'
 import { fetchUserNames } from '@/lib/farmViews'
+import { lookupGeoid } from '@/lib/geoid'
 import { STAKE_TYPE_OPTIONS } from '@/lib/stakeTypes'
 import { FarmPresenceBadge } from '@/components/layout/FarmPresenceBadge'
 import { useAttachmentStore } from '@/stores/attachmentStore'
@@ -270,6 +271,7 @@ const COORD_COLUMN_KEYS = [
   'xy',
   'z',
   'latlng',
+  'ellipsoidH',
   'type',
   'stakeType',
   'stakeStatus',
@@ -284,6 +286,7 @@ const COORD_COLUMNS: ReadonlyArray<ColumnDef<CoordColumnKey>> = [
   { key: 'xy', label: 'XY' },
   { key: 'z', label: 'Z' },
   { key: 'latlng', label: '緯度/経度' },
+  { key: 'ellipsoidH', label: '楕円体高' },
   { key: 'type', label: '点種' },
   { key: 'stakeType', label: '杭種' },
   { key: 'stakeStatus', label: '設置' },
@@ -294,7 +297,8 @@ const COORD_COLUMNS: ReadonlyArray<ColumnDef<CoordColumnKey>> = [
 const COORD_REQUIRED_KEYS: ReadonlyArray<CoordColumnKey> = ['name']
 
 // 表示列の localStorage 永続化用 helper
-const COORD_COLS_LS_PREFIX = 'mobile:coord-cols:'
+// v2: 楕円体高 列 を 既定に 入れる ため に キー を 上げた
+const COORD_COLS_LS_PREFIX = 'mobile:coord-cols:v2:'
 const PARCEL_COLS_LS_PREFIX = 'mobile:parcel-cols:'
 function loadColumnSet<K extends string>(
   key: string,
@@ -837,13 +841,16 @@ export function MobileStakingPage() {
   // (antennaHeight / useGeoidCorrection は gnssSettingsStore に移設済み)
   // ジオイドグリッド（遅延読込）
   const [geoidGrid, setGeoidGrid] = useState<import('@/lib/geoid').GeoidGrid | null>(null)
+  // 7MB ほど ある ので 必要に なる まで 読まない。
+  // 標高補正 を 使う とき と、座標一覧 (楕円体高 の 列) を 開いた とき。
+  const [wantGeoid, setWantGeoid] = useState(false)
   useEffect(() => {
-    if (!useGeoidCorrection || geoidGrid) return
+    if ((!useGeoidCorrection && !wantGeoid) || geoidGrid) return
     import('@/lib/geoid')
       .then(({ loadGeoid }) => loadGeoid())
       .then((g) => setGeoidGrid(g))
       .catch(() => { /* ignore - 補正できないだけで 動作は 継続 */ })
-  }, [useGeoidCorrection, geoidGrid])
+  }, [useGeoidCorrection, wantGeoid, geoidGrid])
   const [showChatSheet, setShowChatSheet] = useState(false)
   const [showFarmEditModal, setShowFarmEditModal] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
@@ -968,6 +975,21 @@ export function MobileStakingPage() {
       cancelled = true
     }
   }, [updaterIdsKey])
+
+  // 座標一覧 で 楕円体高 を 出す ときだけ ジオイド を 取りに いく
+  useEffect(() => {
+    if (showRecordList && coordColumns.has('ellipsoidH')) setWantGeoid(true)
+  }, [showRecordList, coordColumns])
+
+  /** 楕円体高 [m] = 標高 Z + ジオイド高 N。どれか 欠けたら null */
+  const ellipsoidalHeightOf = useCallback(
+    (z: number | null, lat: number | null, lng: number | null): number | null => {
+      if (!geoidGrid || z == null || lat == null || lng == null) return null
+      const n = lookupGeoid(geoidGrid, lat, lng)
+      return n == null ? null : z + n
+    },
+    [geoidGrid],
+  )
 
   /** 座標計算に 渡す 点。 毎描画 作り直すと 子側の 参照が 変わり続ける ので 固定する */
   const calcCoordinates = useMemo(
@@ -7224,6 +7246,9 @@ export function MobileStakingPage() {
                           <th className="px-2 py-1 text-right">経度</th>
                         </>
                       )}
+                      {coordColumns.has('ellipsoidH') && (
+                        <th className="px-2 py-1 text-right whitespace-nowrap">楕円体高</th>
+                      )}
                       {coordColumns.has('type') && (
                         <th className="px-2 py-1 text-left">点種</th>
                       )}
@@ -7308,6 +7333,11 @@ export function MobileStakingPage() {
                                 {t.lng != null ? t.lng.toFixed(8) : '-'}
                               </td>
                             </>
+                          )}
+                          {coordColumns.has('ellipsoidH') && (
+                            <td className="px-2 py-1 text-right font-mono whitespace-nowrap">
+                              {ellipsoidalHeightOf(t.z, t.lat, t.lng)?.toFixed(3) ?? '-'}
+                            </td>
                           )}
                           {coordColumns.has('type') && (
                             <td className="px-2 py-1 text-slate-600 whitespace-nowrap max-w-[5rem] truncate">

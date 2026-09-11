@@ -17,6 +17,7 @@ import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { CoordinatePhotoPanel } from './CoordinatePhotoPanel'
 import { BulkCalcModal } from './BulkCalcModal'
 import { CoordinateCalcModal } from './CoordinateCalcModal'
+import { lookupGeoid, type GeoidGrid } from '@/lib/geoid'
 import { DeletedCoordinatesModal } from './DeletedCoordinatesModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
@@ -506,6 +507,32 @@ export function CoordinatesPage() {
   // 表示は polygon name のフォールバックチェーン: parcel_number > zoneNumber > name。
   const parcelByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
   const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
+  // ジオイド (JPGEO2024)。 楕円体高 = 標高 Z + ジオイド高 N。
+  // バイナリ が 7MB ほど ある ので 動的 import で 遅延 読込 し、
+  // 読める まで は '-' を 出す (モジュール側で キャッシュ される)。
+  const [geoidGrid, setGeoidGrid] = useState<GeoidGrid | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void import('@/lib/geoid')
+      .then(({ loadGeoid }) => loadGeoid())
+      .then((g) => {
+        if (!cancelled) setGeoidGrid(g)
+      })
+      .catch(() => { /* 読めなくても 他の 列は 出す */ })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  /** 楕円体高 [m]。Z / 緯度経度 / ジオイド の どれかが 欠けたら null */
+  const ellipsoidalHeightOf = useCallback(
+    (c: { z: number | null; lat: number | null; lng: number | null }): number | null => {
+      if (!geoidGrid || c.z == null || c.lat == null || c.lng == null) return null
+      const n = lookupGeoid(geoidGrid, c.lat, c.lng)
+      return n == null ? null : c.z + n
+    },
+    [geoidGrid],
+  )
+
   // 更新者ID → 表示名（プロジェクトメンバーから引く）
   const memberNameById = useMemo(() => {
     const m = new Map<string, string>()
@@ -2371,6 +2398,12 @@ export function CoordinatesPage() {
                 </th>
                 <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                 <th className="px-0.5 py-2 text-right font-medium">経度</th>
+                <th
+                  className="px-0.5 py-2 text-right font-medium whitespace-nowrap"
+                  title="楕円体高 = 標高 Z + ジオイド高 N (JPGEO2024)"
+                >
+                  楕円体高
+                </th>
                 <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
                 <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新日時</th>
                 <th className="px-0.5 py-2 text-left font-medium">備考</th>
@@ -2525,6 +2558,9 @@ export function CoordinatesPage() {
                   </td>
                   <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
                     {coord.lng?.toFixed(8) ?? '-'}
+                  </td>
+                  <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono whitespace-nowrap">
+                    {ellipsoidalHeightOf(coord)?.toFixed(3) ?? '-'}
                   </td>
                   <td
                     className="px-0.5 py-0.5 text-xs text-muted-foreground whitespace-nowrap max-w-[8rem] truncate"
@@ -2728,6 +2764,12 @@ export function CoordinatesPage() {
                       </th>
                       <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                       <th className="px-0.5 py-2 text-right font-medium">経度</th>
+                      <th
+                        className="px-0.5 py-2 text-right font-medium whitespace-nowrap"
+                        title="楕円体高 = 標高 Z + ジオイド高 N (JPGEO2024)"
+                      >
+                        楕円体高
+                      </th>
                       <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
                       <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新日時</th>
                       <th className="px-0.5 py-2 text-left font-medium">備考</th>
@@ -2882,6 +2924,9 @@ export function CoordinatesPage() {
                         </td>
                         <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
                           {coord.lng?.toFixed(8) ?? '-'}
+                        </td>
+                        <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono whitespace-nowrap">
+                          {ellipsoidalHeightOf(coord)?.toFixed(3) ?? '-'}
                         </td>
                         <td
                           className="px-0.5 py-0.5 text-xs text-muted-foreground whitespace-nowrap max-w-[7rem] truncate"
