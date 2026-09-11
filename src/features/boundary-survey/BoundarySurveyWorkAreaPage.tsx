@@ -253,11 +253,11 @@ export function BoundarySurveyWorkAreaPage() {
         zone_number: string
         name: string
         point_ids: string[]
+        confirmed_point_ids: string[]
         area_sqm: null
         area_ha: null
         perimeter_m: null
         notes: null
-        boundary_kind: BoundaryKind
       }> = []
       const meta: Array<{
         label: string
@@ -283,8 +283,7 @@ export function BoundarySurveyWorkAreaPage() {
           area_ha: null,
           perimeter_m: null,
           notes: null,
-          // 地図由来 の 形 は 暫定。 確定は 立会 の 結果 (SIM) でしか 入れない
-          boundary_kind: 'provisional',
+          confirmed_point_ids: [],
         })
         meta.push({
           label,
@@ -465,12 +464,25 @@ export function BoundarySurveyWorkAreaPage() {
         zone_number: string
         name: string
         point_ids: string[]
+        confirmed_point_ids: string[]
         area_sqm: null
         area_ha: null
         perimeter_m: null
         notes: null
-        boundary_kind: BoundaryKind
       }> = []
+      // 確定境界 として 取り込む 場合、同じ 地番名 の 行 が あれば
+      // その 行 の confirmed_point_ids を 更新 する (地番 は 1 行 の まま)。
+      const confirmedMode = simKindRef.current === 'confirmed'
+      const existingByLabel = new Map<string, string>()
+      if (confirmedMode) {
+        for (const a of workAreas['boundary_survey'] ?? []) {
+          const label =
+            parcelsByWorkAreaId.get(a.id)?.parcel_number || a.zoneNumber || a.name
+          if (label) existingByLabel.set(label, a.id)
+        }
+      }
+      const confirmedUpdates: Array<{ id: string; point_ids: string[] }> = []
+
       for (let i = 0; i < polyTotal; i++) {
         const poly = result.polygons[i]
         const pointIds = poly.pointNumbers
@@ -481,19 +493,39 @@ export function BoundarySurveyWorkAreaPage() {
           continue
         }
         const label = poly.parcelName || poly.parcelNumber || `画地${insertRows.length + 1}`
+        const hitId = confirmedMode ? existingByLabel.get(label) : undefined
+        if (hitId) {
+          confirmedUpdates.push({ id: hitId, point_ids: pointIds })
+          continue
+        }
         insertRows.push({
           farm_id: currentFarm.id,
           work_type: 'boundary_survey',
           zone_number: label,
           name: label,
-          point_ids: pointIds,
+          // 確定 で 取り込む のに 対応する 地番 が 無ければ、行 を 作って
+          // 確定側 に 入れる (仮 は 空 の まま)
+          point_ids: confirmedMode ? [] : pointIds,
+          confirmed_point_ids: confirmedMode ? pointIds : [],
           area_sqm: null,
           area_ha: null,
           perimeter_m: null,
           notes: null,
-          // メニュー で 選んだ 種類 (仮境界 / 確定境界) で 入れる
-          boundary_kind: simKindRef.current,
         })
+      }
+
+      // 既存 地番 の 確定側 を 更新
+      for (const u of confirmedUpdates) {
+        const { error } = await supabase
+          .from('design_work_areas')
+          .update({ confirmed_point_ids: u.point_ids } as never)
+          .eq('id', u.id)
+        if (error) {
+          console.error('確定境界 UPDATE 失敗:', error)
+          skippedPolygons++
+        } else {
+          createdPolygons++
+        }
       }
 
       setProgress({ phase: '画地を取り込み中', done: 0, total: insertRows.length })

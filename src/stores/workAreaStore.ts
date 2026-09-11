@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { errorMessage } from '@/lib/errorMessage'
 import { withRetry } from '@/lib/retry'
-import { toBoundaryKind, type BoundaryKind } from '@/lib/boundaryKind'
+import type { BoundaryKind } from '@/lib/boundaryKind'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore } from './farmStore'
 import { useProjectListStore } from './projectListStore'
@@ -33,12 +33,79 @@ export interface WorkAreaRow {
   areaHa: number | null
   perimeterM: number | null
   notes: string | null
-  /** 地番のみ 意味を持つ。仮境界 / 確定境界 */
-  boundaryKind: BoundaryKind
+  /** 地番のみ: 確定境界 の 構成点 (立会の 成果)。 仮 とは 別の 形。
+   *  point_ids / points は 従来どおり 仮境界 (当初) の 分。 */
+  confirmedPointIds: string[]
+  confirmedPoints: WorkAreaPoint[]
+  confirmedAreaSqm: number | null
+  confirmedAreaHa: number | null
+  confirmedPerimeterM: number | null
 }
 
 // 工種別の工事区域データ
 type WorkAreasRecord = Partial<Record<WorkType, WorkAreaRow[]>>
+
+/**
+ * 仮 / 確定 で 触る フィールド を 差し替える ため の 小道具。
+ * 地番 は 1 行 の まま 構成点 だけ 2 本 持つ (point_ids / confirmed_point_ids)。
+ */
+function pointsOfKind(a: WorkAreaRow, kind: BoundaryKind): WorkAreaPoint[] {
+  return kind === 'confirmed' ? a.confirmedPoints : a.points
+}
+function idsOfKind(a: WorkAreaRow, kind: BoundaryKind): string[] {
+  return kind === 'confirmed' ? a.confirmedPointIds : a.pointIds
+}
+/** kind 側 の 構成点 / 面積 を 差し替えた 新しい 行 を 返す */
+function withKind(
+  a: WorkAreaRow,
+  kind: BoundaryKind,
+  patch: {
+    ids?: string[]
+    points?: WorkAreaPoint[]
+    areaSqm?: number | null
+    areaHa?: number | null
+    perimeterM?: number | null
+  },
+): WorkAreaRow {
+  if (kind === 'confirmed') {
+    return {
+      ...a,
+      ...(patch.ids !== undefined ? { confirmedPointIds: patch.ids } : {}),
+      ...(patch.points !== undefined ? { confirmedPoints: patch.points } : {}),
+      ...(patch.areaSqm !== undefined ? { confirmedAreaSqm: patch.areaSqm } : {}),
+      ...(patch.areaHa !== undefined ? { confirmedAreaHa: patch.areaHa } : {}),
+      ...(patch.perimeterM !== undefined ? { confirmedPerimeterM: patch.perimeterM } : {}),
+    }
+  }
+  return {
+    ...a,
+    ...(patch.ids !== undefined ? { pointIds: patch.ids } : {}),
+    ...(patch.points !== undefined ? { points: patch.points } : {}),
+    ...(patch.areaSqm !== undefined ? { areaSqm: patch.areaSqm } : {}),
+    ...(patch.areaHa !== undefined ? { areaHa: patch.areaHa } : {}),
+    ...(patch.perimeterM !== undefined ? { perimeterM: patch.perimeterM } : {}),
+  }
+}
+/** 対象 の 行 だけ 差し替える (workAreas は 工種 → 配列 の 入れ子) */
+function mapArea(
+  workAreas: WorkAreasRecord,
+  workAreaId: string,
+  fn: (a: WorkAreaRow) => WorkAreaRow,
+): WorkAreasRecord {
+  const next = { ...workAreas }
+  for (const wt of Object.keys(next) as WorkType[]) {
+    const areas = next[wt]
+    if (!areas) continue
+    const i = areas.findIndex((a) => a.id === workAreaId)
+    if (i !== -1) {
+      const u = [...areas]
+      u[i] = fn(u[i])
+      next[wt] = u
+      break
+    }
+  }
+  return next
+}
 
 interface WorkAreaState {
   // 工事区域データ（工種別）
@@ -70,17 +137,18 @@ interface WorkAreaState {
   ) => void
 
   // 工事区域操作
-  addWorkArea: (workType: WorkType, boundaryKind?: BoundaryKind) => Promise<WorkAreaRow | null>
+  addWorkArea: (workType: WorkType) => Promise<WorkAreaRow | null>
   updateWorkArea: (id: string, updates: Partial<Pick<WorkAreaRow, 'zoneNumber' | 'notes'>>) => void
   deleteWorkArea: (id: string) => Promise<void>
 
   // 座標点操作（座標管理の座標を追加）
-  addPoint: (workAreaId: string, coordinate: { id: string; pointNumber: string; x: number; y: number; z: number | null }) => void
-  removePoint: (workAreaId: string, coordinateId: string) => void
-  reorderPoints: (workAreaId: string, coordinateIds: string[]) => void
+  /** kind を 省くと 仮境界 (従来 の 構成点) を 触る */
+  addPoint: (workAreaId: string, coordinate: { id: string; pointNumber: string; x: number; y: number; z: number | null }, kind?: BoundaryKind) => void
+  removePoint: (workAreaId: string, coordinateId: string, kind?: BoundaryKind) => void
+  reorderPoints: (workAreaId: string, coordinateIds: string[], kind?: BoundaryKind) => void
 
   // 面積計算
-  calculateArea: (workAreaId: string) => AreaCalculationSheet | null
+  calculateArea: (workAreaId: string, kind?: BoundaryKind) => AreaCalculationSheet | null
 
   // 保存
   saveWorkArea: (id: string) => Promise<void>
@@ -118,9 +186,9 @@ export function buildWorkAreasRecord(
 ): WorkAreasRecord {
   const converter = new CoordinateConverter(zone)
   const workAreasRecord: WorkAreasRecord = {}
-  for (const area of areas) {
-    const pointIds = area.point_ids || []
-    const areaPoints: WorkAreaPoint[] = pointIds
+  /** point_ids → 展開済み の 構成点。 仮 / 確定 で 同じ 処理 を 使う */
+  const expand = (ids: string[]): WorkAreaPoint[] =>
+    ids
       .map((id, index) => {
         const coord = coordinatesMap[id]
         if (!coord) return null
@@ -144,6 +212,11 @@ export function buildWorkAreasRecord(
       })
       .filter((p): p is WorkAreaPoint => p !== null)
 
+  for (const area of areas) {
+    const pointIds = area.point_ids || []
+    const confirmedPointIds = area.confirmed_point_ids || []
+    const areaPoints = expand(pointIds)
+
     const workAreaRow: WorkAreaRow = {
       id: area.id,
       workType: area.work_type,
@@ -155,7 +228,11 @@ export function buildWorkAreasRecord(
       areaHa: area.area_ha,
       perimeterM: area.perimeter_m,
       notes: area.notes,
-      boundaryKind: toBoundaryKind(area.boundary_kind),
+      confirmedPointIds,
+      confirmedPoints: expand(confirmedPointIds),
+      confirmedAreaSqm: area.confirmed_area_sqm ?? null,
+      confirmedAreaHa: area.confirmed_area_ha ?? null,
+      confirmedPerimeterM: area.confirmed_perimeter_m ?? null,
     }
     if (!workAreasRecord[area.work_type]) workAreasRecord[area.work_type] = []
     workAreasRecord[area.work_type]!.push(workAreaRow)
@@ -264,7 +341,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
     }
   },
 
-  addWorkArea: async (workType: WorkType, boundaryKind: BoundaryKind = 'provisional') => {
+  addWorkArea: async (workType: WorkType) => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
       set({ error: '工区が選択されていません' })
@@ -292,7 +369,6 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           area_ha: null,
           perimeter_m: null,
           notes: null,
-          boundary_kind: boundaryKind,
         } as never)
         .select()
         .single()
@@ -311,7 +387,11 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         areaHa: null,
         perimeterM: null,
         notes: null,
-        boundaryKind,
+        confirmedPointIds: [],
+        confirmedPoints: [],
+        confirmedAreaSqm: null,
+        confirmedAreaHa: null,
+        confirmedPerimeterM: null,
       }
 
       set((state) => {
@@ -377,12 +457,12 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
     }
   },
 
-  addPoint: (workAreaId, coordinate) => {
+  addPoint: (workAreaId, coordinate, kind = 'provisional') => {
     const area = get().getWorkAreaById(workAreaId)
     if (!area) return
 
     // 既に追加されている場合はスキップ
-    if (area.pointIds.includes(coordinate.id)) return
+    if (idsOfKind(area, kind).includes(coordinate.id)) return
 
     const zone = getCurrentZone()
     const converter = new CoordinateConverter(zone)
@@ -402,123 +482,88 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       z: coordinate.z,
       lat,
       lng,
-      sortOrder: area.points.length,
+      sortOrder: pointsOfKind(area, kind).length,
     }
 
     set((state) => {
-      const newWorkAreas = { ...state.workAreas }
-      for (const workType of Object.keys(newWorkAreas) as WorkType[]) {
-        const areas = newWorkAreas[workType]
-        if (!areas) continue
-        const index = areas.findIndex(a => a.id === workAreaId)
-        if (index !== -1) {
-          const updatedAreas = [...areas]
-          const areaToUpdate = { ...updatedAreas[index] }
-          areaToUpdate.pointIds = [...areaToUpdate.pointIds, coordinate.id]
-          areaToUpdate.points = [...areaToUpdate.points, newPoint]
-          updatedAreas[index] = areaToUpdate
-          newWorkAreas[workType] = updatedAreas
-          break
-        }
-      }
+      const newWorkAreas = mapArea(state.workAreas, workAreaId, (a) =>
+        withKind(a, kind, {
+          ids: [...idsOfKind(a, kind), coordinate.id],
+          points: [...pointsOfKind(a, kind), newPoint],
+        }),
+      )
       const newPending = state.pendingWorkAreaIds.includes(workAreaId)
         ? state.pendingWorkAreaIds
         : [...state.pendingWorkAreaIds, workAreaId]
       return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
     // 点が 3 本以上あれば 面積を即時に再計算 (一覧に m² / ha が自動反映される)
-    if ((get().getWorkAreaById(workAreaId)?.points.length ?? 0) >= 3) {
-      get().calculateArea(workAreaId)
+    const after = get().getWorkAreaById(workAreaId)
+    if (after && pointsOfKind(after, kind).length >= 3) {
+      get().calculateArea(workAreaId, kind)
     }
   },
 
-  removePoint: (workAreaId, coordinateId) => {
+  removePoint: (workAreaId, coordinateId, kind = 'provisional') => {
     set((state) => {
-      const newWorkAreas = { ...state.workAreas }
-      for (const workType of Object.keys(newWorkAreas) as WorkType[]) {
-        const areas = newWorkAreas[workType]
-        if (!areas) continue
-        const areaIndex = areas.findIndex(a => a.id === workAreaId)
-        if (areaIndex !== -1) {
-          const updatedAreas = [...areas]
-          const area = { ...updatedAreas[areaIndex] }
-          area.pointIds = area.pointIds.filter(id => id !== coordinateId)
-          area.points = area.points.filter(p => p.id !== coordinateId)
-          // sortOrderを再割り当て
-          area.points = area.points.map((p, i) => ({ ...p, sortOrder: i }))
-          updatedAreas[areaIndex] = area
-          newWorkAreas[workType] = updatedAreas
-          break
-        }
-      }
+      const newWorkAreas = mapArea(state.workAreas, workAreaId, (a) =>
+        withKind(a, kind, {
+          ids: idsOfKind(a, kind).filter((id) => id !== coordinateId),
+          // sortOrder を 詰め直す
+          points: pointsOfKind(a, kind)
+            .filter((p) => p.id !== coordinateId)
+            .map((p, i) => ({ ...p, sortOrder: i })),
+        }),
+      )
       const newPending = state.pendingWorkAreaIds.includes(workAreaId)
         ? state.pendingWorkAreaIds
         : [...state.pendingWorkAreaIds, workAreaId]
       return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
-    // 点数変化に追従して 面積を即時に再計算 (3 点未満なら areaSqm=null)
-    const remaining = get().getWorkAreaById(workAreaId)?.points.length ?? 0
+    // 点数変化に追従して 面積を即時に再計算 (3 点未満なら null に戻す)
+    const after = get().getWorkAreaById(workAreaId)
+    const remaining = after ? pointsOfKind(after, kind).length : 0
     if (remaining >= 3) {
-      get().calculateArea(workAreaId)
+      get().calculateArea(workAreaId, kind)
     } else {
-      // 3 点未満は面積を null に戻す
-      set((state) => {
-        const nw = { ...state.workAreas }
-        for (const wt of Object.keys(nw) as WorkType[]) {
-          const areas = nw[wt]
-          if (!areas) continue
-          const i = areas.findIndex((a) => a.id === workAreaId)
-          if (i !== -1) {
-            const u = [...areas]
-            u[i] = { ...u[i], areaSqm: null, areaHa: null, perimeterM: null }
-            nw[wt] = u
-            break
-          }
-        }
-        return { workAreas: nw }
-      })
+      set((state) => ({
+        workAreas: mapArea(state.workAreas, workAreaId, (a) =>
+          withKind(a, kind, { areaSqm: null, areaHa: null, perimeterM: null }),
+        ),
+      }))
     }
   },
 
-  reorderPoints: (workAreaId, coordinateIds) => {
+  reorderPoints: (workAreaId, coordinateIds, kind = 'provisional') => {
     set((state) => {
-      const newWorkAreas = { ...state.workAreas }
-      for (const workType of Object.keys(newWorkAreas) as WorkType[]) {
-        const areas = newWorkAreas[workType]
-        if (!areas) continue
-        const areaIndex = areas.findIndex(a => a.id === workAreaId)
-        if (areaIndex !== -1) {
-          const updatedAreas = [...areas]
-          const area = { ...updatedAreas[areaIndex] }
-          area.pointIds = coordinateIds
-          const reorderedPoints = coordinateIds
+      const newWorkAreas = mapArea(state.workAreas, workAreaId, (a) =>
+        withKind(a, kind, {
+          ids: coordinateIds,
+          points: coordinateIds
             .map((id, index) => {
-              const point = area.points.find(p => p.id === id)
+              const point = pointsOfKind(a, kind).find((p) => p.id === id)
               return point ? { ...point, sortOrder: index } : null
             })
-            .filter((p): p is WorkAreaPoint => p !== null)
-          area.points = reorderedPoints
-          updatedAreas[areaIndex] = area
-          newWorkAreas[workType] = updatedAreas
-          break
-        }
-      }
+            .filter((p): p is WorkAreaPoint => p !== null),
+        }),
+      )
       const newPending = state.pendingWorkAreaIds.includes(workAreaId)
         ? state.pendingWorkAreaIds
         : [...state.pendingWorkAreaIds, workAreaId]
       return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
     // 並べ替え直後も 面積を再計算 (向きが変わって面積の符号だけ変わるので値は同じだが 一貫性のため)
-    if ((get().getWorkAreaById(workAreaId)?.points.length ?? 0) >= 3) {
-      get().calculateArea(workAreaId)
+    const after = get().getWorkAreaById(workAreaId)
+    if (after && pointsOfKind(after, kind).length >= 3) {
+      get().calculateArea(workAreaId, kind)
     }
   },
 
-  calculateArea: (workAreaId) => {
+  calculateArea: (workAreaId, kind = 'provisional') => {
     const area = get().getWorkAreaById(workAreaId)
-    if (!area || area.points.length < 3) return null
+    if (!area || pointsOfKind(area, kind).length < 3) return null
 
-    const points = area.points.map(p => ({
+    const points = pointsOfKind(area, kind).map(p => ({
       id: p.id,
       pointNumber: p.pointNumber,
       x: p.x,
@@ -534,23 +579,13 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
 
     // ローカル状態を更新
     set((state) => {
-      const newWorkAreas = { ...state.workAreas }
-      for (const workType of Object.keys(newWorkAreas) as WorkType[]) {
-        const areas = newWorkAreas[workType]
-        if (!areas) continue
-        const areaIndex = areas.findIndex(a => a.id === workAreaId)
-        if (areaIndex !== -1) {
-          const updatedAreas = [...areas]
-          updatedAreas[areaIndex] = {
-            ...updatedAreas[areaIndex],
-            areaSqm: sheet.area_sqm,
-            areaHa: sheet.area_ha,
-            perimeterM: sheet.perimeter_m,
-          }
-          newWorkAreas[workType] = updatedAreas
-          break
-        }
-      }
+      const newWorkAreas = mapArea(state.workAreas, workAreaId, (a) =>
+        withKind(a, kind, {
+          areaSqm: sheet.area_sqm,
+          areaHa: sheet.area_ha,
+          perimeterM: sheet.perimeter_m,
+        }),
+      )
       const newPending = state.pendingWorkAreaIds.includes(workAreaId)
         ? state.pendingWorkAreaIds
         : [...state.pendingWorkAreaIds, workAreaId]
@@ -575,6 +610,11 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           area_sqm: area.areaSqm,
           area_ha: area.areaHa,
           perimeter_m: area.perimeterM,
+          // 確定境界 の 構成点 / 面積 (地番のみ。 他の 工種 は 常に 空)
+          confirmed_point_ids: area.confirmedPointIds,
+          confirmed_area_sqm: area.confirmedAreaSqm,
+          confirmed_area_ha: area.confirmedAreaHa,
+          confirmed_perimeter_m: area.confirmedPerimeterM,
           notes: area.notes,
         } as never)
         .eq('id', id)

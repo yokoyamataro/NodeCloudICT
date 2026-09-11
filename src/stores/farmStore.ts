@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { toBoundaryKind, type BoundaryKind } from '@/lib/boundaryKind'
+import type { BoundaryKind } from '@/lib/boundaryKind'
 import { persist } from 'zustand/middleware'
 import { supabase } from '@/lib/supabase'
 import { CoordinateConverter } from '@/lib/coordinates'
@@ -147,12 +147,14 @@ export function buildWorkAreaPolygon(
     zone_number: string
     name: string | null
     point_ids: string[] | null
-    boundary_kind?: string | null
+    confirmed_point_ids?: string[] | null
   },
   coordsMap: Record<string, { x: number; y: number }>,
   zone: number,
 ): WorkAreaPolygon | null {
-  const areaPointIds = area.point_ids ?? []
+  // 確定境界 が 登録 されて いれば そちら を 描く (無ければ 仮)
+  const confirmed = area.confirmed_point_ids ?? []
+  const areaPointIds = confirmed.length >= 3 ? confirmed : area.point_ids ?? []
   if (areaPointIds.length < 3) return null
   const converter = new CoordinateConverter(zone)
   const positions: [number, number][] = []
@@ -170,7 +172,7 @@ export function buildWorkAreaPolygon(
     workType: area.work_type,
     name: area.name || area.zone_number || '',
     positions,
-    boundaryKind: toBoundaryKind(area.boundary_kind),
+    boundaryKind: confirmed.length >= 3 ? 'confirmed' : 'provisional',
   }
 }
 
@@ -334,7 +336,7 @@ export const useFarmStore = create<FarmState>()(
       // 1 回で済む。
       const { data: areasData, error: areaError } = await supabase
         .from('design_work_areas')
-        .select('id, farm_id, work_type, zone_number, name, point_ids, boundary_kind')
+        .select('id, farm_id, work_type, zone_number, name, point_ids, confirmed_point_ids')
         .in('farm_id', targetFarms.map(f => f.id))
 
       if (areaError) throw areaError
@@ -346,7 +348,7 @@ export const useFarmStore = create<FarmState>()(
         zone_number: string
         name: string | null
         point_ids: string[] | null
-        boundary_kind: string | null
+        confirmed_point_ids: string[] | null
       }> | null
 
       if (areas && areas.length > 0) {

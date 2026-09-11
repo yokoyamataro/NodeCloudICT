@@ -30,9 +30,7 @@ import {
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useParcelStore } from '@/stores/parcelStore'
-import { errorMessage } from '@/lib/errorMessage'
 import { BOUNDARY_KIND_LABEL, type BoundaryKind } from '@/lib/boundaryKind'
-import { supabase } from '@/lib/supabase'
 import {
   useParcelAttributeTypesStore,
   EMPTY_ATTRIBUTES,
@@ -187,7 +185,6 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     reorderPoints: _reorderPoints,
     calculateArea,
     getWorkAreasByType,
-    invalidateCache,
   } = useWorkAreaStore()
 
   // readOnly なら書込みを no-op に置換 (呼出側は変更不要)
@@ -257,11 +254,21 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     localStorage.setItem('boundarySurvey:boundaryView', boundaryView)
   }, [boundaryView])
 
-  const areas = useMemo(
-    () =>
-      isBoundarySurvey ? allAreas.filter((a) => a.boundaryKind === boundaryView) : allAreas,
-    [allAreas, isBoundarySurvey, boundaryView],
+  // 地番 は 1 行 の まま。 boundaryView は 「どちらの 構成点 を 出すか」 だけ を 決める
+  const areas = allAreas
+  /** 今 見て いる 側 の 構成点 */
+  const pointsOf = useCallback(
+    (a: WorkAreaRow): WorkAreaPoint[] =>
+      isBoundarySurvey && boundaryView === 'confirmed' ? a.confirmedPoints : a.points,
+    [isBoundarySurvey, boundaryView],
   )
+  const pointIdsOf = useCallback(
+    (a: WorkAreaRow): string[] =>
+      isBoundarySurvey && boundaryView === 'confirmed' ? a.confirmedPointIds : a.pointIds,
+    [isBoundarySurvey, boundaryView],
+  )
+  /** 構成点 を 触る ときに 渡す 種別 (地番以外 は 常に 仮=従来の列) */
+  const editKind: BoundaryKind = isBoundarySurvey ? boundaryView : 'provisional'
 
   // 地籍モードでは、表示中の地番（design_work_areas）に対応する parcels を一括取得
   const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
@@ -447,14 +454,14 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
   const getAreaPoints = (areaId: string): (WorkAreaPoint & { coord?: CoordinateRow })[] => {
     const area = areas.find(a => a.id === areaId)
     if (!area) return []
-    return area.points.map(p => ({
+    return pointsOf(area).map(p => ({
       ...p,
       coord: coordinates.find(c => c.id === p.id),
     }))
   }
 
   const handleAddArea = async () => {
-    const newArea = await addWorkArea(workType, isBoundarySurvey ? boundaryView : undefined)
+    const newArea = await addWorkArea(workType)
     if (newArea) {
       setEditingAreaId(newArea.id)
     }
@@ -463,7 +470,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
   // 面積計算ボタン: 直接 Excel を出力する (モーダルは廃止)。
   // 内部で calculateArea を呼んで sheet を作り、座標面積計算書 xlsx をダウンロード。
   const handleCalculateArea = async (areaId: string) => {
-    const sheet = calculateArea(areaId)
+    const sheet = calculateArea(areaId, editKind)
     if (!sheet) return
     try {
       const blob = await generateCoordinateAreaBookExcel(sheet, {
@@ -511,7 +518,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     newPointIds.splice(currentIndex, 1)
     newPointIds.splice(dropIndex, 0, pointId)
 
-    reorderPoints(areaId, newPointIds)
+    reorderPoints(areaId, newPointIds, editKind)
   }
 
   // 点がクリックされたとき
@@ -535,14 +542,14 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
           x: coord.x,
           y: coord.y,
           z: coord.z,
-        })
+        }, editKind)
         const insertAt = Math.min(Math.max(pendingInsertIdx, 0), constituentIds.length)
         const newOrder = [
           ...constituentIds.slice(0, insertAt),
           coord.id,
           ...constituentIds.slice(insertAt),
         ]
-        reorderPoints(editingAreaId, newOrder)
+        reorderPoints(editingAreaId, newOrder, editKind)
         setPendingInsertIdx(null)
         setHoverPos(null)
         return
@@ -568,7 +575,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
             x: coord.x,
             y: coord.y,
             z: coord.z,
-          })
+          }, editKind)
           return
         }
         // points 配列に新座標を入れてから順序を入れ替え
@@ -578,11 +585,11 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
           x: coord.x,
           y: coord.y,
           z: coord.z,
-        })
+        }, editKind)
         const newOrder = constituentIds.map((pid, i) =>
           i === idx ? coord.id : pid,
         )
-        reorderPoints(editingAreaId, newOrder)
+        reorderPoints(editingAreaId, newOrder, editKind)
         // 置換確定後は選択解除 → ポリゴンが新位置にロックされ
         // マウス移動で追従し続けることがなくなる。
         // もう一度動かしたければ、新しい構成点を再クリックしてもらう
@@ -598,7 +605,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
         x: coord.x,
         y: coord.y,
         z: coord.z,
-      })
+      }, editKind)
     }
   }
 
@@ -635,69 +642,6 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     // 畳んで いても 地番を 選んだら 構成点 を 見たい はず なので 開く
     if (id) setPointPanelCollapsed(false)
   }, [])
-
-  /**
-   * 選んで いる 仮境界 の 地番 に 対して 「確定境界」 の 行 を 作る。
-   *
-   * 仮 と 確定 は design_work_areas の 別行 (boundary_kind) で、
-   * 構成点 は それぞれ 別 に 作る。 確定境界 の 点 は 立会・確定測量 の
-   * 成果 であって 当初 の 点 とは 別物 なので、複製 しない (空 で 作る)。
-   * 引き継ぐ のは 地番 の 属性 (所在 / 地番 / 地目 / 地積 / 所有者) だけ。
-   */
-  const [creatingConfirmed, setCreatingConfirmed] = useState(false)
-  const createConfirmedBoundary = useCallback(
-    async (area: WorkAreaRow) => {
-      if (!farmId || readOnly) return
-      setCreatingConfirmed(true)
-      try {
-        const { data, error } = await supabase
-          .from('design_work_areas')
-          .insert({
-            farm_id: farmId,
-            work_type: area.workType,
-            zone_number: area.zoneNumber,
-            name: area.name,
-            // 構成点 は 引き継がない。 確定 の 点 は 別に 登録 する
-            point_ids: [],
-            area_sqm: null,
-            area_ha: null,
-            perimeter_m: null,
-            notes: area.notes,
-            boundary_kind: 'confirmed',
-          } as never)
-          .select('id')
-          .single()
-        if (error) throw error
-        const newId = (data as { id: string }).id
-        // 地番の 属性 は 仮 から 引き継ぐ (行 は トリガで 既に ある)
-        const src = parcelByWorkAreaId.get(area.id)
-        if (src) {
-          await upsertParcel(newId, {
-            location: src.location,
-            parcel_number: src.parcel_number,
-            registered_land_category: src.registered_land_category,
-            registered_area_sqm: src.registered_area_sqm,
-            updated_land_category: src.updated_land_category,
-            updated_area_sqm: src.updated_area_sqm,
-            registered_owner_name: src.registered_owner_name,
-            registered_owner_address: src.registered_owner_address,
-            attribute_code: src.attribute_code,
-          })
-        }
-        invalidateCache()
-        await fetchWorkAreas(farmId)
-        setBoundaryView('confirmed')
-        selectArea(newId)
-      } catch (err) {
-        alert(`確定境界の作成に失敗しました: ${errorMessage(err)}`)
-      } finally {
-        setCreatingConfirmed(false)
-      }
-    },
-    // selectArea は 下 で 定義 する ので 依存 に 入れない (識別子 は 巻き上げ 済み)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [farmId, readOnly, parcelByWorkAreaId, upsertParcel, invalidateCache, fetchWorkAreas],
-  )
 
   /** 構成点の 編集を 終える (Enter / 確定ボタン)。 後始末は ESC と 同じ */
   const finishEditingArea = useCallback(() => {
@@ -737,13 +681,13 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
         const last = ids[ids.length - 1]
         if (!last) return
         if (last === selectedConstituentPointId) setSelectedConstituentPointId(null)
-        removePoint(editingAreaId, last)
+        removePoint(editingAreaId, last, editKind)
         return
       }
       if (e.key === 'Delete') {
         if (!selectedConstituentPointId) return
         e.preventDefault()
-        removePoint(editingAreaId, selectedConstituentPointId)
+        removePoint(editingAreaId, selectedConstituentPointId, editKind)
         setSelectedConstituentPointId(null)
       }
     }
@@ -812,7 +756,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
 
     const coord = coordinates.find(c => c.pointNumber === trimmed)
     if (coord) {
-      addPoint(areaId, { id: coord.id, pointNumber: coord.pointNumber, x: coord.x, y: coord.y, z: coord.z })
+      addPoint(areaId, { id: coord.id, pointNumber: coord.pointNumber, x: coord.x, y: coord.y, z: coord.z }, editKind)
       setPointNameInput('')
     }
   }
@@ -880,7 +824,8 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
         positions,
         edges,
         attributeColor,
-        boundaryKind: area.boundaryKind,
+        // 仮境界 は 破線、確定境界 は 実線
+        boundaryKind: editKind,
       }
     })
     .filter(p => p.positions.length >= 3)
@@ -955,22 +900,21 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                 </span>
               )}
             </button>
-            {/* 仮境界 / 確定境界 の 切替。 構成点 は それぞれ 別 に 作る ので、
-                一覧 も 地図 も 選んだ 側 だけ を 出す */}
+            {/* 仮境界 / 確定境界 の 切替。 地番 は 1 行 の まま で、
+                出す 構成点 (と 面積) を 入れ替える。 件数 は 「その 形 が
+                登録済み の 地番 数」 */}
             {isBoundarySurvey && (
               <div className="flex items-center rounded overflow-hidden border border-slate-300">
                 {(['provisional', 'confirmed'] as BoundaryKind[]).map((k) => {
-                  const n = allAreas.filter((a) => a.boundaryKind === k).length
+                  const n = allAreas.filter(
+                    (a) =>
+                      (k === 'confirmed' ? a.confirmedPointIds : a.pointIds).length >= 3,
+                  ).length
                   return (
                     <button
                       key={k}
                       type="button"
-                      onClick={() => {
-                        if (k === boundaryView) return
-                        setBoundaryView(k)
-                        // 表示から 外れる 行 を 選んだ まま に しない
-                        selectArea(null)
-                      }}
+                      onClick={() => setBoundaryView(k)}
                       className={`px-2 py-1 text-xs ${
                         boundaryView === k
                           ? 'bg-blue-600 text-white'
@@ -1136,6 +1080,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                           area={area}
                           visibleColumns={visibleColumns}
                           readOnly={readOnly}
+                          boundaryView={editKind}
                         />
                       ) : (
                         <div className="flex-1 grid grid-cols-4 gap-2 text-sm items-center">
@@ -1215,8 +1160,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                 <NewCadastralAreaRow
                   visibleColumns={visibleColumns}
                   onCreate={async (parcelNumber) => {
-                    // 今 見て いる 側 (仮 / 確定) に 作る
-                    const newArea = await addWorkArea('boundary_survey', boundaryView)
+                    const newArea = await addWorkArea('boundary_survey')
                     if (newArea) {
                       await upsertParcel(newArea.id, { parcel_number: parcelNumber })
                     }
@@ -1340,9 +1284,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
             visibleTypes={isBoundarySurvey ? visibleTypes : undefined}
             visibleStakeStatuses={isBoundarySurvey ? visibleStakeStatuses : undefined}
             editingConstituentPointIds={
-              editingAreaId
-                ? areas.find((a) => a.id === editingAreaId)?.pointIds
-                : undefined
+              editArea ? pointIdsOf(editArea) : undefined
             }
             selectedConstituentPointId={selectedConstituentPointId}
             onMidpointClick={editingAreaId ? handleMidpointClick : undefined}
@@ -1457,53 +1399,15 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
               )}
             </div>
 
-            {/* 対 に なる 側 (仮 ⇄ 確定) への 導線。 構成点 は 別 に 作る ので、
-                無ければ 空 の 行 を 作って そちら へ 移る。 */}
-            {editArea && isBoundarySurvey && (() => {
-              const label =
-                parcelByWorkAreaId.get(editArea.id)?.parcel_number ||
-                editArea.zoneNumber ||
-                editArea.name
-              const other: BoundaryKind =
-                editArea.boundaryKind === 'confirmed' ? 'provisional' : 'confirmed'
-              const counterpart = allAreas.find(
-                (a) =>
-                  a.id !== editArea.id &&
-                  a.boundaryKind === other &&
-                  (parcelByWorkAreaId.get(a.id)?.parcel_number || a.zoneNumber || a.name) === label,
-              )
-              return (
-                <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 shrink-0 text-[11px]">
-                  <span className="text-slate-500">
-                    {BOUNDARY_KIND_LABEL[editArea.boundaryKind]}の構成点
-                  </span>
-                  {counterpart ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setBoundaryView(other)
-                        selectArea(counterpart.id)
-                      }}
-                      className="ml-auto text-blue-600 hover:underline"
-                    >
-                      {BOUNDARY_KIND_LABEL[other]}へ
-                    </button>
-                  ) : editArea.boundaryKind === 'provisional' && !readOnly ? (
-                    <button
-                      type="button"
-                      onClick={() => void createConfirmedBoundary(editArea)}
-                      disabled={creatingConfirmed}
-                      className="ml-auto px-2 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
-                      title="確定境界 の 行 を 作る。 構成点 は 空 なので 立会 の 成果 を 別に 登録 する。 仮境界 は そのまま 残る"
-                    >
-                      {creatingConfirmed ? '作成中…' : '確定境界を作る'}
-                    </button>
-                  ) : (
-                    <span className="ml-auto text-slate-400">対になる仮境界がありません</span>
-                  )}
-                </div>
-              )
-            })()}
+            {/* 今 どちらの 構成点 を 編集 して いるか。 切替 は 一覧 の 上 */}
+            {editArea && isBoundarySurvey && (
+              <div className="px-3 py-1.5 border-b bg-slate-50 text-[11px] text-slate-600 shrink-0">
+                {BOUNDARY_KIND_LABEL[editKind]}の構成点
+                <span className="ml-1 text-slate-400">
+                  ({editKind === 'confirmed' ? '立会・確定測量の成果' : '当初'})
+                </span>
+              </div>
+            )}
 
             {!editArea ? (
               <div className="flex-1 flex items-center justify-center px-4 text-center text-xs text-slate-400">
@@ -1606,7 +1510,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                         {bearing ?? '-'}
                       </span>
                       <button
-                        onClick={() => removePoint(editArea.id, point.id)}
+                        onClick={() => removePoint(editArea.id, point.id, editKind)}
                         className="shrink-0 p-0.5 text-red-500 hover:bg-red-50 rounded"
                       >
                         <Trash2 className="h-3 w-3" />

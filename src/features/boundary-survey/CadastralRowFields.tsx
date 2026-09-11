@@ -5,6 +5,7 @@
 // 表示する列は visibleColumns で絞れる（地番リスト上部の列選択ボタンと連動）。
 
 import { useEffect, useState } from 'react'
+import type { BoundaryKind } from '@/lib/boundaryKind'
 import type { WorkAreaRow } from '@/stores/workAreaStore'
 import { useParcelStore, type ParcelEditableFields } from '@/stores/parcelStore'
 import { useLandownerStore } from '@/stores/landownerStore'
@@ -55,6 +56,8 @@ export const DEFAULT_VISIBLE_COLUMNS: ReadonlySet<CadastralColumnKey> = new Set(
 )
 
 interface Props {
+  /** 点数 / 面積 を どちらの 構成点 で 出すか (地番のみ) */
+  boundaryView?: BoundaryKind
   area: WorkAreaRow
   visibleColumns: ReadonlySet<CadastralColumnKey>
   /** 閲覧のみモード: input を disabled/readOnly にし、変更を保存しない */
@@ -90,7 +93,12 @@ function truncate2(n: number): string {
   return (Math.floor(n * 100) / 100).toFixed(2)
 }
 
-export function CadastralRowFields({ area, visibleColumns, readOnly = false }: Props) {
+export function CadastralRowFields({
+  area,
+  visibleColumns,
+  readOnly = false,
+  boundaryView = 'provisional',
+}: Props) {
   const parcel = useParcelStore((s) => s.byWorkAreaId.get(area.id))
   const _upsertParcel = useParcelStore((s) => s.upsertParcel)
   // readOnly なら upsert を no-op に (呼出側は変更不要)
@@ -324,12 +332,17 @@ export function CadastralRowFields({ area, visibleColumns, readOnly = false }: P
         )
       case 'points_count':
         return (
-          <div className="px-1.5 py-1 text-center text-slate-600">{area.points.length}</div>
+          <div className="px-1.5 py-1 text-center text-slate-600">
+            {(boundaryView === 'confirmed' ? area.confirmedPoints : area.points).length}
+          </div>
         )
       case 'computed_area_sqm':
         return (
           <div className="px-1.5 py-1 text-right font-mono text-slate-700">
-            {area.areaSqm !== null ? truncate2(area.areaSqm) : '-'}
+            {(() => {
+              const v = boundaryView === 'confirmed' ? area.confirmedAreaSqm : area.areaSqm
+              return v !== null ? truncate2(v) : '-'
+            })()}
           </div>
         )
     }

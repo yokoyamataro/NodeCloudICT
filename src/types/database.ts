@@ -1,5 +1,3 @@
-import type { BoundaryKind } from '@/lib/boundaryKind'
-
 // ICT設計システム用型定義
 // NodeCloudと同じSupabaseを共有
 
@@ -713,8 +711,11 @@ export interface DesignWorkArea {
   area_ha: number | null
   perimeter_m: number | null
   notes: string | null
-  /** 境界の 種類 (地番のみ意味を持つ): provisional=仮境界 / confirmed=確定境界 */
-  boundary_kind: BoundaryKind
+  /** 地番のみ: 確定境界 の 構成点。 point_ids は 仮境界 (当初) の 分 */
+  confirmed_point_ids: string[]
+  confirmed_area_sqm: number | null
+  confirmed_area_ha: number | null
+  confirmed_perimeter_m: number | null
   created_at: string
   updated_at: string
 }
