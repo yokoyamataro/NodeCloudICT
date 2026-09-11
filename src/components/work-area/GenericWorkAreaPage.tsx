@@ -1,5 +1,21 @@
 import { useCallback, useState, useEffect, useMemo } from 'react'
-import { Plus, Trash2, GripVertical, Calculator, Download, Image as ImageIcon, Ruler, Pencil, Tag, Hash, FileText, KeyRound } from 'lucide-react'
+import {
+  Plus,
+  Trash2,
+  GripVertical,
+  Calculator,
+  Download,
+  Image as ImageIcon,
+  Ruler,
+  Pencil,
+  Tag,
+  Hash,
+  FileText,
+  KeyRound,
+  ChevronRight,
+  ChevronDown,
+  ChevronLeft,
+} from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
 import { RegistryFetchOneModal } from '@/features/parcel-maps/RegistryFetchOneModal'
@@ -561,6 +577,20 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
   const editArea = editingAreaId ? areas.find((a) => a.id === editingAreaId) ?? null : null
   const editAreaPoints = editArea ? getAreaPoints(editArea.id) : []
 
+  // 一覧 と 構成点パネル の 折りたたみ。 端末ごとの 見え方 なので localStorage。
+  const [listCollapsed, setListCollapsed] = useState<boolean>(
+    () => localStorage.getItem('workArea:listCollapsed') === '1',
+  )
+  useEffect(() => {
+    localStorage.setItem('workArea:listCollapsed', listCollapsed ? '1' : '0')
+  }, [listCollapsed])
+  const [pointPanelCollapsed, setPointPanelCollapsed] = useState<boolean>(
+    () => localStorage.getItem('workArea:pointPanelCollapsed') === '1',
+  )
+  useEffect(() => {
+    localStorage.setItem('workArea:pointPanelCollapsed', pointPanelCollapsed ? '1' : '0')
+  }, [pointPanelCollapsed])
+
   /**
    * 地番 を 選ぶ (一覧の 行 / 地図の ポリゴン)。
    * 選んだ 時点で 構成点の パネル も 開く —— 選んで から もう一度
@@ -571,6 +601,8 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     setEditingAreaId(id)
     setSelectedConstituentPointId(null)
     setPendingInsertIdx(null)
+    // 畳んで いても 地番を 選んだら 構成点 を 見たい はず なので 開く
+    if (id) setPointPanelCollapsed(false)
   }, [])
 
   /** 構成点の 編集を 終える (Enter / 確定ボタン)。 後始末は ESC と 同じ */
@@ -792,22 +824,45 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
         </div>
       )}
 
+      {/* 地図 + 一覧 の 左側 と、構成点の 常設パネル の 右側 */}
+      <div className="flex-1 flex overflow-hidden min-w-0">
       {/* stacked: 地図が 上、一覧が 下 (order で 入れ替える。 JSX の 並びは 変えない)。
           既定は 左が 一覧、右が 地図 */}
-      <div className={`flex-1 flex overflow-hidden ${stacked ? 'flex-col' : ''}`}>
+      <div className={`flex-1 min-w-0 flex overflow-hidden ${stacked ? 'flex-col' : ''}`}>
         {/* 一覧 (fullscreen 'map' なら非表示) */}
         {showTable && (
         <div
           className={`${
             showMap
               ? stacked
-                ? 'order-2 flex-1 min-h-0 border-t-2 border-slate-300'
+                ? `order-2 ${listCollapsed ? 'shrink-0' : 'flex-1 min-h-0'} border-t-2 border-slate-300`
                 : 'w-1/2 border-r'
               : 'w-full'
-          } flex flex-col overflow-hidden p-4`}
+          } flex flex-col overflow-hidden ${listCollapsed ? 'px-4 py-2' : 'p-4'}`}
         >
-          <div className="flex items-center justify-between mb-4 gap-2">
-            <h3 className="text-lg font-semibold">区域登録</h3>
+          <div
+            className={`flex items-center justify-between gap-2 ${
+              listCollapsed ? '' : 'mb-4'
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => setListCollapsed((v) => !v)}
+              className="flex items-center gap-1 text-lg font-semibold hover:text-blue-700"
+              title={listCollapsed ? '一覧を開く' : '一覧を畳んで地図を広く使う'}
+            >
+              {listCollapsed ? (
+                <ChevronRight className="h-4 w-4 text-slate-400" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-slate-400" />
+              )}
+              区域登録
+              {listCollapsed && (
+                <span className="text-xs font-normal text-slate-400">
+                  ({areas.length})
+                </span>
+              )}
+            </button>
             <div className="flex items-center gap-2">
               {isBoundarySurvey && (
                 <>
@@ -843,7 +898,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
             </div>
           </div>
 
-          {areas.length === 0 && !isBoundarySurvey ? (
+          {listCollapsed ? null : areas.length === 0 && !isBoundarySurvey ? (
             <div className="text-center py-8 text-muted-foreground border rounded-lg">
               区域がありません。「区域追加」ボタンで追加してください。
             </div>
@@ -1218,122 +1273,61 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
         )}
       </div>
 
-
-      {/* 登記情報 PDF 取込モーダル */}
-      {showRegistryImport && isBoundarySurvey && (
-        <RegistryPdfImportModal
-          areas={sortedAreas}
-          onClose={() => setShowRegistryImport(false)}
-        />
-      )}
-
-      {/* 登記情報 自動取得モーダル (touki.or.jp、site owner のみ) */}
-      {registryFetchTargetId && isSiteOwner && farmId && (() => {
-        const targetArea = sortedAreas.find((a) => a.id === registryFetchTargetId)
-        const targetParcel = targetArea
-          ? parcelByWorkAreaId.get(targetArea.id) ?? null
-          : null
-        const parcelNumber =
-          targetParcel?.parcel_number || targetArea?.zoneNumber || targetArea?.name || ''
-        const location = targetParcel?.location ?? ''
-        return (
-          <RegistryFetchOneModal
-            workAreaId={registryFetchTargetId}
-            parcelNumber={parcelNumber}
-            location={location}
-            initialPrefecture={targetParcel?.prefecture ?? null}
-            initialCity={targetParcel?.municipality ?? null}
-            farmId={farmId}
-            onClose={() => setRegistryFetchTargetId(null)}
-            onDone={(r) => {
-              const targetId = registryFetchTargetId
-              // 取得完了 → attachments を再取得 + parcels に prefecture/municipality を保存
-              void fetchAttachmentsByEntityIds(
-                'work_area',
-                sortedAreas.map((a) => a.id),
-              )
-              // 前回入力値を parcels に反映 (次回モーダルで自動入力される)
-              if (
-                (targetParcel?.prefecture ?? null) !== r.prefecture ||
-                (targetParcel?.municipality ?? null) !== r.municipality
-              ) {
-                void upsertParcel(targetId, {
-                  prefecture: r.prefecture,
-                  municipality: r.municipality,
-                })
-              }
-              // 取得した PDF を自動パースして parcels の登記情報カラムに反映
-              if (r.signedUrl) {
-                void (async () => {
-                  try {
-                    const resp = await fetch(r.signedUrl!)
-                    if (!resp.ok) {
-                      console.warn('[registry] PDF fetch failed', resp.status)
-                      return
-                    }
-                    const blob = await resp.blob()
-                    const file = new File([blob], `${r.kind}_${targetId}.pdf`, {
-                      type: 'application/pdf',
-                    })
-                    // Claude Haiku で PDF を直接パース (regex ではなく AI 一本化)
-                    const parsed = await parseRegistryPdfViaAI(
-                      file,
-                      r.kind,
-                      {
-                        location: targetParcel?.location ?? null,
-                        parcel_number: targetParcel?.parcel_number ?? null,
-                      },
-                    )
-                    const patch: Partial<import('@/stores/parcelStore').ParcelEditableFields> = {}
-                    if (parsed.location && !targetParcel?.location) {
-                      patch.location = parsed.location
-                    }
-                    if (parsed.landCategory) {
-                      patch.registered_land_category = parsed.landCategory
-                    }
-                    if (parsed.areaSqm != null) {
-                      patch.registered_area_sqm = parsed.areaSqm
-                    }
-                    if (parsed.owners.length > 0) {
-                      patch.registered_owner_name = parsed.owners[0].fullName
-                      patch.registered_owner_address = parsed.owners[0].address
-                    }
-                    if (Object.keys(patch).length > 0) {
-                      await upsertParcel(targetId, patch)
-                    }
-                  } catch (err) {
-                    console.error('[registry] auto parse failed', err)
-                  }
-                })()
-              }
-            }}
-          />
-        )
-      })()}
-
-      {/* 構成点の 編集。 地番の 下に 展開 する と 一覧が 縦に 伸びて
-          追えなく なる ので、右側 に 縦長の パネル で 出す。
-          暗幕 は 置かない —— 地図を クリック して 点を 選ぶ のが 主な 操作 なので、
-          覆って しまう と 何も できなく なる。 */}
-      {editArea && (
-        <div className="fixed right-3 top-16 bottom-3 z-[1500] w-80 max-w-[90vw] bg-white border border-slate-300 rounded-lg shadow-2xl flex flex-col overflow-hidden">
-          <div className="px-3 py-2 border-b flex items-center gap-2 bg-white shrink-0">
-            <Pencil className="h-4 w-4 text-blue-600" />
-            <span className="text-sm font-semibold truncate">
-              {parcelByWorkAreaId.get(editArea.id)?.parcel_number ||
-                editArea.zoneNumber ||
-                editArea.name ||
-                '構成点'}
-            </span>
-            <button
-              type="button"
-              onClick={finishEditingArea}
-              className="ml-auto shrink-0 px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
-              title="構成点の編集を終える (Enter)"
-            >
-              確定
-            </button>
-          </div>
+      {/* 構成点の パネル。 常設 (地番を 選ぶ 度に 出し入れ しない)。
+          地番の 下に 展開 する と 一覧が 縦に 伸びて 追えなく なる ので 右に 置く。
+          畳んで いても 地番を 選べば 自動で 開く。 */}
+      <aside
+        className={`shrink-0 border-l bg-white flex flex-col overflow-hidden ${
+          pointPanelCollapsed ? 'w-8' : 'w-80'
+        }`}
+      >
+        {pointPanelCollapsed ? (
+          <button
+            type="button"
+            onClick={() => setPointPanelCollapsed(false)}
+            className="flex-1 w-full flex flex-col items-center gap-2 pt-2 text-slate-500 hover:bg-slate-50"
+            title="構成点パネルを開く"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            <span className="text-[11px] [writing-mode:vertical-rl]">構成点</span>
+          </button>
+        ) : (
+          <>
+            <div className="px-3 py-2 border-b flex items-center gap-1 bg-white shrink-0">
+              <button
+                type="button"
+                onClick={() => setPointPanelCollapsed(true)}
+                className="shrink-0 p-1 rounded text-slate-400 hover:bg-slate-100"
+                title="構成点パネルを畳む"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+              <Pencil className="h-4 w-4 shrink-0 text-blue-600" />
+              <span className="text-sm font-semibold truncate">
+                {editArea
+                  ? parcelByWorkAreaId.get(editArea.id)?.parcel_number ||
+                    editArea.zoneNumber ||
+                    editArea.name ||
+                    '構成点'
+                  : '構成点'}
+              </span>
+              {editArea && (
+                <button
+                  type="button"
+                  onClick={finishEditingArea}
+                  className="ml-auto shrink-0 px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+                  title="構成点の編集を終える (Enter)"
+                >
+                  確定
+                </button>
+              )}
+            </div>
+            {!editArea ? (
+              <div className="flex-1 flex items-center justify-center px-4 text-center text-xs text-slate-400">
+                地番を選ぶと構成点が出ます
+              </div>
+            ) : (
+              <>
 
           <div className="flex-1 min-h-0 overflow-auto px-3 py-2 bg-slate-50">
             <div className="text-xs text-muted-foreground mb-2 flex items-center gap-2">
@@ -1490,8 +1484,106 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
             <kbd className="px-1 bg-slate-100 border rounded">Del</kbd> 選択中の点を削除 ／{' '}
             <kbd className="px-1 bg-slate-100 border rounded">Esc</kbd> 取消
           </div>
-        </div>
+              </>
+            )}
+          </>
+        )}
+      </aside>
+
+      </div>
+
+      {/* 登記情報 PDF 取込モーダル */}
+      {showRegistryImport && isBoundarySurvey && (
+        <RegistryPdfImportModal
+          areas={sortedAreas}
+          onClose={() => setShowRegistryImport(false)}
+        />
       )}
+
+      {/* 登記情報 自動取得モーダル (touki.or.jp、site owner のみ) */}
+      {registryFetchTargetId && isSiteOwner && farmId && (() => {
+        const targetArea = sortedAreas.find((a) => a.id === registryFetchTargetId)
+        const targetParcel = targetArea
+          ? parcelByWorkAreaId.get(targetArea.id) ?? null
+          : null
+        const parcelNumber =
+          targetParcel?.parcel_number || targetArea?.zoneNumber || targetArea?.name || ''
+        const location = targetParcel?.location ?? ''
+        return (
+          <RegistryFetchOneModal
+            workAreaId={registryFetchTargetId}
+            parcelNumber={parcelNumber}
+            location={location}
+            initialPrefecture={targetParcel?.prefecture ?? null}
+            initialCity={targetParcel?.municipality ?? null}
+            farmId={farmId}
+            onClose={() => setRegistryFetchTargetId(null)}
+            onDone={(r) => {
+              const targetId = registryFetchTargetId
+              // 取得完了 → attachments を再取得 + parcels に prefecture/municipality を保存
+              void fetchAttachmentsByEntityIds(
+                'work_area',
+                sortedAreas.map((a) => a.id),
+              )
+              // 前回入力値を parcels に反映 (次回モーダルで自動入力される)
+              if (
+                (targetParcel?.prefecture ?? null) !== r.prefecture ||
+                (targetParcel?.municipality ?? null) !== r.municipality
+              ) {
+                void upsertParcel(targetId, {
+                  prefecture: r.prefecture,
+                  municipality: r.municipality,
+                })
+              }
+              // 取得した PDF を自動パースして parcels の登記情報カラムに反映
+              if (r.signedUrl) {
+                void (async () => {
+                  try {
+                    const resp = await fetch(r.signedUrl!)
+                    if (!resp.ok) {
+                      console.warn('[registry] PDF fetch failed', resp.status)
+                      return
+                    }
+                    const blob = await resp.blob()
+                    const file = new File([blob], `${r.kind}_${targetId}.pdf`, {
+                      type: 'application/pdf',
+                    })
+                    // Claude Haiku で PDF を直接パース (regex ではなく AI 一本化)
+                    const parsed = await parseRegistryPdfViaAI(
+                      file,
+                      r.kind,
+                      {
+                        location: targetParcel?.location ?? null,
+                        parcel_number: targetParcel?.parcel_number ?? null,
+                      },
+                    )
+                    const patch: Partial<import('@/stores/parcelStore').ParcelEditableFields> = {}
+                    if (parsed.location && !targetParcel?.location) {
+                      patch.location = parsed.location
+                    }
+                    if (parsed.landCategory) {
+                      patch.registered_land_category = parsed.landCategory
+                    }
+                    if (parsed.areaSqm != null) {
+                      patch.registered_area_sqm = parsed.areaSqm
+                    }
+                    if (parsed.owners.length > 0) {
+                      patch.registered_owner_name = parsed.owners[0].fullName
+                      patch.registered_owner_address = parsed.owners[0].address
+                    }
+                    if (Object.keys(patch).length > 0) {
+                      await upsertParcel(targetId, patch)
+                    }
+                  } catch (err) {
+                    console.error('[registry] auto parse failed', err)
+                  }
+                })()
+              }
+            }}
+          />
+        )
+      })()}
+
     </div>
   )
 }
