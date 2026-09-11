@@ -5682,10 +5682,10 @@ export function MobileStakingPage() {
           </div>
         )}
 
-        {/* MAP / 3D / 断面 / 暗渠配管 切替。 背景 (地図) 切替の 左、
-            地図の 左下 に 置く。 地籍測量では MAP しか 使わないので 出さない */}
+        {/* MAP / 3D / 断面 / 暗渠配管 切替。 地図の 右上 に 縦 に 並べる。
+            地籍測量では MAP しか 使わないので 出さない */}
         {!isCadastralProject && (
-          <div className="absolute bottom-5 left-1 z-[1000] flex items-center rounded overflow-hidden border border-slate-300 shadow bg-white/95">
+          <div className="absolute top-2 right-2 z-[1000] flex flex-col rounded overflow-hidden border border-slate-300 shadow bg-white/95">
             {(['map', '3d', '2d', 'pipe'] as const)
               // 暗渠配管は データが 無ければ 出しても 空の パネルに なるだけ
               .filter((m) => m !== 'pipe' || pipes.length > 0)
@@ -5705,7 +5705,7 @@ export function MobileStakingPage() {
                   <button
                     key={m}
                     onClick={() => toggleViewMode(m)}
-                    className={`px-2 py-1 text-[11px] font-bold leading-none ${
+                    className={`px-2 py-1.5 text-[11px] font-bold leading-none border-b last:border-b-0 border-slate-200 ${
                       on ? 'bg-cyan-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'
                     }`}
                     title={title}
