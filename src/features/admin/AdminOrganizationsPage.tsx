@@ -34,11 +34,13 @@ import {
   Trash2,
   Search,
   X,
+  HardDrive,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
 import type { Organization } from '@/types/database'
+import { SiteUsageView } from './SiteUsageView'
 import { OrgMembersView } from './OrgMembersView'
 import { OrgSurveyorsView } from './OrgSurveyorsView'
 import { OrgReportSnippetsView } from './OrgReportSnippetsView'
@@ -176,6 +178,7 @@ function SiteOwnerUnifiedView() {
   const [orgs, setOrgs] = useState<Organization[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // '__usage__' は 擬似選択: 組織 では なく 使用状況 の 集計 を 出す
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
@@ -342,11 +345,27 @@ function SiteOwnerUnifiedView() {
           <div className="px-2 py-1.5 border-t text-[10px] text-slate-400 text-center">
             {filteredOrgs.length} / {orgs.length} 組織
           </div>
+          {/* 組織 横断 の 使用状況。 組織 と 同じ 左一覧 から 開く */}
+          <button
+            type="button"
+            onClick={() => setSelectedOrgId('__usage__')}
+            className={`px-3 py-2 border-t text-left text-xs flex items-center gap-1.5 hover:bg-slate-50 ${
+              selectedOrgId === '__usage__'
+                ? 'bg-blue-50 text-blue-800 font-medium'
+                : 'text-slate-600'
+            }`}
+            title="組織 / ユーザーごとの 現場数 と データ量"
+          >
+            <HardDrive className="h-3.5 w-3.5" />
+            使用状況
+          </button>
         </aside>
 
         {/* 右エリア: 上=組織情報 / 下=メンバー */}
         <main className="flex-1 flex flex-col overflow-hidden">
-          {selectedOrg ? (
+          {selectedOrgId === '__usage__' ? (
+            <SiteUsageView />
+          ) : selectedOrg ? (
             <>
               <OrgInfoForm
                 key={selectedOrg.id}
