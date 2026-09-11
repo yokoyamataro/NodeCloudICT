@@ -5,7 +5,6 @@
 // 表示する列は visibleColumns で絞れる（地番リスト上部の列選択ボタンと連動）。
 
 import { useEffect, useState } from 'react'
-import { BOUNDARY_KIND_BADGE } from '@/lib/boundaryKind'
 import type { WorkAreaRow } from '@/stores/workAreaStore'
 import { useParcelStore, type ParcelEditableFields } from '@/stores/parcelStore'
 import { useLandownerStore } from '@/stores/landownerStore'
@@ -219,32 +218,18 @@ export function CadastralRowFields({ area, visibleColumns, readOnly = false }: P
           </div>
         )
       case 'parcel_number':
-        // 同じ 地番 でも 仮境界 / 確定境界 の 2 行 が 並ぶ ので、
-        // どちらの 形 かを 地番 の 横 に 出す
+        // 仮境界 / 確定境界 は 一覧 の 上 の 切替 で 出し分ける ので、
+        // 行ごと に 種別 を 出す 必要は ない
         return (
-          <div className="flex items-center gap-1">
-            <input
-              type="text"
-              value={parcelNumber}
-              onChange={(e) => setParcelNumber(e.target.value)}
-              onClick={stop}
-              onBlur={() => save({ parcel_number: parcelNumber.trim() || null })}
-              className="flex-1 min-w-0 px-1.5 py-1 border rounded text-sm"
-              placeholder="地番"
-            />
-            <span
-              className={`shrink-0 px-1 py-0.5 text-[10px] leading-none border rounded ${
-                BOUNDARY_KIND_BADGE[area.boundaryKind]
-              }`}
-              title={
-                area.boundaryKind === 'confirmed'
-                  ? '立会・確定測量 の 結果'
-                  : '地図XML 等 から 起こした 暫定の 形'
-              }
-            >
-              {area.boundaryKind === 'confirmed' ? '確定' : '仮'}
-            </span>
-          </div>
+          <input
+            type="text"
+            value={parcelNumber}
+            onChange={(e) => setParcelNumber(e.target.value)}
+            onClick={stop}
+            onBlur={() => save({ parcel_number: parcelNumber.trim() || null })}
+            className="w-full px-1.5 py-1 border rounded text-sm"
+            placeholder="地番"
+          />
         )
       case 'registered_land_category':
         return (

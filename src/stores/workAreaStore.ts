@@ -70,7 +70,7 @@ interface WorkAreaState {
   ) => void
 
   // 工事区域操作
-  addWorkArea: (workType: WorkType) => Promise<WorkAreaRow | null>
+  addWorkArea: (workType: WorkType, boundaryKind?: BoundaryKind) => Promise<WorkAreaRow | null>
   updateWorkArea: (id: string, updates: Partial<Pick<WorkAreaRow, 'zoneNumber' | 'notes'>>) => void
   deleteWorkArea: (id: string) => Promise<void>
 
@@ -264,7 +264,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
     }
   },
 
-  addWorkArea: async (workType: WorkType) => {
+  addWorkArea: async (workType: WorkType, boundaryKind: BoundaryKind = 'provisional') => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
       set({ error: '工区が選択されていません' })
@@ -292,7 +292,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           area_ha: null,
           perimeter_m: null,
           notes: null,
-          boundary_kind: 'provisional',
+          boundary_kind: boundaryKind,
         } as never)
         .select()
         .single()
@@ -311,7 +311,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         areaHa: null,
         perimeterM: null,
         notes: null,
-        boundaryKind: 'provisional',
+        boundaryKind,
       }
 
       set((state) => {
