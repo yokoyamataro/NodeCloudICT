@@ -76,11 +76,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch {
         /* localStorage が 使えなくても 打つ */
       }
-      void (supabase.rpc as unknown as (fn: string) => Promise<unknown>)('touch_last_seen').catch(
-        () => {
+      // supabase.rpc() が 返す のは Promise では なく thenable (then だけ)。
+      // .catch() は 生えて いない ので await で 受ける。
+      void (async () => {
+        try {
+          await supabase.rpc('touch_last_seen' as never)
+        } catch {
           /* 記録できなくても 利用には 影響しない */
-        },
-      )
+        }
+      })()
     }
     touch()
     const timer = window.setInterval(touch, INTERVAL)
