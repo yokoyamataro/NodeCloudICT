@@ -11,6 +11,7 @@
 // サイトオーナーもこのビューを共通で使える (組織管理画面のセカンダリ動線として)。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { OrgProduct } from '@/types/database'
 import {
   AlertTriangle,
   Check,
@@ -37,6 +38,19 @@ interface OrgMemberRow {
   last_sign_in_at: string | null
   /** 最後に アプリ を 使った 日時 (profiles.last_seen_at) */
   last_seen_at: string | null
+  /** 使える 製品 (複数可)。 空 = 未割当 */
+  products: OrgProduct[] | null
+}
+
+const PRODUCTS: [OrgProduct, string][] = [
+  ['cadastral', '地籍'],
+  ['civil', '土木'],
+  ['mobility', 'モビ'],
+]
+const PRODUCT_FULL: Record<OrgProduct, string> = {
+  cadastral: '地籍測量',
+  civil: '土木工事',
+  mobility: 'モビリティ',
 }
 
 interface Props {
@@ -187,6 +201,64 @@ export function OrgMembersView({
     })
   }
 
+  /** 製品 の 割り当て を 1 つ 入れ替える。 上限 超過 は サーバ側 で 弾かれる */
+  const handleToggleProduct = (m: OrgMemberRow, product: OrgProduct) => {
+    const cur = m.products ?? []
+    const next = cur.includes(product)
+      ? cur.filter((p) => p !== product)
+      : [...cur, product]
+    void withSaving(m.user_id, async () => {
+      const { error } = await callRpc('org_set_member_products', {
+        p_org_id: organizationId,
+        p_user_id: m.user_id,
+        p_products: next,
+      })
+      if (error) {
+        // seat_limit_exceeded:<product>:<limit> を 読みやすく する
+        const mm = /seat_limit_exceeded:([a-z]+):(\d+)/.exec(error.message)
+        if (mm) {
+          alert(
+            `${PRODUCT_FULL[mm[1] as OrgProduct]} の 上限 (${mm[2]} 人) に 達して います。\n` +
+              '組織情報の「ユーザー数上限 (製品別)」を増やすか、他のメンバーの割り当てを外してください。',
+          )
+          return
+        }
+        throw error
+      }
+      setMembers((prev) =>
+        prev.map((x) => (x.user_id === m.user_id ? { ...x, products: next } : x)),
+      )
+    })
+  }
+
+  // 製品ごと の 人数上限 (organization_products.seat_limit)。 見出し に n/上限 を 出す
+  const [seatLimits, setSeatLimits] = useState<Partial<Record<OrgProduct, number>>>({})
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase
+        .from('organization_products')
+        .select('product, seat_limit')
+        .eq('organization_id', organizationId)
+      if (cancelled) return
+      const next: Partial<Record<OrgProduct, number>> = {}
+      for (const r of (data ?? []) as { product: OrgProduct; seat_limit: number | null }[]) {
+        if (r.seat_limit != null) next[r.product] = r.seat_limit
+      }
+      setSeatLimits(next)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [organizationId])
+
+  /** 製品ごと の 割り当て 人数 */
+  const productCounts = useMemo(() => {
+    const c: Record<OrgProduct, number> = { cadastral: 0, civil: 0, mobility: 0 }
+    for (const m of members) for (const p of m.products ?? []) c[p] += 1
+    return c
+  }, [members])
+
   const handleRemove = (m: OrgMemberRow) => {
     if (m.role === 'admin' && adminCount <= 1) {
       alert(
@@ -237,6 +309,29 @@ export function OrgMembersView({
           <span className="ml-2 text-slate-400 text-xs">
             ({members.length} 名{userCountLimit != null ? ` / 上限 ${userCountLimit}` : ''}
             {' · '}管理者 {adminCount})
+          </span>
+          <span className="ml-2 inline-flex items-center gap-1 text-[11px]">
+            {PRODUCTS.map(([key, short]) => {
+              const used = productCounts[key]
+              const limit = seatLimits[key]
+              const full = limit != null && used >= limit
+              return (
+                <span
+                  key={key}
+                  className={`px-1.5 py-0.5 rounded border ${
+                    full
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-slate-100 text-slate-600 border-slate-200'
+                  }`}
+                  title={`${PRODUCT_FULL[key]}: ${used} 名${
+                    limit != null ? ` / 上限 ${limit}` : ' (上限なし)'
+                  }`}
+                >
+                  {short} {used}
+                  {limit != null ? `/${limit}` : ''}
+                </span>
+              )
+            })}
           </span>
           {(() => {
             const isExpired = !!expiresAt && new Date(expiresAt) < new Date()
@@ -322,6 +417,12 @@ export function OrgMembersView({
               <th className="text-left px-3 py-2 w-40">氏名</th>
               <th className="text-left px-3 py-2 w-36">電話番号</th>
               <th className="text-left px-3 py-2 w-24">役割</th>
+              <th
+                className="text-left px-3 py-2 w-36"
+                title="このメンバーが使える製品 (複数可)。製品ごとの人数上限を超えると割り当てできません"
+              >
+                製品
+              </th>
               <th className="text-left px-3 py-2 w-28">参加日</th>
               <th
                 className="text-left px-3 py-2 w-40"
@@ -407,6 +508,29 @@ export function OrgMembersView({
                       <option value="admin">管理者</option>
                       <option value="member">一般</option>
                     </select>
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex flex-wrap gap-1">
+                      {PRODUCTS.map(([key, short]) => {
+                        const on = (m.products ?? []).includes(key)
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => handleToggleProduct(m, key)}
+                            disabled={saving}
+                            className={`px-1.5 py-0.5 rounded border text-[10px] leading-none disabled:opacity-50 ${
+                              on
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50'
+                            }`}
+                            title={`${PRODUCT_FULL[key]}${on ? ' を 外す' : ' を 割り当てる'}`}
+                          >
+                            {short}
+                          </button>
+                        )
+                      })}
+                    </div>
                   </td>
                   <td className="px-3 py-2 align-top text-xs text-slate-500">
                     {new Date(m.joined_at).toLocaleDateString('ja-JP')}
