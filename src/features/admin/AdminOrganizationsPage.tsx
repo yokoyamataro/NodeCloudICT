@@ -40,7 +40,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
-import type { Organization } from '@/types/database'
+import type { Organization, OrgProduct } from '@/types/database'
 import { SiteUsageView } from './SiteUsageView'
 import { OrgMembersView } from './OrgMembersView'
 import { OrgSurveyorsView } from './OrgSurveyorsView'
@@ -575,6 +575,21 @@ function OrgInfoForm({
   onDeleted?: (id: string) => void
 }) {
   const [draft, setDraft] = useState<OrgDraft>(() => toDraft(org))
+  /**
+   * 製品別 の ユーザー数上限 (organization_products.seat_limit)。
+   * 空文字 = 無制限 (NULL)。 契約管理 なので サイトオーナー のみ 触れる
+   * (RLS も INSERT/UPDATE は is_site_owner 限定)。
+   */
+  const [seats, setSeats] = useState<Record<OrgProduct, string>>({
+    cadastral: '',
+    civil: '',
+    mobility: '',
+  })
+  const [seatsLoaded, setSeatsLoaded] = useState<Record<OrgProduct, string>>({
+    cadastral: '',
+    civil: '',
+    mobility: '',
+  })
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -587,12 +602,37 @@ function OrgInfoForm({
     setMessage(null)
   }, [org.id, org.name, org.updated_at, org])
 
+  // 製品別 の 上限 を 読む
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase
+        .from('organization_products')
+        .select('product, seat_limit')
+        .eq('organization_id', org.id)
+      if (cancelled) return
+      const next: Record<OrgProduct, string> = { cadastral: '', civil: '', mobility: '' }
+      for (const r of (data ?? []) as { product: OrgProduct; seat_limit: number | null }[]) {
+        next[r.product] = r.seat_limit == null ? '' : String(r.seat_limit)
+      }
+      setSeats(next)
+      setSeatsLoaded(next)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [org.id])
+
   const dirty = useMemo(() => {
     const cur = toDraft(org)
-    return (Object.keys(draft) as (keyof OrgDraft)[]).some(
+    const orgDirty = (Object.keys(draft) as (keyof OrgDraft)[]).some(
       (k) => draft[k] !== cur[k],
     )
-  }, [draft, org])
+    const seatDirty = (Object.keys(seats) as OrgProduct[]).some(
+      (k) => seats[k].trim() !== seatsLoaded[k].trim(),
+    )
+    return orgDirty || seatDirty
+  }, [draft, org, seats, seatsLoaded])
 
   const handleSave = async () => {
     setError(null)
@@ -612,6 +652,25 @@ function OrgInfoForm({
         .single()
       if (error) throw error
       const updated = data as Organization
+
+      // 製品別 の 上限。 触った 製品 だけ upsert する
+      // (行 が 無ければ 作る。 空欄 は 無制限 = NULL)
+      const changed = (Object.keys(seats) as OrgProduct[]).filter(
+        (k) => seats[k].trim() !== seatsLoaded[k].trim(),
+      )
+      if (changed.length > 0) {
+        const rows = changed.map((product) => ({
+          organization_id: org.id,
+          product,
+          seat_limit: seats[product].trim() === '' ? null : Number(seats[product]),
+        }))
+        const { error: seatErr } = await supabase
+          .from('organization_products')
+          .upsert(rows as never, { onConflict: 'organization_id,product' })
+        if (seatErr) throw seatErr
+        setSeatsLoaded(seats)
+      }
+
       setMessage('保存しました')
       onSaved?.(updated)
     } catch (err) {
@@ -773,7 +832,7 @@ function OrgInfoForm({
             placeholder="例: 標準 / プロ / エンタープライズ"
           />
         </FormField>
-        <FormField label="ユーザー数上限" ownerOnly>
+        <FormField label="ユーザー数上限 (全体)" ownerOnly>
           <input
             type="text"
             inputMode="numeric"
@@ -785,6 +844,35 @@ function OrgInfoForm({
             className={inputClass}
             placeholder="(制限なし)"
           />
+          <div className="mt-0.5 text-[10px] text-slate-500">招待の可否はこの値で判定</div>
+        </FormField>
+        {/* 製品別 の 上限 (organization_products.seat_limit)。
+            契約 の 話 なので サイトオーナー のみ */}
+        <FormField label="ユーザー数上限 (製品別)" span={2} ownerOnly>
+          <div className="grid grid-cols-3 gap-2">
+            {(
+              [
+                ['cadastral', '地籍測量'],
+                ['civil', '土木工事'],
+                ['mobility', 'モビリティ'],
+              ] as [OrgProduct, string][]
+            ).map(([key, label]) => (
+              <label key={key} className="block">
+                <span className="block text-[10px] text-slate-500 mb-0.5">{label}</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={seats[key]}
+                  onChange={(e) =>
+                    setSeats((prev) => ({ ...prev, [key]: e.target.value }))
+                  }
+                  disabled={!editable}
+                  className={inputClass}
+                  placeholder="(制限なし)"
+                />
+              </label>
+            ))}
+          </div>
         </FormField>
         <FormField label="利用期限" ownerOnly>
           <input
