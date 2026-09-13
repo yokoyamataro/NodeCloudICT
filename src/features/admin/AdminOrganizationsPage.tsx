@@ -35,6 +35,7 @@ import {
   Search,
   X,
   HardDrive,
+  ShieldCheck,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -250,7 +251,13 @@ function SiteOwnerUnifiedView() {
           <ArrowLeft className="h-4 w-4 text-slate-600" />
         </Link>
         <Building2 className="h-5 w-5 text-blue-600" />
-        <h1 className="text-lg font-bold flex-1">組織・メンバー管理</h1>
+        <h1 className="text-lg font-bold">組織・メンバー管理</h1>
+        {/* どこが オーナー専用 か を 先に 示す。 個々の 箇所 にも 同じ 色 を 付ける */}
+        <span className="flex items-center gap-1 text-[11px] text-slate-500">
+          <span className="inline-block w-3 h-3 rounded-sm border border-amber-300 bg-amber-50" />
+          この色の箇所はサイトオーナー専用（組織管理者には出ません）
+        </span>
+        <div className="flex-1" />
         <Link
           to="/admin/signups"
           className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
@@ -302,10 +309,12 @@ function SiteOwnerUnifiedView() {
             </div>
             <button
               onClick={() => setShowNewDialog(true)}
-              className="w-full flex items-center justify-center gap-1 px-2 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+              className="w-full flex items-center justify-center gap-1 px-2 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 ring-1 ring-amber-300"
+              title="組織の新規作成はサイトオーナーのみ"
             >
               <Plus className="h-3 w-3" />
               新規組織
+              <OwnerOnlyBadge />
             </button>
           </div>
           <div className="flex-1 overflow-auto">
@@ -358,6 +367,7 @@ function SiteOwnerUnifiedView() {
           >
             <HardDrive className="h-3.5 w-3.5" />
             使用状況
+            <OwnerOnlyBadge className="ml-auto" />
           </button>
         </aside>
 
@@ -654,6 +664,7 @@ function OrgInfoForm({
     <div className="p-4 bg-white space-y-3 overflow-auto max-h-[50vh]">
       <div className="flex items-center gap-2">
         <h2 className="text-sm font-semibold text-slate-800">組織情報</h2>
+        {editable && siteOwner && <OwnerOnlyBadge />}
         {!editable && (
           <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
             表示のみ
@@ -670,7 +681,7 @@ function OrgInfoForm({
                 onClick={handleDelete}
                 disabled={deleting || saving}
                 className="flex items-center gap-1 px-2 py-1 text-xs text-red-700 border border-red-300 rounded hover:bg-red-50 disabled:opacity-50"
-                title="この組織を削除"
+                title="この組織を削除 (サイトオーナーのみ)"
               >
                 {deleting ? (
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -752,7 +763,7 @@ function OrgInfoForm({
             className={inputClass}
           />
         </FormField>
-        <FormField label="プラン">
+        <FormField label="プラン" ownerOnly>
           <input
             type="text"
             value={draft.plan}
@@ -762,7 +773,7 @@ function OrgInfoForm({
             placeholder="例: 標準 / プロ / エンタープライズ"
           />
         </FormField>
-        <FormField label="ユーザー数上限">
+        <FormField label="ユーザー数上限" ownerOnly>
           <input
             type="text"
             inputMode="numeric"
@@ -775,7 +786,7 @@ function OrgInfoForm({
             placeholder="(制限なし)"
           />
         </FormField>
-        <FormField label={siteOwner ? '利用期限' : '利用期限 (site owner のみ)'}>
+        <FormField label="利用期限" ownerOnly>
           <input
             type="date"
             value={draft.expires_at}
@@ -817,14 +828,30 @@ function OrgInfoForm({
   )
 }
 
+/** サイトオーナー だけ が 触れる 箇所 に 付ける 目印 (琥珀) */
+export function OwnerOnlyBadge({ className = '' }: { className?: string }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium bg-amber-100 text-amber-800 border border-amber-300 ${className}`}
+      title="サイトオーナーのみ 表示・編集できます (組織管理者には 出ません)"
+    >
+      <ShieldCheck className="h-2.5 w-2.5" />
+      オーナー
+    </span>
+  )
+}
+
 function FormField({
   label,
   children,
   span = 1,
+  ownerOnly = false,
 }: {
   label: string
   children: React.ReactNode
   span?: 1 | 2 | 3
+  /** サイトオーナー だけ が 触れる 項目。 琥珀 の 枠 と バッジ を 付ける */
+  ownerOnly?: boolean
 }) {
   const spanClass =
     span === 3
@@ -833,8 +860,15 @@ function FormField({
         ? 'sm:col-span-2'
         : ''
   return (
-    <div className={spanClass}>
-      <label className="block text-[11px] text-slate-500 mb-0.5">{label}</label>
+    <div
+      className={`${spanClass} ${
+        ownerOnly ? 'rounded border border-amber-300 bg-amber-50/60 px-1.5 py-1 -mx-1.5' : ''
+      }`}
+    >
+      <label className="flex items-center gap-1 text-[11px] text-slate-500 mb-0.5">
+        {label}
+        {ownerOnly && <OwnerOnlyBadge />}
+      </label>
       {children}
     </div>
   )
