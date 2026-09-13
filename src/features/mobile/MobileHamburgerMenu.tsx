@@ -22,7 +22,7 @@ interface Props {
 export function MobileHamburgerMenu(_props: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const { user, displayName, signOut } = useAuth()
+  const { user, displayName, organizationName, isOrgAdmin, signOut } = useAuth()
   const navigate = useNavigate()
 
   const handleSettings = () => {
@@ -61,8 +61,14 @@ export function MobileHamburgerMenu(_props: Props) {
           onClick={() => setDrawerOpen(false)}
         >
           <div
-            className="absolute left-0 top-0 bottom-0 w-64 max-w-[80%] bg-white text-slate-800 shadow-xl flex flex-col"
+            className="absolute left-0 top-0 bottom-0 w-64 max-w-[80%] bg-white text-slate-800 shadow-xl flex flex-col overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
+            // 端末の 時計 / ノッチ の 下 から 始める。 ドロワー は 画面いっぱい に
+            // 敷く ので、アプリ本体 の safe-area padding が 効かない
+            style={{
+              paddingTop: 'calc(env(safe-area-inset-top) + 8px)',
+              paddingBottom: 'env(safe-area-inset-bottom)',
+            }}
           >
             <div className="px-4 py-3 border-b bg-slate-50 flex items-center justify-between">
               <div className="flex flex-col leading-tight">
@@ -91,6 +97,22 @@ export function MobileHamburgerMenu(_props: Props) {
                 title={user?.email ?? ''}
               >
                 {user?.email ?? '(メール不明)'}
+              </div>
+              <div className="mt-1.5 pt-1.5 border-t">
+                <div className="text-[11px] text-slate-500">所属組織</div>
+                <div className="flex items-center gap-1">
+                  <span
+                    className="text-xs text-slate-800 truncate"
+                    title={organizationName ?? ''}
+                  >
+                    {organizationName ?? '(所属なし)'}
+                  </span>
+                  {isOrgAdmin && (
+                    <span className="shrink-0 px-1 py-0.5 text-[9px] rounded bg-amber-100 text-amber-800 border border-amber-300">
+                      管理者
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
             <button
@@ -150,6 +172,19 @@ export function MobileHamburgerMenu(_props: Props) {
                   title={user?.email ?? ''}
                 >
                   {user?.email ?? '(不明)'}
+                </div>
+              </div>
+              <div>
+                <div className="text-[11px] text-slate-500">所属組織</div>
+                <div className="flex items-center gap-1">
+                  <span className="text-sm text-slate-800 break-all">
+                    {organizationName ?? '(所属なし)'}
+                  </span>
+                  {isOrgAdmin && (
+                    <span className="shrink-0 px-1 py-0.5 text-[9px] rounded bg-amber-100 text-amber-800 border border-amber-300">
+                      管理者
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="text-[11px] text-slate-500 leading-relaxed border-t pt-3">
