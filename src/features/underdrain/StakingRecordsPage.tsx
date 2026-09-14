@@ -47,6 +47,62 @@ type SectionKey =
   | 'dvs'
   | 'slidedD'
   | 'revSlideM'
+/**
+ * 1 行 分 の 計算値。 画面 の 表 と Excel 出力 で 同じ 式 を 使う ため に
+ * ここ 1 か所 に まとめる。
+ */
+function deriveRow(
+  g: { designX: number | null; designY: number | null; designZ: number | null;
+       m1: { measuredX: number; measuredY: number; measuredZ: number | null; accuracy: number | null } | null;
+       m2: { measuredX: number; measuredY: number; measuredZ: number | null; accuracy: number | null } | null },
+  xOffset: number,
+  yOffset: number,
+  zOffset: number,
+) {
+  const m1 = g.m1
+  const m2 = g.m2
+  // 差 (m2 - m1)
+  const diffX = m1 && m2 ? m2.measuredX - m1.measuredX : null
+  const diffY = m1 && m2 ? m2.measuredY - m1.measuredY : null
+  const diffZ =
+    m1 && m2 && m1.measuredZ != null && m2.measuredZ != null
+      ? m2.measuredZ - m1.measuredZ
+      : null
+  // 平均 (m2 が あれば 平均、無ければ m1)
+  const avgX = m1 && m2 ? (m1.measuredX + m2.measuredX) / 2 : m1?.measuredX ?? null
+  const avgY = m1 && m2 ? (m1.measuredY + m2.measuredY) / 2 : m1?.measuredY ?? null
+  const avgZ =
+    m1 && m2 && m1.measuredZ != null && m2.measuredZ != null
+      ? (m1.measuredZ + m2.measuredZ) / 2
+      : m1?.measuredZ ?? null
+  // 実測平均 - 設計 (生 の 差、補正 適用前 の バイアス)
+  const dvsX = avgX != null && g.designX != null ? avgX - g.designX : null
+  const dvsY = avgY != null && g.designY != null ? avgY - g.designY : null
+  const dvsZ = avgZ != null && g.designZ != null ? avgZ - g.designZ : null
+  const dvsH = dvsX != null && dvsY != null ? Math.hypot(dvsX, dvsY) : null
+  // スライド設計: 設計値 に スライド量 を 加算 して 実測 に 寄せる
+  const slidedDX = g.designX != null ? g.designX + xOffset : null
+  const slidedDY = g.designY != null ? g.designY + yOffset : null
+  const slidedDZ = g.designZ != null ? g.designZ + zOffset : null
+  // 逆スライド実測: 実測平均 から スライド量 を 引いて 設計 に 寄せる (出力 の 既定)
+  const revSlideMX = avgX != null ? avgX - xOffset : null
+  const revSlideMY = avgY != null ? avgY - yOffset : null
+  const revSlideMZ = avgZ != null ? avgZ - zOffset : null
+  // 精度: m1 と m2 の 悪い方 (Max)。 未取得 は 除外
+  const acc =
+    m1?.accuracy != null && m2?.accuracy != null
+      ? Math.max(m1.accuracy, m2.accuracy)
+      : m1?.accuracy ?? m2?.accuracy ?? null
+  return {
+    diffX, diffY, diffZ,
+    avgX, avgY, avgZ,
+    dvsX, dvsY, dvsZ, dvsH,
+    slidedDX, slidedDY, slidedDZ,
+    revSlideMX, revSlideMY, revSlideMZ,
+    acc,
+  }
+}
+
 const TABLE_SECTIONS: Array<{
   key: SectionKey
   label: string
@@ -839,6 +895,111 @@ export function StakingRecordsPage() {
     URL.revokeObjectURL(url)
   }
 
+  /**
+   * 表 を その まま Excel に 出す。
+   *
+   * 画面 で 折りたたんで いる 区分 と Z 列 の ON/OFF を そのまま 反映 する
+   * (「見えて いる 表 が 出る」 ように する)。 座標 は 数値 の まま 入れて
+   * 表示書式 を 0.000 に する ので、Excel 側 で 再計算 に 使える。
+   */
+  const handleExportExcel = async () => {
+    if (grouped.length === 0) return
+    const ExcelJS = (await import('exceljs')).default
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('実測記録')
+
+    // 画面と 同じ 並び で 列 を 組む
+    type Col = { group: string; label: string; num: boolean }
+    const cols: Col[] = [{ group: '', label: '種別', num: false }]
+    for (const sec of TABLE_SECTIONS) {
+      if (isHidden(sec.key)) continue
+      for (const c of sec.cols) {
+        if (c.isZ && !showZ) continue
+        cols.push({ group: sec.label, label: c.label, num: c.align === 'right' })
+      }
+    }
+    cols.push({ group: '', label: '精度(m)', num: true })
+    cols.push({ group: '', label: '記録日時', num: false })
+
+    // 1 行目 = 区分 (同じ 区分 は 結合)、2 行目 = 列名
+    ws.addRow(cols.map((c) => c.group))
+    ws.addRow(cols.map((c) => c.label))
+    let start = 1
+    while (start <= cols.length) {
+      const g = cols[start - 1].group
+      let end = start
+      while (end < cols.length && cols[end].group === g) end += 1
+      if (g === '') {
+        // 区分 の 無い 列 は 2 行 ぶん 結合
+        ws.mergeCells(1, start, 2, start)
+      } else if (end > start) {
+        ws.mergeCells(1, start, 1, end)
+      }
+      start = end + 1
+    }
+    for (const r of [1, 2]) {
+      const row = ws.getRow(r)
+      row.font = { bold: true }
+      row.alignment = { horizontal: 'center', vertical: 'middle' }
+    }
+
+    for (const g of grouped) {
+      const d = deriveRow(g, xOffset, yOffset, zOffset)
+      const m1 = g.m1
+      const m2 = g.m2
+      const designName =
+        g.targetType === 'coordinate' && g.designName
+          ? g.designName.replace(/^G2?_/, '')
+          : m1?.targetName ?? '(無題)'
+      const kind =
+        g.targetType === 'free' ? 'フリー' : g.targetType === 'pipe_vertex' ? '頂点' : '座標'
+      const values: (string | number | null)[] = [
+        `${kind} / ${CATEGORY_LABEL[g.surveyCategory]}${m2 ? ' ×2' : ''}`,
+      ]
+      const push = (sec: SectionKey, vals: (string | number | null)[]) => {
+        if (isHidden(sec)) return
+        const defs = TABLE_SECTIONS.find((s) => s.key === sec)!.cols
+        defs.forEach((c, i) => {
+          if (c.isZ && !showZ) return
+          values.push(vals[i] ?? null)
+        })
+      }
+      push('design', [designName, g.designX, g.designY, g.designZ])
+      push('m1', [m1?.targetName ?? null, m1?.measuredX ?? null, m1?.measuredY ?? null, m1?.measuredZ ?? null])
+      push('m2', [m2?.targetName ?? null, m2?.measuredX ?? null, m2?.measuredY ?? null, m2?.measuredZ ?? null])
+      push('diff', [d.diffX, d.diffY, d.diffZ])
+      push('avg', [d.avgX, d.avgY, d.avgZ])
+      push('dvs', [d.dvsX, d.dvsY, d.dvsZ, d.dvsH])
+      push('slidedD', [d.slidedDX, d.slidedDY, d.slidedDZ])
+      push('revSlideM', [d.revSlideMX, d.revSlideMY, d.revSlideMZ])
+      values.push(d.acc)
+      values.push(m1?.recordedAt ? new Date(m1.recordedAt).toLocaleString('ja-JP') : '')
+      ws.addRow(values)
+    }
+
+    // 数値列 は 小数 3 桁 で 表示 (値 は 丸めない)
+    cols.forEach((c, i) => {
+      const col = ws.getColumn(i + 1)
+      col.width = c.num ? 12 : 18
+      if (c.num) {
+        col.numFmt = '0.000'
+        col.alignment = { horizontal: 'right' }
+      }
+    })
+    ws.views = [{ state: 'frozen', ySplit: 2 }]
+
+    const buf = await wb.xlsx.writeBuffer()
+    const blob = new Blob([buf], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${currentFarm?.name ?? 'farm'}_実測記録.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   // SIMA 出力（実測値ベース）
   // フォーマットは PipeCoordinateCalcPage の handleExportSIMA に準拠。
   const handleExportSIMA = () => {
@@ -911,6 +1072,15 @@ export function StakingRecordsPage() {
           >
             <RefreshCw className="h-3 w-3" />
             再読込
+          </button>
+          <button
+            onClick={() => void handleExportExcel()}
+            disabled={grouped.length === 0}
+            className="flex items-center gap-1 px-3 py-1 text-xs bg-emerald-700 text-white rounded hover:bg-emerald-800 disabled:opacity-50"
+            title="画面の表をそのまま Excel に出力 (座標は小数 3 桁表示)"
+          >
+            <Download className="h-3 w-3" />
+            Excel
           </button>
           <button
             onClick={handleExportCSV}
@@ -1313,45 +1483,15 @@ export function StakingRecordsPage() {
                   g.targetType === 'coordinate' && g.designName
                     ? g.designName.replace(/^G2?_/, '')
                     : m1?.targetName ?? '(無題)'
-                // 差 (m2 - m1)
-                const diffX = m1 && m2 ? m2.measuredX - m1.measuredX : null
-                const diffY = m1 && m2 ? m2.measuredY - m1.measuredY : null
-                const diffZ =
-                  m1 && m2 && m1.measuredZ != null && m2.measuredZ != null
-                    ? m2.measuredZ - m1.measuredZ
-                    : null
-                // 平均 (m2 が あれば 平均、無ければ m1)
-                const avgX =
-                  m1 && m2 ? (m1.measuredX + m2.measuredX) / 2 : m1?.measuredX ?? null
-                const avgY =
-                  m1 && m2 ? (m1.measuredY + m2.measuredY) / 2 : m1?.measuredY ?? null
-                const avgZ =
-                  m1 && m2 && m1.measuredZ != null && m2.measuredZ != null
-                    ? (m1.measuredZ + m2.measuredZ) / 2
-                    : m1?.measuredZ ?? null
-                // 実測平均 - 設計 (生 の 差、補正 適用前 の バイアス)
-                const dvsX =
-                  avgX != null && g.designX != null ? avgX - g.designX : null
-                const dvsY =
-                  avgY != null && g.designY != null ? avgY - g.designY : null
-                const dvsZ =
-                  avgZ != null && g.designZ != null ? avgZ - g.designZ : null
-                const dvsH = dvsX != null && dvsY != null ? Math.hypot(dvsX, dvsY) : null
-                // スライド設計 (方式 A): 設計値 に スライド量 を 加算 して 実測 に 寄せる
-                //   スライド設計 X = 設計 X + xOffset
-                const slidedDX = g.designX != null ? g.designX + xOffset : null
-                const slidedDY = g.designY != null ? g.designY + yOffset : null
-                const slidedDZ = g.designZ != null ? g.designZ + zOffset : null
-                // 逆スライド実測 (方式 B): 実測平均 から スライド量 を 引いて 設計 に 寄せる
-                //   逆スライド実測 X = 実測平均 X - xOffset (出力 の 既定)
-                const revSlideMX = avgX != null ? avgX - xOffset : null
-                const revSlideMY = avgY != null ? avgY - yOffset : null
-                const revSlideMZ = avgZ != null ? avgZ - zOffset : null
-                // 精度: m1 と m2 の 悪い方 (Max) を 表示 (未取得 は 除外)
-                const acc =
-                  m1?.accuracy != null && m2?.accuracy != null
-                    ? Math.max(m1.accuracy, m2.accuracy)
-                    : m1?.accuracy ?? m2?.accuracy ?? null
+                // 表 に 出す 値 は Excel 出力 と 同じ 計算 を 使う
+                const {
+                  diffX, diffY, diffZ,
+                  avgX, avgY, avgZ,
+                  dvsX, dvsY, dvsZ, dvsH,
+                  slidedDX, slidedDY, slidedDZ,
+                  revSlideMX, revSlideMY, revSlideMZ,
+                  acc,
+                } = deriveRow(g, xOffset, yOffset, zOffset)
                 const clickId = m1?.id ?? null
                 return (
                   <tr
