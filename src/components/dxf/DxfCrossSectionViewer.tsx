@@ -156,6 +156,105 @@ export function DxfCrossSectionViewer({
     setRectNow(null)
   }, [doc])
 
+  // 今 の pan / zoom を タッチ処理 から 読む ため の 控え
+  //(native listener は 張り直したく ない ので state を 直接 見ない)
+  const viewRef = useRef({ pan: { x: 0, y: 0 }, zoom: 1 })
+  useEffect(() => {
+    viewRef.current = { pan: viewPan, zoom: viewZoom }
+  }, [viewPan, viewZoom])
+  const rectModeRef = useRef(false)
+  const applyRectZoomRef = useRef<() => void>(() => {})
+
+  /**
+   * 指 操作。 1 本 = 移動、2 本 = つまんで 伸縮。
+   * React の onTouchMove は passive で 付く ことが あり preventDefault が
+   * 効かない (ページ が スクロール して しまう) ので 生 listener で 張る。
+   */
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    let mode: 'none' | 'pan' | 'pinch' | 'rect' = 'none'
+    let startPan = { x: 0, y: 0 }
+    let startZoom = 1
+    let startPt = { x: 0, y: 0 }
+    let startDist = 0
+    let startMid = { x: 0, y: 0 }
+
+    const local = (t: Touch) => {
+      const r = el.getBoundingClientRect()
+      return { x: t.clientX - r.left, y: t.clientY - r.top }
+    }
+    const onStart = (e: TouchEvent) => {
+      startPan = { ...viewRef.current.pan }
+      startZoom = viewRef.current.zoom
+      if (e.touches.length === 1) {
+        startPt = local(e.touches[0])
+        if (rectModeRef.current) {
+          mode = 'rect'
+          setRectStart(startPt)
+          setRectNow(null)
+        } else {
+          mode = 'pan'
+        }
+        return
+      }
+      if (e.touches.length >= 2) {
+        const a = local(e.touches[0])
+        const b = local(e.touches[1])
+        startDist = Math.hypot(b.x - a.x, b.y - a.y) || 1
+        startMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+        mode = 'pinch'
+      }
+    }
+    const onMove = (e: TouchEvent) => {
+      if (mode === 'none') return
+      e.preventDefault()
+      if (mode === 'rect' && e.touches.length >= 1) {
+        setRectNow(local(e.touches[0]))
+        return
+      }
+      if (mode === 'pan' && e.touches.length === 1) {
+        const p = local(e.touches[0])
+        setViewPan({
+          x: startPan.x + (p.x - startPt.x),
+          y: startPan.y + (p.y - startPt.y),
+        })
+        return
+      }
+      if (mode === 'pinch' && e.touches.length >= 2) {
+        const a = local(e.touches[0])
+        const b = local(e.touches[1])
+        const dist = Math.hypot(b.x - a.x, b.y - a.y) || 1
+        const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+        const nz = Math.max(0.02, Math.min(5000, startZoom * (dist / startDist)))
+        const k = nz / startZoom
+        // つまんだ 中心 を 固定 した まま 伸縮 + 2 本指 の 移動 で パン
+        setViewZoom(nz)
+        setViewPan({
+          x: mid.x - (startMid.x - startPan.x) * k,
+          y: mid.y - (startMid.y - startPan.y) * k,
+        })
+      }
+    }
+    const onEnd = (e: TouchEvent) => {
+      if (mode === 'rect' && e.touches.length === 0) {
+        // 指を 離した ところ で 矩形 を 確定 (マウス と 同じ 処理 を 呼ぶ)
+        applyRectZoomRef.current()
+      }
+      if (e.touches.length === 0) mode = 'none'
+    }
+    el.addEventListener('touchstart', onStart, { passive: false })
+    el.addEventListener('touchmove', onMove, { passive: false })
+    el.addEventListener('touchend', onEnd)
+    el.addEventListener('touchcancel', onEnd)
+    return () => {
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchmove', onMove)
+      el.removeEventListener('touchend', onEnd)
+      el.removeEventListener('touchcancel', onEnd)
+    }
+  }, [])
+
   // ホイール ズーム (passive false 必要 なので 生 addEventListener)
   useEffect(() => {
     const el = containerRef.current
@@ -181,6 +280,40 @@ export function DxfCrossSectionViewer({
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
+
+  /** 囲んだ 矩形 を 画面いっぱい に する (マウス / タッチ 共通) */
+  const applyRectZoom = () => {
+    if (!rectMode || !rectStart || !rectNow) return
+    const x1 = Math.min(rectStart.x, rectNow.x)
+    const y1 = Math.min(rectStart.y, rectNow.y)
+    const x2 = Math.max(rectStart.x, rectNow.x)
+    const y2 = Math.max(rectStart.y, rectNow.y)
+    // 小さすぎる 矩形 (誤操作) は 無視
+    if (x2 - x1 > 8 && y2 - y1 > 8) {
+      // 画面 px → 変換前 の 座標 に 戻して から、その 矩形 が 収まる ように 組み直す
+      const b1x = (x1 - viewPan.x) / viewZoom
+      const b1y = (y1 - viewPan.y) / viewZoom
+      const b2x = (x2 - viewPan.x) / viewZoom
+      const b2y = (y2 - viewPan.y) / viewZoom
+      const nz = Math.max(
+        0.02,
+        Math.min(5000, Math.min(size.w / (b2x - b1x), size.h / (b2y - b1y))),
+      )
+      setViewZoom(nz)
+      setViewPan({
+        x: (size.w - (b2x - b1x) * nz) / 2 - b1x * nz,
+        y: (size.h - (b2y - b1y) * nz) / 2 - b1y * nz,
+      })
+    }
+    setRectMode(false)
+    setRectStart(null)
+    setRectNow(null)
+  }
+  // タッチ の native listener から 呼ぶ ため の 入口 (描画後 に 最新 へ 差し替える)
+  useEffect(() => {
+    applyRectZoomRef.current = applyRectZoom
+    rectModeRef.current = rectMode
+  })
 
   if (!doc) {
     return (
@@ -267,32 +400,7 @@ export function DxfCrossSectionViewer({
   }
   const onMouseUp = () => {
     panStartRef.current = null
-    if (rectMode && rectStart && rectNow) {
-      const x1 = Math.min(rectStart.x, rectNow.x)
-      const y1 = Math.min(rectStart.y, rectNow.y)
-      const x2 = Math.max(rectStart.x, rectNow.x)
-      const y2 = Math.max(rectStart.y, rectNow.y)
-      // 小さすぎる 矩形 (誤クリック) は 無視
-      if (x2 - x1 > 8 && y2 - y1 > 8) {
-        // 画面 px → 変換前 の 座標 に 戻して から、その 矩形 が 収まる ように 組み直す
-        const b1x = (x1 - viewPan.x) / viewZoom
-        const b1y = (y1 - viewPan.y) / viewZoom
-        const b2x = (x2 - viewPan.x) / viewZoom
-        const b2y = (y2 - viewPan.y) / viewZoom
-        const nz = Math.max(
-          0.02,
-          Math.min(5000, Math.min(size.w / (b2x - b1x), size.h / (b2y - b1y))),
-        )
-        setViewZoom(nz)
-        setViewPan({
-          x: (size.w - (b2x - b1x) * nz) / 2 - b1x * nz,
-          y: (size.h - (b2y - b1y) * nz) / 2 - b1y * nz,
-        })
-      }
-      setRectMode(false)
-      setRectStart(null)
-      setRectNow(null)
-    }
+    applyRectZoom()
   }
   const onSvgLeave = () => {
     panStartRef.current = null
@@ -410,6 +518,9 @@ export function DxfCrossSectionViewer({
       <div
         ref={containerRef}
         className="flex-1 min-h-0 border rounded bg-white relative overflow-hidden"
+        // 指 で 触った ときに ページ が スクロール / 拡大 しない ように する
+        // (図面 側 で 移動 と 伸縮 を 受け取る)
+        style={{ touchAction: 'none' }}
       >
         <svg
           width={size.w}
