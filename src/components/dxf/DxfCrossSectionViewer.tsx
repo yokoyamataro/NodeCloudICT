@@ -143,6 +143,7 @@ export function DxfCrossSectionViewer({
    * 範囲拡大。 外側 に ゴミ が ある 図面 は 全体表示 の 縮尺 が 極端に 小さく なり、
    * ホイール だけ では 目的 の 場所 まで 寄れない。 左上 → 右下 を 囲って 一気に 寄せる。
    */
+  const [layerPanelOpen, setLayerPanelOpen] = useState(false)
   const [rectMode, setRectMode] = useState(false)
   const [rectStart, setRectStart] = useState<{ x: number; y: number } | null>(null)
   const [rectNow, setRectNow] = useState<{ x: number; y: number } | null>(null)
@@ -440,22 +441,22 @@ export function DxfCrossSectionViewer({
 
   return (
     <div className={`flex flex-col gap-1 h-full min-h-0 ${className ?? ''}`}>
-      {/* レイヤ トグル バー */}
-      <div className="flex items-center gap-1 flex-wrap text-[11px] shrink-0">
-        <span className="text-slate-500">レイヤ:</span>
+      {/* 操作バー。 レイヤ は 数 が 多い と 場所 を 食う ので
+          常設 せず ボタン → 一覧 に する */}
+      <div className="relative flex items-center gap-1 flex-wrap text-[11px] shrink-0">
         <button
-          onClick={() => setHiddenLayers(new Set())}
-          className="px-1.5 py-0.5 border rounded bg-white hover:bg-slate-50 text-slate-700"
-          title="全レイヤ 表示"
+          onClick={() => setLayerPanelOpen((v) => !v)}
+          className={`px-1.5 py-0.5 border rounded ${
+            layerPanelOpen
+              ? 'bg-blue-600 border-blue-600 text-white'
+              : 'bg-white hover:bg-slate-50 text-slate-700'
+          }`}
+          title="レイヤの表示を切り替える"
         >
-          全ON
-        </button>
-        <button
-          onClick={() => setHiddenLayers(new Set(doc.layers.map((l) => l.name)))}
-          className="px-1.5 py-0.5 border rounded bg-white hover:bg-slate-50 text-slate-700"
-          title="全レイヤ 非表示"
-        >
-          全OFF
+          レイヤ{' '}
+          <span className={layerPanelOpen ? 'opacity-80' : 'text-slate-400'}>
+            {doc.layers.length - hiddenLayers.size}/{doc.layers.length}
+          </span>
         </button>
         <button
           onClick={() => {
@@ -480,40 +481,68 @@ export function DxfCrossSectionViewer({
               ? 'bg-blue-600 border-blue-600 text-white'
               : 'bg-white hover:bg-slate-50 text-slate-700'
           }`}
-          title="見たい 範囲 を 左上 → 右下 に ドラッグ して 囲うと そこまで 寄る"
+          title="見たい 範囲 を 左上 → 右下 に なぞって 囲うと そこまで 寄る"
         >
           範囲拡大
         </button>
-        <span className="text-slate-400">
-          {Math.round(viewZoom * 100)}%
-        </span>
-        <span className="text-slate-400 ml-1">|</span>
-        {doc.layers.map((l) => {
-          const on = !hiddenLayers.has(l.name)
-          return (
-            <button
-              key={l.name}
-              onClick={() =>
-                setHiddenLayers((prev) => {
-                  const next = new Set(prev)
-                  if (next.has(l.name)) next.delete(l.name)
-                  else next.add(l.name)
-                  return next
-                })
-              }
-              className={`px-1.5 py-0.5 border rounded ${
-                on ? 'text-slate-800' : 'text-slate-300 line-through'
-              }`}
-              style={{
-                borderColor: on ? l.color : '#e2e8f0',
-                background: on ? `${l.color}22` : '#f8fafc',
-              }}
-              title={on ? 'クリックで 非表示' : 'クリックで 表示'}
-            >
-              {l.name}
-            </button>
-          )
-        })}
+        <span className="text-slate-400">{Math.round(viewZoom * 100)}%</span>
+
+        {layerPanelOpen && (
+          <div className="absolute left-0 top-full mt-1 z-20 w-64 max-h-60 overflow-auto bg-white border rounded shadow-lg p-2">
+            <div className="flex items-center gap-1 mb-1">
+              <span className="text-slate-500">レイヤ</span>
+              <button
+                onClick={() => setHiddenLayers(new Set())}
+                className="px-1.5 py-0.5 border rounded bg-white hover:bg-slate-50 text-slate-700"
+                title="全レイヤ 表示"
+              >
+                全ON
+              </button>
+              <button
+                onClick={() => setHiddenLayers(new Set(doc.layers.map((l) => l.name)))}
+                className="px-1.5 py-0.5 border rounded bg-white hover:bg-slate-50 text-slate-700"
+                title="全レイヤ 非表示"
+              >
+                全OFF
+              </button>
+              <button
+                onClick={() => setLayerPanelOpen(false)}
+                className="ml-auto px-1.5 py-0.5 text-slate-400 hover:text-slate-700"
+                aria-label="閉じる"
+              >
+                ×
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {doc.layers.map((l) => {
+                const on = !hiddenLayers.has(l.name)
+                return (
+                  <button
+                    key={l.name}
+                    onClick={() =>
+                      setHiddenLayers((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(l.name)) next.delete(l.name)
+                        else next.add(l.name)
+                        return next
+                      })
+                    }
+                    className={`px-1.5 py-0.5 border rounded ${
+                      on ? 'text-slate-800' : 'text-slate-300 line-through'
+                    }`}
+                    style={{
+                      borderColor: on ? l.color : '#e2e8f0',
+                      background: on ? `${l.color}22` : '#f8fafc',
+                    }}
+                    title={on ? 'タップで 非表示' : 'タップで 表示'}
+                  >
+                    {l.name}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
       <div
         ref={containerRef}
