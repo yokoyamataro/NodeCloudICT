@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Upload, Download, Trash2, Eye, Loader2, FileText, X } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
-import type { SxfParseResult } from '@/lib/sxf/parseSxf'
+import type { SxfResult } from '@/lib/sxf'
 import { decodeDxfBytes } from '@/lib/dxfRender'
 import {
   FARM_FILE_ACCEPT,
@@ -56,7 +56,7 @@ export function FarmFilesPage() {
    * 横断図の DXF 取込で 使っている ビューアを そのまま 使って 画面内で 出す。
    */
   const [viewer, setViewer] = useState<
-    { row: FarmFileRow; text: string; doc?: SxfParseResult | null } | null
+    { row: FarmFileRow; text: string; doc?: SxfResult | null } | null
   >(null)
   const [viewerLoading, setViewerLoading] = useState(false)
 
@@ -134,8 +134,8 @@ export function FarmFilesPage() {
           setViewer({ row, text })
         } else {
           // SFC / P21 は SXF。 DXF と 同じ 形 に 直して 同じ ビューア で 出す
-          const { parseSxf } = await import('@/lib/sxf/parseSxf')
-          setViewer({ row, text, doc: parseSxf(text) })
+          const { parseSxfFile } = await import('@/lib/sxf')
+          setViewer({ row, text, doc: parseSxfFile(text) })
         }
         return
       }
@@ -346,7 +346,7 @@ export function FarmFilesPage() {
                   </p>
                   <div className="mt-3 text-xs">
                     <div className="font-medium text-slate-600">
-                      ファイル内で見つかった要素 (上位 20)
+                      ファイル内で見つかった要素 (上位 20) / 判定: {viewer.doc.mode}
                     </div>
                     {viewer.doc.tokens.length === 0 ? (
                       <div className="mt-1 text-slate-400">
