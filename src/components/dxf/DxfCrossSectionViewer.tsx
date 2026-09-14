@@ -139,11 +139,21 @@ export function DxfCrossSectionViewer({
   const [viewZoom, setViewZoom] = useState<number>(1)
   const wasDraggingRef = useRef(false)
   const panStartRef = useRef<{ px: number; py: number; panX: number; panY: number } | null>(null)
+  /**
+   * 範囲拡大。 外側 に ゴミ が ある 図面 は 全体表示 の 縮尺 が 極端に 小さく なり、
+   * ホイール だけ では 目的 の 場所 まで 寄れない。 左上 → 右下 を 囲って 一気に 寄せる。
+   */
+  const [rectMode, setRectMode] = useState(false)
+  const [rectStart, setRectStart] = useState<{ x: number; y: number } | null>(null)
+  const [rectNow, setRectNow] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
     // ドキュメント 差替時 は パン/ズームリセット
     setViewPan({ x: 0, y: 0 })
     setViewZoom(1)
+    setRectMode(false)
+    setRectStart(null)
+    setRectNow(null)
   }, [doc])
 
   // ホイール ズーム (passive false 必要 なので 生 addEventListener)
@@ -157,7 +167,9 @@ export function DxfCrossSectionViewer({
       const py = e.clientY - rect.top
       const factor = e.deltaY > 0 ? 0.9 : 1.1
       setViewZoom((z) => {
-        const nz = Math.max(0.05, Math.min(50, z * factor))
+        // 上限 は 大きめ。 図面 の 外 に ゴミ が ある と 全体表示 の 縮尺 が
+        // 極端に 小さく なり、50 倍 では 足りない ことが ある
+        const nz = Math.max(0.02, Math.min(5000, z * factor))
         const k = nz / z
         setViewPan((p) => ({
           x: px - (px - p.x) * k,
@@ -188,7 +200,14 @@ export function DxfCrossSectionViewer({
 
   const onMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
     if (e.button !== 0) return
-    const rect = e.currentTarget.getBoundingClientRect()
+    const rect0 = e.currentTarget.getBoundingClientRect()
+    if (rectMode) {
+      // 範囲拡大中 は パン せず 矩形 を 引く
+      setRectStart({ x: e.clientX - rect0.left, y: e.clientY - rect0.top })
+      setRectNow(null)
+      return
+    }
+    const rect = rect0
     wasDraggingRef.current = false
     panStartRef.current = {
       px: e.clientX - rect.left,
@@ -201,6 +220,10 @@ export function DxfCrossSectionViewer({
     const rect = e.currentTarget.getBoundingClientRect()
     const px = e.clientX - rect.left
     const py = e.clientY - rect.top
+    if (rectMode) {
+      if (rectStart) setRectNow({ x: px, y: py })
+      return
+    }
     // ドラッグ pan
     if (panStartRef.current && (e.buttons & 1)) {
       const dx = px - panStartRef.current.px
@@ -244,15 +267,43 @@ export function DxfCrossSectionViewer({
   }
   const onMouseUp = () => {
     panStartRef.current = null
+    if (rectMode && rectStart && rectNow) {
+      const x1 = Math.min(rectStart.x, rectNow.x)
+      const y1 = Math.min(rectStart.y, rectNow.y)
+      const x2 = Math.max(rectStart.x, rectNow.x)
+      const y2 = Math.max(rectStart.y, rectNow.y)
+      // 小さすぎる 矩形 (誤クリック) は 無視
+      if (x2 - x1 > 8 && y2 - y1 > 8) {
+        // 画面 px → 変換前 の 座標 に 戻して から、その 矩形 が 収まる ように 組み直す
+        const b1x = (x1 - viewPan.x) / viewZoom
+        const b1y = (y1 - viewPan.y) / viewZoom
+        const b2x = (x2 - viewPan.x) / viewZoom
+        const b2y = (y2 - viewPan.y) / viewZoom
+        const nz = Math.max(
+          0.02,
+          Math.min(5000, Math.min(size.w / (b2x - b1x), size.h / (b2y - b1y))),
+        )
+        setViewZoom(nz)
+        setViewPan({
+          x: (size.w - (b2x - b1x) * nz) / 2 - b1x * nz,
+          y: (size.h - (b2y - b1y) * nz) / 2 - b1y * nz,
+        })
+      }
+      setRectMode(false)
+      setRectStart(null)
+      setRectNow(null)
+    }
   }
   const onSvgLeave = () => {
     panStartRef.current = null
+    setRectStart(null)
+    setRectNow(null)
     setCursorPos(null)
     setSnap(null)
     setLinePreview(null)
   }
   const onSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (wasDraggingRef.current) return
+    if (wasDraggingRef.current || rectMode) return
     if (!onCanvasPick || !pickCursorHint) return
     const rect = e.currentTarget.getBoundingClientRect()
     const rawWp = { x: ix(e.clientX - rect.left), y: iy(e.clientY - rect.top) }
@@ -302,11 +353,32 @@ export function DxfCrossSectionViewer({
           onClick={() => {
             setViewPan({ x: 0, y: 0 })
             setViewZoom(1)
+            setRectMode(false)
+            setRectStart(null)
+            setRectNow(null)
           }}
           className="px-1.5 py-0.5 border rounded bg-white hover:bg-slate-50 text-slate-700"
         >
-          表示リセット
+          全体表示
         </button>
+        <button
+          onClick={() => {
+            setRectMode((v) => !v)
+            setRectStart(null)
+            setRectNow(null)
+          }}
+          className={`px-1.5 py-0.5 border rounded ${
+            rectMode
+              ? 'bg-blue-600 border-blue-600 text-white'
+              : 'bg-white hover:bg-slate-50 text-slate-700'
+          }`}
+          title="見たい 範囲 を 左上 → 右下 に ドラッグ して 囲うと そこまで 寄る"
+        >
+          範囲拡大
+        </button>
+        <span className="text-slate-400">
+          {Math.round(viewZoom * 100)}%
+        </span>
         <span className="text-slate-400 ml-1">|</span>
         {doc.layers.map((l) => {
           const on = !hiddenLayers.has(l.name)
@@ -348,11 +420,13 @@ export function DxfCrossSectionViewer({
           onMouseLeave={onSvgLeave}
           onClick={onSvgClick}
           style={{
-            cursor: wasDraggingRef.current
-              ? 'grabbing'
-              : pickCursorHint
-                ? 'crosshair'
-                : 'grab',
+            cursor: rectMode
+              ? 'crosshair'
+              : wasDraggingRef.current
+                ? 'grabbing'
+                : pickCursorHint
+                  ? 'crosshair'
+                  : 'grab',
           }}
         >
           <g transform={`translate(${viewPan.x} ${viewPan.y}) scale(${viewZoom})`}>
@@ -522,6 +596,20 @@ export function DxfCrossSectionViewer({
               )
             })()}
           </g>
+          {/* 範囲拡大 の ラバーバンド (画面座標 な ので 変換 の 外) */}
+          {rectMode && rectStart && rectNow && (
+            <rect
+              x={Math.min(rectStart.x, rectNow.x)}
+              y={Math.min(rectStart.y, rectNow.y)}
+              width={Math.abs(rectNow.x - rectStart.x)}
+              height={Math.abs(rectNow.y - rectStart.y)}
+              fill="#3b82f6"
+              fillOpacity={0.12}
+              stroke="#2563eb"
+              strokeWidth={1}
+              strokeDasharray="4 3"
+            />
+          )}
         </svg>
       </div>
     </div>
