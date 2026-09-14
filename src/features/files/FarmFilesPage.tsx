@@ -8,18 +8,15 @@
 // 効かせてあるが、押す前に 分かるよう 画面でも 出す。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, Download, Trash2, Eye, Loader2, FileText, X } from 'lucide-react'
+import { Upload, Download, Trash2, Eye, Loader2, FileText } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
-import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
-import type { SxfResult } from '@/lib/sxf'
-import { decodeDxfBytes } from '@/lib/dxfRender'
+import { openAppPath, openExternal } from '@/lib/openExternal'
 import {
   FARM_FILE_ACCEPT,
   FARM_FILE_KIND_LABEL,
   FARM_FILE_QUOTA_BYTES,
   canPreview,
   deleteFarmFile,
-  downloadFarmFileBytes,
   errorMessage,
   getFarmFileUrl,
   kindFromFileName,
@@ -55,9 +52,6 @@ export function FarmFilesPage() {
    * DXF は 別タブで 開くと ブラウザが ダウンロードして しまう ので、
    * 横断図の DXF 取込で 使っている ビューアを そのまま 使って 画面内で 出す。
    */
-  const [viewer, setViewer] = useState<
-    { row: FarmFileRow; text: string; doc?: SxfResult | null } | null
-  >(null)
   const [viewerLoading, setViewerLoading] = useState(false)
 
   const load = useCallback(async () => {
@@ -123,20 +117,12 @@ export function FarmFilesPage() {
     setError(null)
     try {
       if (!download && (row.kind === 'dxf' || row.kind === 'sfc' || row.kind === 'p21')) {
-        // 図面 は 別タブで 開くと ブラウザが ダウンロードして しまう。
-        // 画面内の ビューアで 出す。
-        // DXF / SXF とも 日本の CAD は Shift-JIS が 多い ので
-        // 判定つき デコーダ を 通す (text() だと 文字化け する)
-        setViewerLoading(true)
-        const buf = await downloadFarmFileBytes(row.storagePath)
-        const text = decodeDxfBytes(buf)
-        if (row.kind === 'dxf') {
-          setViewer({ row, text })
-        } else {
-          // SFC / P21 は SXF。 DXF と 同じ 形 に 直して 同じ ビューア で 出す
-          const { parseSxfFile } = await import('@/lib/sxf')
-          setViewer({ row, text, doc: parseSxfFile(text) })
-        }
+        // 図面 は そのまま 別タブ に 出しても ブラウザ が ダウンロード して
+        // しまう ので、自前 の 図面ページ を 別タブ で 開く
+        openAppPath(
+          `/file-view?path=${encodeURIComponent(row.storagePath)}` +
+            `&name=${encodeURIComponent(row.name)}&kind=${row.kind}`,
+        )
         return
       }
       const url = await getFarmFileUrl(row.storagePath)
@@ -146,7 +132,8 @@ export function FarmFilesPage() {
         a.download = row.name
         a.click()
       } else {
-        window.open(url, '_blank', 'noopener')
+        // PDF など は 端末 / ブラウザ の 表示 に 任せる
+        openExternal(url)
       }
     } catch (err) {
       setError(errorMessage(err))
@@ -303,83 +290,6 @@ export function FarmFilesPage() {
         </div>
       </div>
 
-      {/* DXF ビューア。横断図の DXF 取込と 同じ 部品を そのまま 使う */}
-      {viewer && (
-        <div
-          className="fixed inset-0 z-[3000] bg-black/60 flex items-center justify-center p-4"
-          onClick={() => setViewer(null)}
-        >
-          <div
-            className="bg-white w-full max-w-5xl h-[85vh] rounded-lg shadow-xl flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="px-3 py-2 border-b flex items-center gap-2">
-              <FileText className="h-4 w-4 text-slate-500" />
-              <span className="text-sm font-semibold truncate">{viewer.row.name}</span>
-              <button
-                type="button"
-                onClick={() => void handleOpen(viewer.row, true)}
-                className="ml-auto px-2 py-1 rounded border text-xs text-slate-600 hover:bg-slate-50"
-              >
-                ダウンロード
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewer(null)}
-                className="p-1 rounded hover:bg-slate-100"
-                aria-label="閉じる"
-              >
-                <X className="h-4 w-4 text-slate-500" />
-              </button>
-            </div>
-            <div className="flex-1 min-h-0">
-              {viewer.doc && viewer.doc.shapes.length === 0 ? (
-                // 何 が 入って いる ファイル なのか を 出す。
-                // 対応表 を 実データ に 合わせる ため の 手がかり に する
-                <div className="h-full overflow-auto px-6 py-6 text-sm text-slate-600">
-                  <p className="font-medium text-slate-700">
-                    表示できる図形が見つかりませんでした。
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    複合図形 (シンボル) だけのファイルや、未対応の要素の可能性があります。
-                    下の内容を開発元に伝えていただくと対応できます。
-                  </p>
-                  <div className="mt-3 text-xs">
-                    <div className="font-medium text-slate-600">
-                      ファイル内で見つかった要素 (上位 20) / 判定: {viewer.doc.mode}
-                    </div>
-                    {viewer.doc.tokens.length === 0 ? (
-                      <div className="mt-1 text-slate-400">
-                        要素が 1 つも 見つかりません (形式が違う / 文字コードの問題)
-                      </div>
-                    ) : (
-                      <ul className="mt-1 grid grid-cols-2 gap-x-4 font-mono">
-                        {viewer.doc.tokens.slice(0, 20).map((t) => (
-                          <li key={t.name}>
-                            {t.name} <span className="text-slate-400">× {t.count}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div className="mt-3 text-xs">
-                    <div className="font-medium text-slate-600">先頭 400 文字</div>
-                    <pre className="mt-1 p-2 bg-slate-50 border rounded whitespace-pre-wrap break-all text-[10px] leading-snug">
-                      {viewer.text.slice(0, 400)}
-                    </pre>
-                  </div>
-                </div>
-              ) : (
-                <DxfCrossSectionViewer
-                  dxfText={viewer.text}
-                  parsedDoc={viewer.doc ?? null}
-                  className="w-full h-full"
-                />
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

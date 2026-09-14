@@ -19,6 +19,7 @@ import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { ProjectChooserPage } from '@/features/projects/ProjectChooserPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
 import { SiteMapWindowPage } from '@/features/coordinates/SiteMapWindowPage'
+import { FileViewPage } from '@/features/files/FileViewPage'
 // スマホ画面
 import { MobileTopPage } from '@/features/mobile/MobileTopPage'
 import { MobileProjectChooserPage } from '@/features/mobile/MobileProjectChooserPage'
@@ -136,6 +137,7 @@ function MobileAutoRedirect() {
     if (
       path === '/login' ||
       path === '/site-map' ||
+      path === '/file-view' ||
       path === '/lp' ||
       path === '/apply' ||
       path === '/terms' ||
@@ -263,6 +265,15 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <SiteMapWindowPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* 別タブ: 図面 (DXF / SFC / P21) を 1 枚 で 見る */}
+        <Route
+          path="/file-view"
+          element={
+            <ProtectedRoute>
+              <FileViewPage />
             </ProtectedRoute>
           }
         />
