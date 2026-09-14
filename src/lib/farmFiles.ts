@@ -69,7 +69,14 @@ export const FARM_FILE_KIND_LABEL: Record<FarmFileKind, string> = {
 
 /** 画面で 中身を 見られる 種別か (SFC / P21 は 未実装) */
 export function canPreview(kind: FarmFileKind): boolean {
-  return kind === 'pdf' || kind === 'dxf' || kind === 'landxml' || kind === 'sim'
+  return (
+    kind === 'pdf' ||
+    kind === 'dxf' ||
+    kind === 'sfc' ||
+    kind === 'p21' ||
+    kind === 'landxml' ||
+    kind === 'sim'
+  )
 }
 
 /** ファイル選択ダイアログ用の accept 文字列 */

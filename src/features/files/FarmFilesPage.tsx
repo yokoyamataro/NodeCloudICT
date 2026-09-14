@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Upload, Download, Trash2, Eye, Loader2, FileText, X } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
+import type { DxfDocument } from '@/lib/dxfRender'
 import { decodeDxfBytes } from '@/lib/dxfRender'
 import {
   FARM_FILE_ACCEPT,
@@ -54,7 +55,9 @@ export function FarmFilesPage() {
    * DXF は 別タブで 開くと ブラウザが ダウンロードして しまう ので、
    * 横断図の DXF 取込で 使っている ビューアを そのまま 使って 画面内で 出す。
    */
-  const [viewer, setViewer] = useState<{ row: FarmFileRow; text: string } | null>(null)
+  const [viewer, setViewer] = useState<
+    { row: FarmFileRow; text: string; doc?: DxfDocument | null } | null
+  >(null)
   const [viewerLoading, setViewerLoading] = useState(false)
 
   const load = useCallback(async () => {
@@ -119,14 +122,21 @@ export function FarmFilesPage() {
   const handleOpen = async (row: FarmFileRow, download: boolean) => {
     setError(null)
     try {
-      if (!download && row.kind === 'dxf') {
-        // DXF は 別タブで 開くと ブラウザが ダウンロードして しまう。
-        // 画面内の ビューアで 出す
+      if (!download && (row.kind === 'dxf' || row.kind === 'sfc' || row.kind === 'p21')) {
+        // 図面 は 別タブで 開くと ブラウザが ダウンロードして しまう。
+        // 画面内の ビューアで 出す。
+        // DXF / SXF とも 日本の CAD は Shift-JIS が 多い ので
+        // 判定つき デコーダ を 通す (text() だと 文字化け する)
         setViewerLoading(true)
-        // DXF は Shift-JIS の ことが 多い。text() だと 文字化けする ので
-        // 既存の 判定つき デコーダを 通す
         const buf = await downloadFarmFileBytes(row.storagePath)
-        setViewer({ row, text: decodeDxfBytes(buf) })
+        const text = decodeDxfBytes(buf)
+        if (row.kind === 'dxf') {
+          setViewer({ row, text })
+        } else {
+          // SFC / P21 は SXF。 DXF と 同じ 形 に 直して 同じ ビューア で 出す
+          const { parseSxf } = await import('@/lib/sxf/parseSxf')
+          setViewer({ row, text, doc: parseSxf(text) })
+        }
         return
       }
       const url = await getFarmFileUrl(row.storagePath)
@@ -250,10 +260,10 @@ export function FarmFilesPage() {
                       className="p-1.5 rounded border text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:cursor-not-allowed"
                       title={
                         canPreview(row.kind)
-                          ? row.kind === 'dxf'
+                          ? row.kind === 'dxf' || row.kind === 'sfc' || row.kind === 'p21'
                             ? '図面ビューアで開く'
                             : '別タブで開く'
-                          : 'SFC / P21 の閲覧は未実装です（ダウンロードは可能）'
+                          : 'この形式の閲覧は未対応です（ダウンロードは可能）'
                       }
                     >
                       {viewerLoading ? (
@@ -323,7 +333,20 @@ export function FarmFilesPage() {
               </button>
             </div>
             <div className="flex-1 min-h-0">
-              <DxfCrossSectionViewer dxfText={viewer.text} className="w-full h-full" />
+              {viewer.doc && viewer.doc.shapes.length === 0 ? (
+                <div className="h-full flex items-center justify-center px-6 text-center text-sm text-slate-500">
+                  表示できる 図形 が 見つかりませんでした。
+                  <br />
+                  複合図形 (シンボル) だけ の ファイル や、対応して いない
+                  フィーチャ の 可能性 が あります。
+                </div>
+              ) : (
+                <DxfCrossSectionViewer
+                  dxfText={viewer.text}
+                  parsedDoc={viewer.doc ?? null}
+                  className="w-full h-full"
+                />
+              )}
             </div>
           </div>
         </div>

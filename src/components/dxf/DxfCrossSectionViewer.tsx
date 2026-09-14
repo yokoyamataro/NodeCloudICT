@@ -17,6 +17,7 @@ import {
 
 export function DxfCrossSectionViewer({
   dxfText,
+  parsedDoc,
   className,
   onCanvasPick,
   pickCursorHint,
@@ -28,6 +29,11 @@ export function DxfCrossSectionViewer({
   traceRubberBandFrom,
 }: {
   dxfText: string
+  /**
+   * 解析済み の 図面。 SXF (SFC / P21) の ように DXF 以外 から 作った 場合 に
+   * 渡す。 指定 すると dxfText は 見ない。
+   */
+  parsedDoc?: DxfDocument | null
   className?: string
   /**
    * pickCursorHint (=モード) が セット されている 時、SVG が クリックされる ごとに
@@ -66,13 +72,15 @@ export function DxfCrossSectionViewer({
   cursorLabelFormatter?: (worldPt: { x: number; y: number }) => string[] | null
 }) {
   const doc: DxfDocument | null = useMemo(() => {
+    // 解析済み を 渡された場合 (SXF など DXF 以外 の 出所) は そのまま 使う
+    if (parsedDoc) return parsedDoc
     try {
       return parseDxf(dxfText)
     } catch (e) {
       console.error('[DxfCrossSectionViewer] parse failed', e)
       return null
     }
-  }, [dxfText])
+  }, [dxfText, parsedDoc])
 
   // レイヤ 表示 ON/OFF
   const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(new Set())
