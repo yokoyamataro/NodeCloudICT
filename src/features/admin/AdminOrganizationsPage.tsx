@@ -49,10 +49,15 @@ import { OrgReportSnippetsView } from './OrgReportSnippetsView'
 // --- 組織情報フォームのドラフト型 ---
 interface OrgDraft {
   name: string
+  name_kana: string
   postal_code: string
   phone: string
   address: string
   representative: string
+  admin_name: string
+  admin_department: string
+  admin_email: string
+  admin_phone: string
   user_count_limit: string
   plan: string
   /** 利用期限 (YYYY-MM-DD、空文字は無期限)。サイトオーナーのみ設定可 */
@@ -62,10 +67,15 @@ interface OrgDraft {
 
 const EMPTY_ORG_DRAFT: OrgDraft = {
   name: '',
+  name_kana: '',
   postal_code: '',
   phone: '',
   address: '',
   representative: '',
+  admin_name: '',
+  admin_department: '',
+  admin_email: '',
+  admin_phone: '',
   user_count_limit: '',
   plan: '',
   expires_at: '',
@@ -75,10 +85,15 @@ const EMPTY_ORG_DRAFT: OrgDraft = {
 function toDraft(o: Organization): OrgDraft {
   return {
     name: o.name,
+    name_kana: o.name_kana ?? '',
     postal_code: o.postal_code ?? '',
     phone: o.phone ?? '',
     address: o.address ?? '',
     representative: o.representative ?? '',
+    admin_name: o.admin_name ?? '',
+    admin_department: o.admin_department ?? '',
+    admin_email: o.admin_email ?? '',
+    admin_phone: o.admin_phone ?? '',
     user_count_limit: o.user_count_limit == null ? '' : String(o.user_count_limit),
     plan: o.plan ?? '',
     expires_at: o.expires_at ? o.expires_at.slice(0, 10) : '',
@@ -108,10 +123,15 @@ function toPayload(d: OrgDraft) {
   }
   return {
     name: d.name.trim(),
+    name_kana: d.name_kana.trim() || null,
     postal_code: d.postal_code.trim() || null,
     phone: d.phone.trim() || null,
     address: d.address.trim() || null,
     representative: d.representative.trim() || null,
+    admin_name: d.admin_name.trim() || null,
+    admin_department: d.admin_department.trim() || null,
+    admin_email: d.admin_email.trim() || null,
+    admin_phone: d.admin_phone.trim() || null,
     user_count_limit: limit,
     plan: d.plan.trim() || null,
     expires_at: expiresAt,
@@ -378,7 +398,7 @@ function SiteOwnerUnifiedView() {
             <SiteUsageView />
           ) : selectedOrg ? (
             <>
-              <div className="w-[34rem] max-w-[45%] shrink-0 overflow-auto border-r">
+              <div className="w-[42rem] max-w-[50%] shrink-0 overflow-auto border-r">
                 <OrgInfoForm
                   key={selectedOrg.id}
                   org={selectedOrg}
@@ -483,7 +503,7 @@ function OrgAdminUnifiedView({ adminOrgs }: { adminOrgs: AdminOrgRow[] }) {
           </div>
         ) : (
           <>
-            <div className="w-[34rem] max-w-[45%] shrink-0 overflow-auto border-r">
+            <div className="w-[42rem] max-w-[50%] shrink-0 overflow-auto border-r">
               <OrgInfoForm org={org} editable={false} />
             </div>
             <div className="flex-1 min-w-0 min-h-0 overflow-hidden bg-white flex flex-col">
@@ -777,7 +797,7 @@ function OrgInfoForm({
       </div>
 
       {/* 1 項目 = 1 行 で 縦 に 積む。 横 に 並べる と どの 項目 か 追いにくい */}
-      <div className="flex flex-col gap-2 max-w-2xl">
+      <div className="flex flex-col gap-2 max-w-3xl">
         <FormField label="組織名 *">
           <input
             type="text"
@@ -794,15 +814,6 @@ function OrgInfoForm({
             onChange={(e) =>
               setDraft((d) => ({ ...d, representative: e.target.value }))
             }
-            disabled={!editable}
-            className={inputClass}
-          />
-        </FormField>
-        <FormField label="電話番号">
-          <input
-            type="text"
-            value={draft.phone}
-            onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
             disabled={!editable}
             className={inputClass}
           />
@@ -825,6 +836,70 @@ function OrgInfoForm({
             onChange={(e) =>
               setDraft((d) => ({ ...d, address: e.target.value }))
             }
+            disabled={!editable}
+            className={inputClass}
+          />
+        </FormField>
+        <FormField label="電話番号">
+          <input
+            type="text"
+            value={draft.phone}
+            onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
+            disabled={!editable}
+            className={inputClass}
+          />
+        </FormField>
+        <FormField label="組織名 (ひらがな)">
+          <input
+            type="text"
+            value={draft.name_kana}
+            onChange={(e) => setDraft((d) => ({ ...d, name_kana: e.target.value }))}
+            disabled={!editable}
+            className={inputClass}
+            placeholder="例: まるまるそくりょう"
+          />
+          <div className="mt-0.5 text-[10px] text-slate-500">
+            「株式会社」「土地家屋調査士」などの肩書は省いてください
+          </div>
+        </FormField>
+        {/* 契約 の 窓口。 アプリ の アカウント が 無くても 記録 できる ように
+            テキスト で 持つ (admin_user_id とは 別) */}
+        <FormField label="管理者 氏名">
+          <input
+            type="text"
+            value={draft.admin_name}
+            onChange={(e) => setDraft((d) => ({ ...d, admin_name: e.target.value }))}
+            disabled={!editable}
+            className={inputClass}
+          />
+        </FormField>
+        <FormField label="管理者 部署">
+          <input
+            type="text"
+            value={draft.admin_department}
+            onChange={(e) =>
+              setDraft((d) => ({ ...d, admin_department: e.target.value }))
+            }
+            disabled={!editable}
+            className={inputClass}
+            placeholder="例: 測量部 / 総務課"
+          />
+        </FormField>
+        <FormField label="管理者 メール">
+          <input
+            type="email"
+            value={draft.admin_email}
+            onChange={(e) => setDraft((d) => ({ ...d, admin_email: e.target.value }))}
+            disabled={!editable}
+            className={inputClass}
+            placeholder="example@email.com"
+          />
+        </FormField>
+        <FormField label="管理者 電話">
+          <input
+            type="text"
+            value={draft.admin_phone}
+            onChange={(e) => setDraft((d) => ({ ...d, admin_phone: e.target.value }))}
             disabled={!editable}
             className={inputClass}
           />
@@ -1047,6 +1122,20 @@ function NewOrgDialog({
               className={inputClass}
               autoFocus
             />
+          </FormField>
+          <FormField label="組織名 (ひらがな)">
+            <input
+              type="text"
+              value={draft.name_kana}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, name_kana: e.target.value }))
+              }
+              className={inputClass}
+              placeholder="例: まるまるそくりょう"
+            />
+            <div className="mt-0.5 text-[10px] text-slate-500">
+              「株式会社」「土地家屋調査士」などの肩書は省いてください
+            </div>
           </FormField>
           <FormField label="代表者">
             <input

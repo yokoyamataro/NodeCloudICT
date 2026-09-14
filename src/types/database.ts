@@ -322,11 +322,18 @@ export interface Announcement {
 export interface Organization {
   id: string
   name: string
+  /** 組織名 の ひらがな (株式会社 等 の 肩書 は 入れない) */
+  name_kana: string | null
   note: string | null
   postal_code: string | null
   phone: string | null
   address: string | null
   representative: string | null
+  /** 契約窓口 に なる 管理者 の 連絡先。 admin_user_id (アプリ上の ユーザー) とは 別 */
+  admin_name: string | null
+  admin_department: string | null
+  admin_email: string | null
+  admin_phone: string | null
   admin_user_id: string | null
   user_count_limit: number | null
   plan: string | null
