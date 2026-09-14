@@ -572,7 +572,7 @@ export function DxfCrossSectionViewer({
           <g transform={`translate(${viewPan.x} ${viewPan.y}) scale(${viewZoom})`}>
             {doc.shapes.map((s, i) => {
               if (hiddenLayers.has(s.layer)) return null
-              return renderShape(s, i, tx, ty)
+              return renderShape(s, i, tx, ty, viewZoom)
             })}
             {/* 校正済み DL 水平線 (紫 太 破線) */}
             {highlightDlY != null && (
@@ -761,6 +761,8 @@ function renderShape(
   i: number,
   tx: (x: number) => number,
   ty: (y: number) => number,
+  /** 画面 の 拡大率。 文字 を 出すか の 判定 に 使う */
+  viewZoom = 1,
 ) {
   const commonProps = { 'data-shape-idx': i }
   if (s.kind === 'line') {
@@ -826,7 +828,10 @@ function renderShape(
     // (= 事実上 見えなく) なる
     const scale = Math.abs(tx(1) - tx(0))
     const fontSize = s.height * scale
-    if (!(fontSize > 0.5)) return null
+    // 出すか どうか は 「画面上 の 大きさ」 で 決める。
+    // 全体表示 の 縮尺 だけ で 判定 すると、図面 が 広い ファイル で
+    // 拡大 しても 文字 が 出て こない (以前 は これ で 消えて いた)。
+    if (!(fontSize * viewZoom > 0.4)) return null
     return (
       <text
         key={i}

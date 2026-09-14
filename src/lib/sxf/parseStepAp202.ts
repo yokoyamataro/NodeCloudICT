@@ -350,6 +350,32 @@ export function parseStepAp202(text: string): StepParseResult {
     if (Number.isFinite(x)) { if (x < minX) minX = x; if (x > maxX) maxX = x }
     if (Number.isFinite(y)) { if (y < minY) minY = y; if (y > maxY) maxY = y }
   }
+  /**
+   * 円弧 の 実際 の 広がり。
+   *
+   * 円 の 外接矩形 (中心 ± 半径) で 代用 する と、道路 の 線形 の ように
+   * 半径 が 何万 も ある 弧 で 図面 の 範囲 が 桁違い に 広がり、
+   * 全体表示 の 縮尺 が 潰れて 文字 が 見えなく なる。
+   * 端点 と、弧 が またぐ 0/90/180/270 度 だけ を 見る。
+   */
+  const arcExtent = (cx: number, cy: number, r: number, sDeg: number, eDeg: number): XY[] => {
+    const norm = (a: number) => ((a % 360) + 360) % 360
+    const a0 = norm(sDeg)
+    let sweep = norm(eDeg) - a0
+    if (sweep <= 0) sweep += 360
+    const at = (deg: number): XY => ({
+      x: cx + r * Math.cos((deg * Math.PI) / 180),
+      y: cy + r * Math.sin((deg * Math.PI) / 180),
+    })
+    const out: XY[] = [at(a0), at(a0 + sweep)]
+    for (const q of [0, 90, 180, 270]) {
+      let d = norm(q) - a0
+      if (d < 0) d += 360
+      if (d <= sweep) out.push(at(q))
+    }
+    return out
+  }
+
   const usedAsBasis = new Set<number>()
   for (const inst of insts.values()) {
     const tc = argsOf(inst, 'trimmed_curve')
@@ -460,7 +486,7 @@ export function parseStepAp202(text: string): StepParseResult {
       s += rot
       e += rot
       shapes.push({ kind: 'arc', layer, color, cx: c.x, cy: c.y, r, startDeg: s, endDeg: e })
-      bump(c.x - r, c.y - r); bump(c.x + r, c.y + r)
+      for (const p of arcExtent(c.x, c.y, r, s, e)) bump(p.x, p.y)
     }
   }
 

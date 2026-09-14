@@ -114,6 +114,34 @@ export function decodeDxfBytes(buf: ArrayBuffer): string {
   }
 }
 
+/**
+ * 円弧 の 実際 の 広がり (端点 + またぐ 0/90/180/270 度)。
+ * 円 の 外接矩形 で 代用 する と 半径 の 大きい 弧 で 範囲 が 壊れる。
+ */
+function arcExtent(
+  cx: number,
+  cy: number,
+  r: number,
+  sDeg: number,
+  eDeg: number,
+): { x: number; y: number }[] {
+  const norm = (a: number) => ((a % 360) + 360) % 360
+  const a0 = norm(sDeg)
+  let sweep = norm(eDeg) - a0
+  if (sweep <= 0) sweep += 360
+  const at = (deg: number) => ({
+    x: cx + r * Math.cos((deg * Math.PI) / 180),
+    y: cy + r * Math.sin((deg * Math.PI) / 180),
+  })
+  const out = [at(a0), at(a0 + sweep)]
+  for (const q of [0, 90, 180, 270]) {
+    let d = norm(q) - a0
+    if (d < 0) d += 360
+    if (d <= sweep) out.push(at(q))
+  }
+  return out
+}
+
 /** DXF 文字列を パースして 描画用の 正規化データ に 変換。 */
 export function parseDxf(dxfText: string): DxfDocument {
   const parser = new DxfParser()
@@ -204,8 +232,18 @@ export function parseDxf(dxfText: string): DxfDocument {
           startDeg: e.startAngle * (180 / Math.PI) + t.rotDeg,
           endDeg: e.endAngle * (180 / Math.PI) + t.rotDeg,
         })
-        updateBounds(c.x - r, c.y - r)
-        updateBounds(c.x + r, c.y + r)
+        // 円 の 外接矩形 では なく 弧 の 実際 の 広がり を 見る。
+        // 半径 が 極端に 大きい 弧 (道路 の 線形 など) で 図面 の 範囲 が
+        // 桁違い に 広がり、全体表示 が 潰れる の を 防ぐ
+        for (const p of arcExtent(
+          c.x,
+          c.y,
+          r,
+          e.startAngle * (180 / Math.PI) + t.rotDeg,
+          e.endAngle * (180 / Math.PI) + t.rotDeg,
+        )) {
+          updateBounds(p.x, p.y)
+        }
       } else if (ent.type === 'INSERT') {
         const e = ent as IInsertEntity
         const blk = blocks[e.name]
