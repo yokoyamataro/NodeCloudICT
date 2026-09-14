@@ -213,11 +213,20 @@ export interface StepParseResult extends DxfDocument {
 export function parseStepAp202(text: string): StepParseResult {
   const insts = parseInstances(text)
   const get = (id: number | null): Inst | null => (id == null ? null : insts.get(id) ?? null)
-  /** 型 t の 引数 を 取り出す (複合エンティティ にも 対応) */
+  /**
+   * 型 t の 引数 を 取り出す。
+   *
+   * 複合エンティティ (#12240=(STYLED_ITEM(...) REPRESENTATION_ITEM(' ') …)) では
+   * 継承 した name は representation_item 側 が 持つ ので、各 サブタイプ の
+   * 引数 から 先頭 の 名前 が 落ちる。 添字 を 単純 エンティティ と 揃える ため
+   * ダミー の 名前 を 足して 返す。
+   */
   const argsOf = (inst: Inst | null, t: string): string[] | null => {
     if (!inst) return null
     const i = inst.types.indexOf(t)
-    return i >= 0 ? inst.argsByType[i] : null
+    if (i < 0) return null
+    const raw = inst.argsByType[i]
+    return inst.types.length > 1 ? ["''", ...raw] : raw
   }
 
   // ---- 幾何 の 取り出し ----
@@ -348,9 +357,11 @@ export function parseStepAp202(text: string): StepParseResult {
       const b = refId(tc[1])
       if (b != null) usedAsBasis.add(b)
     }
+    // composite_curve_segment(transition, same_sense, parent_curve)
+    // name を 持たない ので 位置 では なく 末尾 で 取る
     const cc = argsOf(inst, 'composite_curve_segment')
     if (cc) {
-      const b = refId(cc[3])
+      const b = refId(cc[cc.length - 1])
       if (b != null) usedAsBasis.add(b)
     }
   }
@@ -453,8 +464,49 @@ export function parseStepAp202(text: string): StepParseResult {
     }
   }
 
+  /**
+   * 包み (styled_item / annotation_*_occurrence) が 指す 中身 の id。
+   *
+   * 部分図 の 中身 は 実体 の 図形 では なく この 包み が 並んで いる ので、
+   * 辿らない と 変換 が 効かず 実体 が 素 の 座標 で 出て しまう。
+   */
+  const wrapTargets = (inst: Inst): number[] => {
+    const out: number[] = []
+    // styled_item.item が 「飾って いる 実体」。 これ が 基本 の 経路
+    const si = argsOf(inst, 'styled_item')
+    if (si) {
+      const t = refId(si[2])
+      if (t != null) out.push(t)
+    }
+    // 塗り は 専用 の 引数 を 持つ
+    const fa = argsOf(inst, 'annotation_fill_area_occurrence')
+    if (fa) {
+      const t = refId(fa[1])
+      if (t != null) out.push(t)
+    }
+    // 寸法 など の まとまり。 中身 を 抱える
+    const dc = argsOf(inst, 'draughting_callout')
+    if (dc) {
+      for (const id of refList(dc[1])) out.push(id)
+    }
+    // 注記: dimension_curve_terminator (矢印) は 寸法線 を 参照 する が
+    // 「持って いる」 わけ では ない ので 辿らない (2 回 描いて しまう)
+    return Array.from(new Set(out))
+  }
+
+  /**
+   * 同じ 実体 を 同じ 置き方 で 2 度 描かない ため の 控え。
+   * 図面 は 「包み」 が 何通り か の 経路 で 同じ 実体 を 指す ことが あり
+   * (寸法 の まとまり と レイヤ 割り当て など)、その まま だと 重なって 出る。
+   * 置き方 が 違えば 別物 (同じ 記号 を 別 の 場所 に 貼る) な ので 鍵 に 含める。
+   */
+  const emitted = new Set<string>()
+
   /** 1 つ の item を 変換 xf を 掛けて 図形 に する */
-  const emitItem = (inst: Inst, xf: Xf) => {
+  const emitItem = (inst: Inst, xf: Xf, depth = 0) => {
+    const key = `${inst.id}|${xf.a.toFixed(6)},${xf.b.toFixed(6)},${xf.c.toFixed(6)},${xf.d.toFixed(6)},${xf.e.toFixed(4)},${xf.f.toFixed(4)}`
+    if (emitted.has(key)) return
+    emitted.add(key)
     // --- 円 (トリム されて いない もの だけ) ---
     const ci = argsOf(inst, 'circle')
     if (ci && !usedAsBasis.has(inst.id)) {
@@ -495,7 +547,7 @@ export function parseStepAp202(text: string): StepParseResult {
     }
     // --- 折れ線 ---
     const po = argsOf(inst, 'polyline')
-    if (po) {
+    if (po && !usedAsBasis.has(inst.id)) {
       const pts: XY[] = []
       for (const pid of refList(po[1])) {
         const p0 = pointOf(pid)
@@ -517,7 +569,7 @@ export function parseStepAp202(text: string): StepParseResult {
       argsOf(inst, 'b_spline_curve_with_knots') ??
       argsOf(inst, 'b_spline_curve') ??
       argsOf(inst, 'bezier_curve')
-    if (bs) {
+    if (bs && !usedAsBasis.has(inst.id)) {
       const pts: XY[] = []
       for (const pid of refList(bs[2] ?? bs[1])) {
         const p0 = pointOf(pid)
@@ -531,6 +583,18 @@ export function parseStepAp202(text: string): StepParseResult {
           closed: false,
           pts,
         })
+      }
+      return
+    }
+    // --- 複合曲線: 中身 の 線分 を それぞれ 描く ---
+    const comp = argsOf(inst, 'composite_curve')
+    if (comp) {
+      if (depth > 8) return
+      for (const segId of refList(comp[1])) {
+        const seg = argsOf(get(segId), 'composite_curve_segment')
+        if (!seg) continue
+        const curve = get(refId(seg[seg.length - 1]))
+        if (curve) emitItem(curve, xf, depth + 1)
       }
       return
     }
@@ -572,7 +636,18 @@ export function parseStepAp202(text: string): StepParseResult {
       bump(p.x, p.y)
       return
     }
+    // ここ まで 来たら 実体 では ない。 包み なら 中身 を 辿る
+    if (depth > 8) return
+    for (const id of wrapTargets(inst)) {
+      const child = get(id)
+      if (!child) continue
+      const mi = argsOf(child, 'mapped_item')
+      if (mi) emitMappedRef(mi, xf, depth + 1)
+      else emitItem(child, xf, depth + 1)
+    }
   }
+  /** emitMapped は 後 で 定義 する ので 間接参照 に する */
+  let emitMappedRef: (a: string[], parent: Xf, depth: number) => void = () => {}
 
   // ---- 記号 / 部品 の 貼り付け (representation_map + mapped_item) ----
   //
@@ -616,6 +691,22 @@ export function parseStepAp202(text: string): StepParseResult {
       const sn = d.y / len
       return { a: c, b: sn, c: -sn, d: c, e: o.x, f: o.y }
     }
+    // symbol_target(name, placement, x_scale, y_scale)
+    // SXF の 部分図 は これ で 縮尺 (1/100 なら 0.01) を 持つ
+    const st = argsOf(inst, 'symbol_target')
+    if (st) {
+      const base = xfOfPlacement(refId(st[1]))
+      const sx = Number.isFinite(numOf(st[2])) ? numOf(st[2]) : 1
+      const sy = Number.isFinite(numOf(st[3])) ? numOf(st[3]) : sx
+      return {
+        a: base.a * sx,
+        b: base.b * sx,
+        c: base.c * sy,
+        d: base.d * sy,
+        e: base.e,
+        f: base.f,
+      }
+    }
     const op =
       argsOf(inst, 'cartesian_transformation_operator_2d') ??
       argsOf(inst, 'cartesian_transformation_operator')
@@ -645,13 +736,35 @@ export function parseStepAp202(text: string): StepParseResult {
   const mappedItemIds = new Set<number>()
   const mapTargets = new Map<number, { repId: number; origin: number | null }>()
   for (const inst of insts.values()) {
-    const rm = argsOf(inst, 'representation_map')
+    const rm =
+      argsOf(inst, 'representation_map') ?? argsOf(inst, 'symbol_representation_map')
     if (!rm) continue
     const repId = refId(rm[1])
     mapTargets.set(inst.id, { repId: repId ?? -1, origin: refId(rm[0]) })
-    if (repId != null) {
-      for (const id of repItems.get(repId) ?? []) mappedItemIds.add(id)
+  }
+  /** 貼られる 側 に 属する id を 包み の 先 まで 辿って 集める */
+  const collectMapped = (repId: number, depth: number) => {
+    if (depth > 8) return
+    for (const id of repItems.get(repId) ?? []) {
+      const stack = [id]
+      while (stack.length > 0) {
+        const cur = stack.pop() as number
+        if (mappedItemIds.has(cur)) continue
+        mappedItemIds.add(cur)
+        const inst = get(cur)
+        if (!inst) continue
+        const mi = argsOf(inst, 'mapped_item')
+        if (mi) {
+          const src = mapTargets.get(refId(mi[1]) ?? -1)
+          if (src && src.repId >= 0) collectMapped(src.repId, depth + 1)
+          continue
+        }
+        for (const t of wrapTargets(inst)) stack.push(t)
+      }
     }
+  }
+  for (const { repId } of mapTargets.values()) {
+    if (repId >= 0) collectMapped(repId, 0)
   }
 
   /** representation の 中身 を 変換 を 掛けて 描く (入れ子 も 辿る) */
@@ -678,14 +791,27 @@ export function parseStepAp202(text: string): StepParseResult {
     emitRep(src.repId, xf, depth)
   }
 
-  // まず 貼り付け を 描く
+  emitMappedRef = emitMapped
+
+  // まず 貼り付け を 描く。
+  // ただし 別 の 部分図 の 中 に ある 貼り付け (入れ子) は、親 を 描く ときに
+  // 一緒に 描かれる ので ここ では 飛ばす (でないと 2 回 出る)
   for (const inst of insts.values()) {
+    if (mappedItemIds.has(inst.id)) continue
     const mi = argsOf(inst, 'mapped_item')
     if (mi) emitMapped(mi, ID, 0)
   }
+  // 包み から 辿られる 実体 は 包み 側 で 描く ので、単独 では 描かない
+  // (両方 描くと 同じ 図形 が 2 回 出る)
+  const wrappedIds = new Set<number>()
+  for (const inst of insts.values()) {
+    for (const t of wrapTargets(inst)) wrappedIds.add(t)
+  }
+
   // 貼られる 側 に 属さない item を そのまま 描く
   for (const inst of insts.values()) {
     if (mappedItemIds.has(inst.id)) continue
+    if (wrappedIds.has(inst.id)) continue
     if (argsOf(inst, 'mapped_item')) continue
     emitItem(inst, ID)
   }
