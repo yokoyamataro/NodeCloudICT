@@ -371,21 +371,24 @@ function SiteOwnerUnifiedView() {
           </button>
         </aside>
 
-        {/* 右エリア: 上=組織情報 / 下=メンバー */}
-        <main className="flex-1 flex flex-col overflow-hidden">
+        {/* 右エリア: 左=組織情報 (1 列 に 積んだ ので 幅 は 固定) /
+            右=メンバー。 縦積み に した ぶん 空いた 右側 を 使う */}
+        <main className="flex-1 flex overflow-hidden min-w-0">
           {selectedOrgId === '__usage__' ? (
             <SiteUsageView />
           ) : selectedOrg ? (
             <>
-              <OrgInfoForm
-                key={selectedOrg.id}
-                org={selectedOrg}
-                editable={true}
-                siteOwner={true}
-                onSaved={handleOrgUpdated}
-                onDeleted={handleOrgDeleted}
-              />
-              <div className="flex-1 min-h-0 overflow-hidden border-t bg-white flex flex-col">
+              <div className="w-[34rem] max-w-[45%] shrink-0 overflow-auto border-r">
+                <OrgInfoForm
+                  key={selectedOrg.id}
+                  org={selectedOrg}
+                  editable={true}
+                  siteOwner={true}
+                  onSaved={handleOrgUpdated}
+                  onDeleted={handleOrgDeleted}
+                />
+              </div>
+              <div className="flex-1 min-w-0 min-h-0 overflow-hidden bg-white flex flex-col">
                 <OrgSubTabs
                   key={selectedOrg.id}
                   organizationId={selectedOrg.id}
@@ -472,15 +475,18 @@ function OrgAdminUnifiedView({ adminOrgs }: { adminOrgs: AdminOrgRow[] }) {
         )}
       </header>
 
-      <div className="flex-1 flex flex-col overflow-hidden">
+      {/* 左=組織情報 / 右=メンバー (サイトオーナー の 画面 と 同じ 並び) */}
+      <div className="flex-1 flex overflow-hidden min-w-0">
         {loading || !org ? (
           <div className="flex-1 flex items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
           </div>
         ) : (
           <>
-            <OrgInfoForm org={org} editable={false} />
-            <div className="flex-1 min-h-0 overflow-hidden border-t bg-white flex flex-col">
+            <div className="w-[34rem] max-w-[45%] shrink-0 overflow-auto border-r">
+              <OrgInfoForm org={org} editable={false} />
+            </div>
+            <div className="flex-1 min-w-0 min-h-0 overflow-hidden bg-white flex flex-col">
               <OrgSubTabs
                 organizationId={org.id}
                 organizationName={org.name}
