@@ -705,8 +705,9 @@ function InviteMemberModal({
           送信されます。
         </p>
         <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">
+          {/* 項目名 は 左、入力欄 は 右 (組織情報 と 揃える) */}
+          <div className="flex items-center gap-2">
+            <label className="w-24 shrink-0 text-xs font-medium text-slate-600">
               メールアドレス *
             </label>
             <input
@@ -714,18 +715,18 @@ function InviteMemberModal({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full px-3 py-2 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 min-w-0 px-3 py-2 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="example@email.com"
             />
           </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">
+          <div className="flex items-center gap-2">
+            <label className="w-24 shrink-0 text-xs font-medium text-slate-600">
               役割
             </label>
             <select
               value={role}
               onChange={(e) => setRole(e.target.value as 'admin' | 'member')}
-              className="w-full px-3 py-2 text-sm border rounded bg-white"
+              className="flex-1 min-w-0 px-3 py-2 text-sm border rounded bg-white"
             >
               <option value="member">一般</option>
               <option value="admin">管理者</option>

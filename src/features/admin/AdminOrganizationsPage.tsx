@@ -947,17 +947,23 @@ function FormField({
       : span === 2
         ? 'sm:col-span-2'
         : ''
+  // 項目名 は 上 では なく 左。 「組織名 / 改行 / ◯◯株式会社」 だと 縦に 伸びて
+  // 一覧性 が 落ちる ので、1 行 に 収める。
   return (
     <div
-      className={`${spanClass} ${
+      className={`${spanClass} flex items-start gap-2 ${
         ownerOnly ? 'rounded border border-amber-300 bg-amber-50/60 px-1.5 py-1 -mx-1.5' : ''
       }`}
     >
-      <label className="flex items-center gap-1 text-[11px] text-slate-500 mb-0.5">
+      <label
+        className={`${
+          ownerOnly ? 'w-28' : 'w-24'
+        } shrink-0 pt-1.5 flex flex-wrap items-center gap-1 text-[11px] text-slate-500`}
+      >
         {label}
         {ownerOnly && <OwnerOnlyBadge />}
       </label>
-      {children}
+      <div className="flex-1 min-w-0">{children}</div>
     </div>
   )
 }
