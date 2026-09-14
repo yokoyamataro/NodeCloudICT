@@ -3,7 +3,15 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, LogOut, ArrowLeft, Plus, Download, CheckCircle2 } from 'lucide-react'
+import {
+  Loader2,
+  LogOut,
+  ArrowLeft,
+  Plus,
+  Download,
+  CheckCircle2,
+  FileText,
+} from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useOfflineListFallback } from '@/lib/useOfflineListFallback'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -26,6 +34,7 @@ import {
   type SnapshotMeta,
 } from '@/lib/offlineFarmCache'
 import { FarmChatSheet } from '@/features/chat/FarmChatSheet'
+import { MobileFarmFilesSheet } from './MobileFarmFilesSheet'
 import { useFarmChatStore } from '@/stores/farmChatStore'
 
 const WORK_TYPE_COLORS: Record<string, string> = {
@@ -205,6 +214,8 @@ export function MobileTopPage() {
     }
   }, [farms, subscribeFarmChat, unsubscribeFarmChat])
   const [chatFarm, setChatFarm] = useState<Farm | null>(null)
+  /** ファイル シート を 出す 工区 (図面 を 現場 で 見る) */
+  const [filesFarm, setFilesFarm] = useState<Farm | null>(null)
 
   const closeNewFarmDialog = () => {
     setShowNewFarmDialog(false)
@@ -464,6 +475,15 @@ export function MobileTopPage() {
                         <Download className="h-4 w-4" />
                       )}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setFilesFarm(farm)}
+                      className="p-2 rounded text-slate-500 hover:bg-slate-100"
+                      title="この工区のファイル (図面 / PDF) を見る"
+                      aria-label="ファイル"
+                    >
+                      <FileText className="h-4 w-4" />
+                    </button>
                     <FarmChatIconButton
                       farmId={farm.id}
                       onClick={() => setChatFarm(farm)}
@@ -605,6 +625,15 @@ export function MobileTopPage() {
           </div>
         )
       })()}
+
+      {/* 工区ファイル シート (図面 / PDF の 閲覧) */}
+      {filesFarm && (
+        <MobileFarmFilesSheet
+          farmId={filesFarm.id}
+          farmName={filesFarm.name}
+          onClose={() => setFilesFarm(null)}
+        />
+      )}
 
       {/* 工区チャットシート */}
       {chatFarm && (
