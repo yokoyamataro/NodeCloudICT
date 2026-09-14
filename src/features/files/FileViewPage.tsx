@@ -69,6 +69,13 @@ export function FileViewPage() {
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
             読み込み中…
           </div>
+        ) : kind !== 'dxf' && doc == null ? (
+          // SXF は 解析 に 一拍 かかる。 先に ビューア を 出す と
+          // DXF として 読もう と して 失敗表示 に なる
+          <div className="h-full flex items-center justify-center text-sm text-slate-500">
+            <Loader2 className="h-5 w-5 animate-spin mr-2" />
+            図面を解析中…
+          </div>
         ) : doc && doc.shapes.length === 0 ? (
           <div className="h-full flex items-center justify-center px-6 text-center text-sm text-slate-500">
             表示できる図形が見つかりませんでした。

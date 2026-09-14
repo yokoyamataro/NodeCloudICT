@@ -4,7 +4,7 @@
 // - マウス ホイール ズーム / 左ドラッグ パン (Interactive 断面エディタと 同じ 実装)
 // - 「トレース モード」(次コミット で 実装予定) の フックだけ 型に 用意
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   parseDxf,
   computeSnapTargets,
@@ -103,6 +103,18 @@ export function DxfCrossSectionViewer({
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null)
 
   const containerRef = useRef<HTMLDivElement | null>(null)
+  /**
+   * 枠 が 後から 現れる ことが ある (解析前 は 別 の 表示 を 返す ため)。
+   * ref だけ だと 監視 を 張り直せず、
+   *   ・大きさ が 既定 の まま で 倍率 が 画面 と 合わない
+   *   ・指 操作 が 効かない
+   * に なる。 枠 が 付いた こと を 状態 に して 張り直す。
+   */
+  const [containerReady, setContainerReady] = useState(0)
+  const setContainerNode = useCallback((el: HTMLDivElement | null) => {
+    containerRef.current = el
+    if (el) setContainerReady((n) => n + 1)
+  }, [])
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 800, h: 500 })
   useEffect(() => {
     const el = containerRef.current
@@ -115,8 +127,13 @@ export function DxfCrossSectionViewer({
       })
     })
     ro.observe(el)
+    // 初回 は 実測 して おく (observe 前 の 既定値 を 引きずらない)
+    const r = el.getBoundingClientRect()
+    if (r.width > 0 && r.height > 0) {
+      setSize({ w: Math.max(320, Math.floor(r.width)), h: Math.max(200, Math.floor(r.height)) })
+    }
     return () => ro.disconnect()
-  }, [])
+  }, [containerReady])
 
   // 自動フィット (bounds → SVG 座標)
   const padding = 20
@@ -254,7 +271,7 @@ export function DxfCrossSectionViewer({
       el.removeEventListener('touchend', onEnd)
       el.removeEventListener('touchcancel', onEnd)
     }
-  }, [])
+  }, [containerReady])
 
   // ホイール ズーム (passive false 必要 なので 生 addEventListener)
   useEffect(() => {
@@ -280,7 +297,7 @@ export function DxfCrossSectionViewer({
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [])
+  }, [containerReady])
 
   /** 囲んだ 矩形 を 画面いっぱい に する (マウス / タッチ 共通) */
   const applyRectZoom = () => {
@@ -545,7 +562,7 @@ export function DxfCrossSectionViewer({
         )}
       </div>
       <div
-        ref={containerRef}
+        ref={setContainerNode}
         className="flex-1 min-h-0 border rounded bg-white relative overflow-hidden"
         // 指 で 触った ときに ページ が スクロール / 拡大 しない ように する
         // (図面 側 で 移動 と 伸縮 を 受け取る)
