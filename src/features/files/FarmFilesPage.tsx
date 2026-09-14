@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Upload, Download, Trash2, Eye, Loader2, FileText, X } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
-import type { DxfDocument } from '@/lib/dxfRender'
+import type { SxfParseResult } from '@/lib/sxf/parseSxf'
 import { decodeDxfBytes } from '@/lib/dxfRender'
 import {
   FARM_FILE_ACCEPT,
@@ -56,7 +56,7 @@ export function FarmFilesPage() {
    * 横断図の DXF 取込で 使っている ビューアを そのまま 使って 画面内で 出す。
    */
   const [viewer, setViewer] = useState<
-    { row: FarmFileRow; text: string; doc?: DxfDocument | null } | null
+    { row: FarmFileRow; text: string; doc?: SxfParseResult | null } | null
   >(null)
   const [viewerLoading, setViewerLoading] = useState(false)
 
@@ -334,11 +334,40 @@ export function FarmFilesPage() {
             </div>
             <div className="flex-1 min-h-0">
               {viewer.doc && viewer.doc.shapes.length === 0 ? (
-                <div className="h-full flex items-center justify-center px-6 text-center text-sm text-slate-500">
-                  表示できる 図形 が 見つかりませんでした。
-                  <br />
-                  複合図形 (シンボル) だけ の ファイル や、対応して いない
-                  フィーチャ の 可能性 が あります。
+                // 何 が 入って いる ファイル なのか を 出す。
+                // 対応表 を 実データ に 合わせる ため の 手がかり に する
+                <div className="h-full overflow-auto px-6 py-6 text-sm text-slate-600">
+                  <p className="font-medium text-slate-700">
+                    表示できる図形が見つかりませんでした。
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    複合図形 (シンボル) だけのファイルや、未対応の要素の可能性があります。
+                    下の内容を開発元に伝えていただくと対応できます。
+                  </p>
+                  <div className="mt-3 text-xs">
+                    <div className="font-medium text-slate-600">
+                      ファイル内で見つかった要素 (上位 20)
+                    </div>
+                    {viewer.doc.tokens.length === 0 ? (
+                      <div className="mt-1 text-slate-400">
+                        要素が 1 つも 見つかりません (形式が違う / 文字コードの問題)
+                      </div>
+                    ) : (
+                      <ul className="mt-1 grid grid-cols-2 gap-x-4 font-mono">
+                        {viewer.doc.tokens.slice(0, 20).map((t) => (
+                          <li key={t.name}>
+                            {t.name} <span className="text-slate-400">× {t.count}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div className="mt-3 text-xs">
+                    <div className="font-medium text-slate-600">先頭 400 文字</div>
+                    <pre className="mt-1 p-2 bg-slate-50 border rounded whitespace-pre-wrap break-all text-[10px] leading-snug">
+                      {viewer.text.slice(0, 400)}
+                    </pre>
+                  </div>
                 </div>
               ) : (
                 <DxfCrossSectionViewer

@@ -47,8 +47,10 @@ interface Feature {
  */
 function scanFeatures(text: string): Feature[] {
   const out: Feature[] = []
-  // P21 は 大文字 (LINE_FEATURE)、SFC は 小文字 の ことが 多い ので 無視 する
-  const re = /([A-Za-z_][A-Za-z0-9_]*_feature)\s*\(/gi
+  // 実ファイル では 綴り が 揺れる (大文字 / _feature 無し 等) ので、
+  // 「識別子 (」 を 全部 拾って おき、使う もの だけ 後段 で 選ぶ。
+  // ヘッダ の FILE_DESCRIPTION 等 も 拾う が、switch で 無視 される。
+  const re = /([A-Za-z_][A-Za-z0-9_]*)\s*\(/g
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
     const name = m[1].toLowerCase()
@@ -127,15 +129,21 @@ const numList = (s: string | undefined): number[] => {
  * 読めた 図形 が 0 でも 例外 に せず 空 の ドキュメント を 返す
  * (呼び側 で 「表示できる 図形 が ありません」 と 出す)。
  */
-export function parseSxf(text: string): DxfDocument {
+export interface SxfParseResult extends DxfDocument {
+  /** 読めなかった とき の 手がかり: 見つかった 識別子 と 件数 (多い順) */
+  tokens: { name: string; count: number }[]
+}
+
+export function parseSxf(text: string): SxfParseResult {
   const feats = scanFeatures(text)
 
   // レイヤ と ユーザ定義色 は 出現順 が そのまま 番号 (1 始まり)
   const layerNames: string[] = []
   const userColors: string[] = []
   for (const f of feats) {
-    if (f.name === 'layer_feature') layerNames.push(f.args[0] ?? '')
-    else if (f.name === 'color_feature') {
+    const key = f.name.replace(/_feature$/, '')
+    if (key === 'layer') layerNames.push(f.args[0] ?? '')
+    else if (key === 'color') {
       const r = int(f.args[0])
       const g = int(f.args[1])
       const b = int(f.args[2])
@@ -160,7 +168,8 @@ export function parseSxf(text: string): DxfDocument {
 
   for (const f of feats) {
     const a = f.args
-    switch (f.name) {
+    // line / line_feature の どちら でも 同じ 扱い に する
+    switch (f.name.replace(/_feature$/, '') + '_feature') {
       case 'line_feature': {
         // (layer, color, type, line_width, start_x, start_y, end_x, end_y)
         const layer = layerOf(int(a[0]))
@@ -287,5 +296,12 @@ export function parseSxf(text: string): DxfDocument {
   layers.sort((a, b) => a.name.localeCompare(b.name))
 
   if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = 100; maxY = 100 }
-  return { bounds: { minX, minY, maxX, maxY }, layers, shapes }
+
+  const counts = new Map<string, number>()
+  for (const f of feats) counts.set(f.name, (counts.get(f.name) ?? 0) + 1)
+  const tokens = Array.from(counts, ([name, count]) => ({ name, count })).sort(
+    (a, b) => b.count - a.count,
+  )
+
+  return { bounds: { minX, minY, maxX, maxY }, layers, shapes, tokens }
 }
