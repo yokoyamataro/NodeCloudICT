@@ -770,8 +770,9 @@ function OrgInfoForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        <FormField label="組織名 *" span={2}>
+      {/* 1 項目 = 1 行 で 縦 に 積む。 横 に 並べる と どの 項目 か 追いにくい */}
+      <div className="flex flex-col gap-2 max-w-2xl">
+        <FormField label="組織名 *">
           <input
             type="text"
             value={draft.name}
@@ -811,7 +812,7 @@ function OrgInfoForm({
             className={inputClass}
           />
         </FormField>
-        <FormField label="住所" span={3}>
+        <FormField label="住所">
           <input
             type="text"
             value={draft.address}
@@ -848,7 +849,7 @@ function OrgInfoForm({
         </FormField>
         {/* 製品別 の 上限 (organization_products.seat_limit)。
             契約 の 話 なので サイトオーナー のみ */}
-        <FormField label="ユーザー数上限 (製品別)" span={2} ownerOnly>
+        <FormField label="ユーザー数上限 (製品別)" ownerOnly>
           <div className="grid grid-cols-3 gap-2">
             {(
               [
@@ -898,7 +899,7 @@ function OrgInfoForm({
             </div>
           )}
         </FormField>
-        <FormField label="メモ" span={3}>
+        <FormField label="メモ">
           <textarea
             value={draft.note}
             onChange={(e) => setDraft((d) => ({ ...d, note: e.target.value }))}
@@ -932,26 +933,18 @@ export function OwnerOnlyBadge({ className = '' }: { className?: string }) {
 function FormField({
   label,
   children,
-  span = 1,
   ownerOnly = false,
 }: {
   label: string
   children: React.ReactNode
-  span?: 1 | 2 | 3
   /** サイトオーナー だけ が 触れる 項目。 琥珀 の 枠 と バッジ を 付ける */
   ownerOnly?: boolean
 }) {
-  const spanClass =
-    span === 3
-      ? 'sm:col-span-2 lg:col-span-3'
-      : span === 2
-        ? 'sm:col-span-2'
-        : ''
   // 項目名 は 上 では なく 左。 「組織名 / 改行 / ◯◯株式会社」 だと 縦に 伸びて
-  // 一覧性 が 落ちる ので、1 行 に 収める。
+  // 一覧性 が 落ちる ので、1 行 に 収める。 項目 どうし は 縦 に 積む。
   return (
     <div
-      className={`${spanClass} flex items-start gap-2 ${
+      className={`flex items-start gap-2 ${
         ownerOnly ? 'rounded border border-amber-300 bg-amber-50/60 px-1.5 py-1 -mx-1.5' : ''
       }`}
     >
