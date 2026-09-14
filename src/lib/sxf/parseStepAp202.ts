@@ -355,10 +355,38 @@ export function parseStepAp202(text: string): StepParseResult {
     }
   }
 
+  /**
+   * 2 次元 の アフィン 変換。 x' = a x + c y + e / y' = b x + d y + f
+   *
+   * 図面 は 記号 や 部品 を 「別 の 座標系 で 1 回 定義 して、置きたい 場所 に
+   * 何度も 貼る」 作り に なって いる (representation_map + mapped_item)。
+   * 貼る ときの 変換 を 掛けない と、その 中身 が 原点 付近 に 出て しまい、
+   * 文字 が 変な 位置 に 出たり 図面 全体 の 範囲 が 狂ったり する。
+   */
+  interface Xf { a: number; b: number; c: number; d: number; e: number; f: number }
+  const ID: Xf = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
+  const apply = (t: Xf, p: XY): XY => ({
+    x: t.a * p.x + t.c * p.y + t.e,
+    y: t.b * p.x + t.d * p.y + t.f,
+  })
+  /** t2 を 掛けて から t1 を 掛ける 合成 */
+  const mul = (t1: Xf, t2: Xf): Xf => ({
+    a: t1.a * t2.a + t1.c * t2.b,
+    b: t1.b * t2.a + t1.d * t2.b,
+    c: t1.a * t2.c + t1.c * t2.d,
+    d: t1.b * t2.c + t1.d * t2.d,
+    e: t1.a * t2.e + t1.c * t2.f + t1.e,
+    f: t1.b * t2.e + t1.d * t2.f + t1.f,
+  })
+  /** 拡大率 (半径 / 文字高 に 掛ける)。 回転 だけ なら 1 */
+  const scaleOf = (t: Xf): number => Math.sqrt(Math.abs(t.a * t.d - t.b * t.c)) || 1
+  /** 回転角 [度] (円弧 の 開始 / 終了 角 と 文字 の 傾き に 足す) */
+  const rotOf = (t: Xf): number => (Math.atan2(t.b, t.a) * 180) / Math.PI
+
   /** 角度 の 値 を 度 に 揃える (ラジアン で 書く CAD も ある) */
   const toDeg = (v: number): number => (Math.abs(v) <= Math.PI * 2 + 1e-9 ? (v * 180) / Math.PI : v)
 
-  const emitTrimmed = (inst: Inst, a: string[]) => {
+  const emitTrimmed = (inst: Inst, a: string[], xf: Xf) => {
     const basis = get(refId(a[1]))
     if (!basis) return
     const layer = layerOfItem(inst.id)
@@ -383,9 +411,11 @@ export function parseStepAp202(text: string): StepParseResult {
         }
         return null
       }
-      const s = at(a[2] ?? '')
-      const e = at(a[3] ?? '')
-      if (!s || !e) return
+      const s0 = at(a[2] ?? '')
+      const e0 = at(a[3] ?? '')
+      if (!s0 || !e0) return
+      const s = apply(xf, s0)
+      const e = apply(xf, e0)
       shapes.push({ kind: 'line', layer, color, x1: s.x, y1: s.y, x2: e.x, y2: e.y })
       bump(s.x, s.y); bump(e.x, e.y)
       return
@@ -394,15 +424,17 @@ export function parseStepAp202(text: string): StepParseResult {
     const circArgs = argsOf(basis, 'circle')
     if (circArgs) {
       const pl = argsOf(get(refId(circArgs[1])), 'axis2_placement_2d')
-      const c = pointOf(refId(pl?.[1] ?? ''))
-      const r = numOf(circArgs[2])
-      if (!c || !Number.isFinite(r)) return
+      const c0 = pointOf(refId(pl?.[1] ?? ''))
+      const r0 = numOf(circArgs[2])
+      if (!c0 || !Number.isFinite(r0)) return
+      const c = apply(xf, c0)
+      const r = r0 * scaleOf(xf)
       const ref = dirOf(refId(pl?.[2] ?? '')) ?? { x: 1, y: 0 }
       const base = (Math.atan2(ref.y, ref.x) * 180) / Math.PI
       const ang = (trim: string): number | null => {
         const pid = refId((/#\d+/.exec(trim) ?? [''])[0])
         const p = pointOf(pid)
-        if (p) return (Math.atan2(p.y - c.y, p.x - c.x) * 180) / Math.PI
+        if (p) return (Math.atan2(p.y - c0.y, p.x - c0.x) * 180) / Math.PI
         const pm = /parameter_value\s*\(\s*([-0-9.eE+]+)\s*\)/i.exec(trim)
         if (pm) return base + toDeg(Number(pm[1]))
         return null
@@ -412,12 +444,17 @@ export function parseStepAp202(text: string): StepParseResult {
       if (s == null || e == null) return
       // sense_agreement=.F. なら 向き が 逆
       if (/\.F\./i.test(a[4] ?? '')) { const t = s; s = e; e = t }
+      // 貼り付け の 回転 を 足す
+      const rot = rotOf(xf)
+      s += rot
+      e += rot
       shapes.push({ kind: 'arc', layer, color, cx: c.x, cy: c.y, r, startDeg: s, endDeg: e })
       bump(c.x - r, c.y - r); bump(c.x + r, c.y + r)
     }
   }
 
-  for (const inst of insts.values()) {
+  /** 1 つ の item を 変換 xf を 掛けて 図形 に する */
+  const emitItem = (inst: Inst, xf: Xf) => {
     // --- 円 (トリム されて いない もの だけ) ---
     const ci = argsOf(inst, 'circle')
     if (ci && !usedAsBasis.has(inst.id)) {
@@ -425,15 +462,17 @@ export function parseStepAp202(text: string): StepParseResult {
       const c = pointOf(refId(pl?.[1] ?? ''))
       const r = numOf(ci[2])
       if (c && Number.isFinite(r)) {
+        const p = apply(xf, c)
+        const rr = r * scaleOf(xf)
         shapes.push({
           kind: 'circle',
           layer: layerOfItem(inst.id),
           color: colorOfStyleItem(inst.id) ?? '#000000',
-          cx: c.x, cy: c.y, r,
+          cx: p.x, cy: p.y, r: rr,
         })
-        bump(c.x - r, c.y - r); bump(c.x + r, c.y + r)
+        bump(p.x - rr, p.y - rr); bump(p.x + rr, p.y + rr)
       }
-      continue
+      return
     }
     // --- 楕円 (長半径 の 円 で 近似) ---
     const el = argsOf(inst, 'ellipse')
@@ -442,23 +481,25 @@ export function parseStepAp202(text: string): StepParseResult {
       const c = pointOf(refId(pl?.[1] ?? ''))
       const r = Math.max(numOf(el[2]), numOf(el[3]))
       if (c && Number.isFinite(r)) {
+        const p = apply(xf, c)
+        const rr = r * scaleOf(xf)
         shapes.push({
           kind: 'circle',
           layer: layerOfItem(inst.id),
           color: colorOfStyleItem(inst.id) ?? '#000000',
-          cx: c.x, cy: c.y, r,
+          cx: p.x, cy: p.y, r: rr,
         })
-        bump(c.x - r, c.y - r); bump(c.x + r, c.y + r)
+        bump(p.x - rr, p.y - rr); bump(p.x + rr, p.y + rr)
       }
-      continue
+      return
     }
     // --- 折れ線 ---
     const po = argsOf(inst, 'polyline')
     if (po) {
       const pts: XY[] = []
       for (const pid of refList(po[1])) {
-        const p = pointOf(pid)
-        if (p) { pts.push(p); bump(p.x, p.y) }
+        const p0 = pointOf(pid)
+        if (p0) { const p = apply(xf, p0); pts.push(p); bump(p.x, p.y) }
       }
       if (pts.length >= 2) {
         shapes.push({
@@ -469,7 +510,7 @@ export function parseStepAp202(text: string): StepParseResult {
           pts,
         })
       }
-      continue
+      return
     }
     // --- スプライン は 制御点 の 折れ線 で 近似 ---
     const bs =
@@ -479,8 +520,8 @@ export function parseStepAp202(text: string): StepParseResult {
     if (bs) {
       const pts: XY[] = []
       for (const pid of refList(bs[2] ?? bs[1])) {
-        const p = pointOf(pid)
-        if (p) { pts.push(p); bump(p.x, p.y) }
+        const p0 = pointOf(pid)
+        if (p0) { const p = apply(xf, p0); pts.push(p); bump(p.x, p.y) }
       }
       if (pts.length >= 2) {
         shapes.push({
@@ -491,13 +532,13 @@ export function parseStepAp202(text: string): StepParseResult {
           pts,
         })
       }
-      continue
+      return
     }
     // --- トリム曲線 (直線 / 円弧) ---
     const tc = argsOf(inst, 'trimmed_curve')
     if (tc) {
-      emitTrimmed(inst, tc)
-      continue
+      emitTrimmed(inst, tc, xf)
+      return
     }
     // --- 文字 ---
     const tl =
@@ -507,10 +548,11 @@ export function parseStepAp202(text: string): StepParseResult {
     if (tl) {
       const str = strOf(tl[1])
       const pl = argsOf(get(refId(tl[2])), 'axis2_placement_2d')
-      const p = pointOf(refId(pl?.[1] ?? ''))
-      if (!str || !p) continue
+      const p0 = pointOf(refId(pl?.[1] ?? ''))
+      if (!str || !p0) return
+      const p = apply(xf, p0)
       const d = dirOf(refId(pl?.[2] ?? '')) ?? { x: 1, y: 0 }
-      const rot = (Math.atan2(d.y, d.x) * 180) / Math.PI
+      const rot = (Math.atan2(d.y, d.x) * 180) / Math.PI + rotOf(xf)
       // planar_extent(name, size_in_x, size_in_y) の y が 文字高
       const ex = argsOf(get(refId(tl[6] ?? '')), 'planar_extent')
       const h = numOf(ex?.[2] ?? '')
@@ -521,15 +563,131 @@ export function parseStepAp202(text: string): StepParseResult {
         color: colorOfStyleItem(inst.id) ?? '#000000',
         x: p.x,
         y: p.y,
-        height: Number.isFinite(h) && h > 0 ? h : 2.5,
+        height: (Number.isFinite(h) && h > 0 ? h : 2.5) * scaleOf(xf),
         text: str,
         rotationDeg: rot,
         anchor: align.includes('right') ? 'end' : align.includes('cent') ? 'middle' : 'start',
         baseline: 'alphabetic',
       })
       bump(p.x, p.y)
-      continue
+      return
     }
+  }
+
+  // ---- 記号 / 部品 の 貼り付け (representation_map + mapped_item) ----
+  //
+  // representation('名前',(中身...),文脈) を representation_map が 指し、
+  // mapped_item が 「どこに 貼るか」 を 持つ。 貼られる 側 の 中身 を
+  // その場 で 描く と 原点 付近 に 出て しまう ので、
+  //   ・貼られる 側 の item は 単独 では 描かない
+  //   ・mapped_item ごと に 変換 を 掛けて 描く
+  // と する。
+  const REP_TYPES = [
+    'representation',
+    'shape_representation',
+    'symbol_representation',
+    'annotation_symbol_representation',
+    'draughting_subfigure_representation',
+    'annotation_occurrence_relationship',
+  ]
+  /** representation id → 中身 の item id */
+  const repItems = new Map<number, number[]>()
+  for (const inst of insts.values()) {
+    for (const t of REP_TYPES) {
+      const a = argsOf(inst, t)
+      if (a && a.length >= 2) {
+        const ids = refList(a[1])
+        if (ids.length > 0) repItems.set(inst.id, ids)
+        break
+      }
+    }
+  }
+
+  /** 置き方 (axis2_placement_2d / 変換演算子) を アフィン に する */
+  const xfOfPlacement = (id: number | null): Xf => {
+    const inst = get(id)
+    if (!inst) return ID
+    const pl = argsOf(inst, 'axis2_placement_2d')
+    if (pl) {
+      const o = pointOf(refId(pl[1])) ?? { x: 0, y: 0 }
+      const d = dirOf(refId(pl[2] ?? '')) ?? { x: 1, y: 0 }
+      const len = Math.hypot(d.x, d.y) || 1
+      const c = d.x / len
+      const sn = d.y / len
+      return { a: c, b: sn, c: -sn, d: c, e: o.x, f: o.y }
+    }
+    const op =
+      argsOf(inst, 'cartesian_transformation_operator_2d') ??
+      argsOf(inst, 'cartesian_transformation_operator')
+    if (op) {
+      const o = pointOf(refId(op[3])) ?? { x: 0, y: 0 }
+      const d = dirOf(refId(op[1] ?? '')) ?? { x: 1, y: 0 }
+      const k = Number.isFinite(numOf(op[4])) ? numOf(op[4]) : 1
+      const len = Math.hypot(d.x, d.y) || 1
+      const c = (d.x / len) * k
+      const sn = (d.y / len) * k
+      return { a: c, b: sn, c: -sn, d: c, e: o.x, f: o.y }
+    }
+    return ID
+  }
+  /** アフィン の 逆 */
+  const invert = (t: Xf): Xf => {
+    const det = t.a * t.d - t.b * t.c
+    if (!det) return ID
+    const ia = t.d / det
+    const ib = -t.b / det
+    const ic = -t.c / det
+    const id2 = t.a / det
+    return { a: ia, b: ib, c: ic, d: id2, e: -(ia * t.e + ic * t.f), f: -(ib * t.e + id2 * t.f) }
+  }
+
+  // 貼られる 側 (= representation_map が 指す 先) の item は 単独 では 描かない
+  const mappedItemIds = new Set<number>()
+  const mapTargets = new Map<number, { repId: number; origin: number | null }>()
+  for (const inst of insts.values()) {
+    const rm = argsOf(inst, 'representation_map')
+    if (!rm) continue
+    const repId = refId(rm[1])
+    mapTargets.set(inst.id, { repId: repId ?? -1, origin: refId(rm[0]) })
+    if (repId != null) {
+      for (const id of repItems.get(repId) ?? []) mappedItemIds.add(id)
+    }
+  }
+
+  /** representation の 中身 を 変換 を 掛けて 描く (入れ子 も 辿る) */
+  const emitRep = (repId: number, xf: Xf, depth: number) => {
+    if (depth > 8) return
+    for (const id of repItems.get(repId) ?? []) {
+      const child = get(id)
+      if (!child) continue
+      const mi = argsOf(child, 'mapped_item')
+      if (mi) {
+        emitMapped(mi, xf, depth + 1)
+        continue
+      }
+      emitItem(child, xf)
+    }
+  }
+  /** mapped_item 1 つ を 描く */
+  const emitMapped = (a: string[], parent: Xf, depth: number) => {
+    if (depth > 8) return
+    const src = mapTargets.get(refId(a[1]) ?? -1)
+    if (!src || src.repId < 0) return
+    // 元 の 原点 を 打ち消して から 置き先 へ
+    const xf = mul(parent, mul(xfOfPlacement(refId(a[2])), invert(xfOfPlacement(src.origin))))
+    emitRep(src.repId, xf, depth)
+  }
+
+  // まず 貼り付け を 描く
+  for (const inst of insts.values()) {
+    const mi = argsOf(inst, 'mapped_item')
+    if (mi) emitMapped(mi, ID, 0)
+  }
+  // 貼られる 側 に 属さない item を そのまま 描く
+  for (const inst of insts.values()) {
+    if (mappedItemIds.has(inst.id)) continue
+    if (argsOf(inst, 'mapped_item')) continue
+    emitItem(inst, ID)
   }
 
   const layers: DxfLayerInfo[] = Array.from(layerNames).map((name) => ({
