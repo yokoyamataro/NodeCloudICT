@@ -11,8 +11,9 @@ import { useState } from 'react'
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
 import {
   TERM_KIND_LABEL,
-  edgeLength,
+  closureOf,
   figureFloorArea,
+  figureOutline,
   figureLabel,
   figureSum,
   floorAreaText,
@@ -20,9 +21,10 @@ import {
   newFigure,
   newId,
   newTerm,
+  moveLength,
   outlineSummary,
   polygonArea,
-  rectOutline,
+  rectMoves,
   sortFigures,
   termFormula,
   termValue,
@@ -34,8 +36,8 @@ import {
   type FloorFigure,
   type FloorPlan,
   type FloorPlanFrame,
+  type Move,
   type ParcelOption,
-  type Pt,
   type SitePlan,
   type TermKind,
 } from './floorPlanTypes'
@@ -356,7 +358,7 @@ export function StepFigures({
                 </button>
               </div>
               <div className="text-[11px] text-slate-500 font-mono">
-                {outlineSummary(f.outline)} / 床面積 {floorAreaText(figureFloorArea(f))} ㎡
+                {outlineSummary(figureOutline(f))} / 床面積 {floorAreaText(figureFloorArea(f))} ㎡
               </div>
             </li>
           ))}
@@ -401,9 +403,10 @@ function FigureEditor({
 }) {
   const [tab, setTab] = useState<'shape' | 'area'>('shape')
   const sum = figureSum(figure)
-  const poly = polygonArea(figure.outline)
+  const pts = figureOutline(figure)
+  const poly = polygonArea(pts)
   // 求積表 と 図形 が 食い違って いたら 気づける ように
-  const mismatch = figure.outline.length >= 3 && Math.abs(poly - sum) > 0.005
+  const mismatch = pts.length >= 3 && Math.abs(poly - sum) > 0.005
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -448,7 +451,7 @@ function FigureEditor({
       <div className="flex gap-3 flex-1 min-h-0">
         <div className="w-[26rem] shrink-0 flex flex-col min-h-0">
           {tab === 'shape' ? (
-            <OutlineEditor figure={figure} onChange={onChange} />
+            <ShapeEditor figure={figure} onChange={onChange} />
           ) : (
             <AreaTable figure={figure} onChange={onChange} />
           )}
@@ -469,7 +472,7 @@ function FigureEditor({
             <span className="font-semibold">
               床面積 <span className="font-mono">{floorAreaText(figureFloorArea(figure))}</span> ㎡
             </span>
-            {figure.outline.length >= 3 && (
+            {pts.length >= 3 && (
               <span className={mismatch ? 'text-amber-700' : 'text-slate-400'}>
                 図形の座標法 <span className="font-mono">{poly.toFixed(6)}</span>
                 {mismatch && ' … 求積表と一致しません'}
@@ -482,53 +485,41 @@ function FigureEditor({
   )
 }
 
-/** 形状: 点 の 表 + 辺 を 足す 補助 */
-function OutlineEditor({
+/**
+ * 形状: 辺 を 「縦・横 の 相対距離」 で 並べる。
+ * 「2, 0」 なら 前 の 点 から 縦 に 2 進む。 図面 の 寸法 が そのまま 入る。
+ */
+function ShapeEditor({
   figure,
   onChange,
 }: {
   figure: FloorFigure
   onChange: (p: Partial<FloorFigure>) => void
 }) {
-  const pts = figure.outline
-  const [dir, setDir] = useState<'E' | 'W' | 'N' | 'S'>('E')
-  const [len, setLen] = useState(0)
+  const moves = figure.moves
   const [seedW, setSeedW] = useState(0)
   const [seedH, setSeedH] = useState(0)
 
-  const setPts = (next: Pt[]) => onChange({ outline: next })
+  const setMoves = (next: Move[]) => onChange({ moves: next })
+  const patch = (i: number, p: Partial<Move>) =>
+    setMoves(moves.map((m, j) => (j === i ? { ...m, ...p } : m)))
 
-  const appendEdge = () => {
-    if (len === 0) return
-    const last = pts[pts.length - 1] ?? { x: 0, y: 0 }
-    const d = { E: [len, 0], W: [-len, 0], N: [0, len], S: [0, -len] }[dir]
-    const next = [...(pts.length === 0 ? [{ x: 0, y: 0 }] : pts)]
-    next.push({
-      x: Math.round((last.x + d[0]) * 1000) / 1000,
-      y: Math.round((last.y + d[1]) * 1000) / 1000,
-    })
-    setPts(next)
-  }
+  const closure = closureOf(moves)
+  const open = moves.length >= 3 && (Math.abs(closure.v) > 0.0005 || Math.abs(closure.h) > 0.0005)
 
   return (
     <div className="flex flex-col min-h-0">
-      {pts.length === 0 && (
+      {moves.length === 0 && (
         <div className="mb-2 p-2 border rounded bg-slate-50">
           <div className="text-xs font-semibold text-slate-600 mb-1">矩形から始める</div>
           <div className="flex items-center gap-1 text-sm">
-            <span className="text-xs text-slate-500">横</span>
-            <NumField
-              value={seedW}
-              onChange={(v) => setSeedW(v)}
-            />
             <span className="text-xs text-slate-500">縦</span>
-            <NumField
-              value={seedH}
-              onChange={(v) => setSeedH(v)}
-            />
+            <NumField value={seedH} onChange={setSeedH} />
+            <span className="text-xs text-slate-500">横</span>
+            <NumField value={seedW} onChange={setSeedW} />
             <button
               type="button"
-              onClick={() => seedW > 0 && seedH > 0 && setPts(rectOutline(seedW, seedH))}
+              onClick={() => seedW > 0 && seedH > 0 && setMoves(rectMoves(seedW, seedH))}
               className="px-2 py-1 text-xs border rounded hover:bg-white"
             >
               作成
@@ -542,37 +533,36 @@ function OutlineEditor({
           <thead className="bg-slate-50 text-xs text-slate-600 sticky top-0">
             <tr>
               <th className="px-2 py-1 text-left font-medium w-8">#</th>
-              <th className="px-2 py-1 text-right font-medium">X</th>
-              <th className="px-2 py-1 text-right font-medium">Y</th>
+              <th className="px-2 py-1 text-right font-medium">縦</th>
+              <th className="px-2 py-1 text-right font-medium">横</th>
               <th className="px-2 py-1 text-right font-medium">辺長</th>
               <th className="w-8" />
             </tr>
           </thead>
           <tbody className="divide-y">
-            {pts.map((p, i) => (
+            {moves.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-2 py-6 text-center text-xs text-slate-400">
+                  「辺を追加」で 1 辺ずつ入れます。
+                </td>
+              </tr>
+            )}
+            {moves.map((m, i) => (
               <tr key={i}>
                 <td className="px-2 py-1 text-xs text-slate-400">{i + 1}</td>
                 <td className="px-2 py-1 text-right">
-                  <NumField
-                    value={p.x}
-                    onChange={(v) =>
-                      setPts(pts.map((q, j) => (j === i ? { ...q, x: v } : q)))}
-                  />
+                  <NumField value={m.v} onChange={(v) => patch(i, { v })} />
                 </td>
                 <td className="px-2 py-1 text-right">
-                  <NumField
-                    value={p.y}
-                    onChange={(v) =>
-                      setPts(pts.map((q, j) => (j === i ? { ...q, y: v } : q)))}
-                  />
+                  <NumField value={m.h} onChange={(h) => patch(i, { h })} />
                 </td>
                 <td className="px-2 py-1 text-right font-mono text-xs text-slate-600">
-                  {edgeLength(pts, i).toFixed(3)}
+                  {moveLength(m).toFixed(3)}
                 </td>
                 <td className="px-1">
                   <button
                     type="button"
-                    onClick={() => setPts(pts.filter((_, j) => j !== i))}
+                    onClick={() => setMoves(moves.filter((_, j) => j !== i))}
                     className="p-0.5 text-slate-400 hover:text-red-600"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -584,49 +574,38 @@ function OutlineEditor({
         </table>
       </div>
 
-      <div className="mt-2 p-2 border rounded bg-slate-50">
-        <div className="text-xs font-semibold text-slate-600 mb-1">辺を足す</div>
-        <div className="flex items-center gap-1">
-          <select
-            className="px-2 py-1 text-sm border rounded"
-            value={dir}
-            onChange={(e) => setDir(e.target.value as 'E' | 'W' | 'N' | 'S')}
-          >
-            <option value="E">右へ</option>
-            <option value="W">左へ</option>
-            <option value="N">上へ</option>
-            <option value="S">下へ</option>
-          </select>
-          <NumField
-            value={len}
-            onChange={(v) => setLen(v)}
-          />
-          <span className="text-xs text-slate-500">m</span>
-          <button
-            type="button"
-            onClick={appendEdge}
-            className="px-2 py-1 text-xs border rounded hover:bg-white flex items-center gap-1"
-          >
-            <Plus className="h-3 w-3" />
-            追加
-          </button>
-        </div>
-        <div className="mt-1 text-[11px] text-slate-400">
-          隅切りなど斜めの辺は、点の X / Y を直接入れてください。最後の点と 1 点目は自動で閉じます。
-        </div>
+      <div className="mt-1 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setMoves([...moves, { v: 0, h: 0 }])}
+          className="px-2 py-0.5 text-xs border rounded hover:bg-slate-50 flex items-center gap-1"
+        >
+          <Plus className="h-3 w-3" />
+          辺を追加
+        </button>
+        <span className="text-[11px] text-slate-400">
+          前の点からの距離。上・右が正、下・左は負の数で入れます。
+        </span>
       </div>
+
+      {open && (
+        <div className="mt-1 px-2 py-1 rounded bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
+          形が閉じていません（閉合差 縦 {closure.v.toFixed(3)} / 横 {closure.h.toFixed(3)}）。
+          最後の辺で始点に戻るように入れてください。
+        </div>
+      )}
 
       <div className="mt-2 flex items-center gap-2 text-xs">
         <span className="text-slate-500">1階からのずれ</span>
-        <span className="text-slate-400">X</span>
-        <NumField
-          value={figure.offset.x}
-          onChange={(v) => onChange({ offset: { ...figure.offset, x: v } })}
-        />
-        <span className="text-slate-400">Y</span>
+        <span className="text-slate-400">縦</span>
         <NumField
           value={figure.offset.y}
           onChange={(v) => onChange({ offset: { ...figure.offset, y: v } })}
+        />
+        <span className="text-slate-400">横</span>
+        <NumField
+          value={figure.offset.x}
+          onChange={(v) => onChange({ offset: { ...figure.offset, x: v } })}
         />
       </div>
     </div>
@@ -954,7 +933,7 @@ export function StepSite({
       <div className="flex-1 min-w-0 border rounded bg-white p-2">
         <SitePlanPreview
           sitePoints={sitePoints}
-          outline={ground?.outline ?? []}
+          outline={ground ? figureOutline(ground) : []}
           offsetE={site.offsetE}
           offsetN={site.offsetN}
           rotationDeg={site.rotationDeg}
@@ -1493,7 +1472,7 @@ export function SheetPreview({
       <svg x={siteArea.x + 4} y={siteArea.y + 4} width={siteArea.w - 8} height={siteArea.h - 8}>
         <SitePlanPreview
           sitePoints={sitePoints}
-          outline={ground?.outline ?? []}
+          outline={ground ? figureOutline(ground) : []}
           offsetE={plan.site.offsetE}
           offsetN={plan.site.offsetN}
           rotationDeg={plan.site.rotationDeg}

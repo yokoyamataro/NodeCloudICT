@@ -14,6 +14,17 @@ export interface Pt {
   y: number
 }
 
+/**
+ * 形状 を 作る 1 辺。 前 の 点 から の 相対距離 (m) で 持つ。
+ *   v … 縦 (北 が 正)
+ *   h … 横 (東 が 正)
+ * 「2, 0」 なら 縦 に 2 進む、 の 意味。 図面 の 寸法 が そのまま 入る。
+ */
+export interface Move {
+  v: number
+  h: number
+}
+
 // ========================================================================
 // 求積表
 // ========================================================================
@@ -99,8 +110,8 @@ export interface FloorFigure {
   annexNo: number | null
   /** 階。 地下 は 負 の 数 */
   floorNo: number
-  /** 形状 (m)。 多角形 の 頂点 を 反時計回り に */
-  outline: Pt[]
+  /** 形状。 原点 から 1 辺 ずつ の 相対距離 で 表す */
+  moves: Move[]
   /** 1 階 に対する ずれ。 2 階 以降 を 1 階 の 点線 に 重ねて 描く ため */
   offset: Pt
   /** 求積表 */
@@ -108,8 +119,36 @@ export interface FloorFigure {
 }
 
 export function newFigure(kind: FigureKind, floorNo: number, annexNo: number | null): FloorFigure {
-  return { id: newId(), kind, annexNo, floorNo, outline: [], offset: { x: 0, y: 0 }, terms: [] }
+  return { id: newId(), kind, annexNo, floorNo, moves: [], offset: { x: 0, y: 0 }, terms: [] }
 }
+
+/**
+ * 辺 の 並び から 多角形 の 頂点 を 作る。 原点 (0,0) から 順 に 足す。
+ * 最後 が 原点 に 戻って いれば (= 閉合 して いれば) 重複 する 点 は 落とす。
+ */
+export function outlineFromMoves(moves: Move[]): Pt[] {
+  const pts: Pt[] = [{ x: 0, y: 0 }]
+  for (const m of moves) {
+    const last = pts[pts.length - 1]
+    pts.push({ x: last.x + m.h, y: last.y + m.v })
+  }
+  const last = pts[pts.length - 1]
+  if (pts.length > 1 && Math.abs(last.x) < 1e-9 && Math.abs(last.y) < 1e-9) pts.pop()
+  return pts
+}
+
+/** 図形 の 頂点 */
+export function figureOutline(f: FloorFigure): Pt[] {
+  return outlineFromMoves(f.moves)
+}
+
+/** 閉合差。 (0, 0) なら 形 が 閉じて いる */
+export function closureOf(moves: Move[]): Move {
+  return moves.reduce((a, m) => ({ v: a.v + m.v, h: a.h + m.h }), { v: 0, h: 0 })
+}
+
+/** 1 辺 の 長さ */
+export const moveLength = (m: Move): number => Math.hypot(m.h, m.v)
 
 /** 「主である建物1階」「附属建物（符号1）」 */
 export function figureLabel(f: FloorFigure): string {
@@ -147,14 +186,6 @@ export function polygonArea(pts: Pt[]): number {
     s += a.x * b.y - b.x * a.y
   }
   return Math.abs(s) / 2
-}
-
-/** 辺 の 長さ。 i 番目 の 点 から 次 の 点 まで */
-export function edgeLength(pts: Pt[], i: number): number {
-  if (pts.length < 2) return 0
-  const a = pts[i]
-  const b = pts[(i + 1) % pts.length]
-  return Math.hypot(b.x - a.x, b.y - a.y)
 }
 
 /** 図形 の 外接矩形 */
@@ -195,13 +226,13 @@ export function outlineSummary(pts: Pt[]): string {
   return `${(ext.maxX - ext.minX).toFixed(3)} × ${(ext.maxY - ext.minY).toFixed(3)} m`
 }
 
-/** 矩形 から 始める ため の 4 点 (反時計回り) */
-export function rectOutline(w: number, h: number): Pt[] {
+/** 矩形 から 始める ため の 4 辺 (反時計回り) */
+export function rectMoves(w: number, h: number): Move[] {
   return [
-    { x: 0, y: 0 },
-    { x: w, y: 0 },
-    { x: w, y: h },
-    { x: 0, y: h },
+    { v: 0, h: w },
+    { v: h, h: 0 },
+    { v: 0, h: -w },
+    { v: -h, h: 0 },
   ]
 }
 

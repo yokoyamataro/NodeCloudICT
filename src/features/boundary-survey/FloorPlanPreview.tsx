@@ -4,7 +4,14 @@
 // 座標 は x=東 / y=北 の メートル な ので、SVG に 出す ときに y を 反転 する。
 
 import { useMemo } from 'react'
-import { edgeLength, placeOutline, type FloorFigure, type Pt } from './floorPlanTypes'
+import {
+  figureOutline,
+  moveLength,
+  placeOutline,
+  type FloorFigure,
+  type Move,
+  type Pt,
+} from './floorPlanTypes'
 
 interface Box {
   minX: number
@@ -42,13 +49,14 @@ const ptsAttr = (pts: Pt[], dx = 0, dy = 0) =>
   pts.map((p) => `${p.x + dx},${-(p.y + dy)}`).join(' ')
 
 /** 辺 の 寸法。 実物 と 同じ く 辺 に 沿わせて 置く */
-function EdgeLabels({ pts, fs }: { pts: Pt[]; fs: number }) {
+function EdgeLabels({ pts, moves, fs }: { pts: Pt[]; moves: Move[]; fs: number }) {
   if (pts.length < 2) return null
   return (
     <>
       {pts.map((a, i) => {
         const b = pts[(i + 1) % pts.length]
-        const len = edgeLength(pts, i)
+        // 辺 は 入力 した 相対距離 を そのまま 出す (丸め で 数字 が 動かない ように)
+        const len = moves[i] ? moveLength(moves[i]) : Math.hypot(b.x - a.x, b.y - a.y)
         if (len < 0.001) return null
         const mx = (a.x + b.x) / 2
         const my = (a.y + b.y) / 2
@@ -89,12 +97,15 @@ export function FigureOutlinePreview({
   showEdgeLabels?: boolean
   className?: string
 }) {
+  const pts = useMemo(() => figureOutline(figure), [figure])
+  const under = useMemo(() => (underlay ? figureOutline(underlay) : []), [underlay])
+
   const box = useMemo(() => {
     let b: Box | null = null
-    for (const p of figure.outline) b = bumpBox(b, p.x + figure.offset.x, p.y + figure.offset.y)
-    if (underlay) for (const p of underlay.outline) b = bumpBox(b, p.x, p.y)
+    for (const p of pts) b = bumpBox(b, p.x + figure.offset.x, p.y + figure.offset.y)
+    for (const p of under) b = bumpBox(b, p.x, p.y)
     return b
-  }, [figure, underlay])
+  }, [pts, under, figure.offset])
 
   const sw = strokeOf(box)
   const fs = sw * 9
@@ -109,18 +120,18 @@ export function FigureOutlinePreview({
 
   return (
     <svg className={className} viewBox={viewBoxOf(box, 0.16)} preserveAspectRatio="xMidYMid meet">
-      {underlay && underlay.outline.length >= 3 && (
+      {under.length >= 3 && (
         <polygon
-          points={ptsAttr(underlay.outline)}
+          points={ptsAttr(under)}
           fill="none"
           stroke="#94a3b8"
           strokeWidth={sw * 0.8}
           strokeDasharray={`${sw * 4} ${sw * 3}`}
         />
       )}
-      {figure.outline.length >= 3 && (
+      {pts.length >= 3 && (
         <polygon
-          points={ptsAttr(figure.outline, figure.offset.x, figure.offset.y)}
+          points={ptsAttr(pts, figure.offset.x, figure.offset.y)}
           fill="rgba(100,116,139,0.06)"
           stroke="#0f172a"
           strokeWidth={sw}
@@ -128,24 +139,14 @@ export function FigureOutlinePreview({
       )}
       {showEdgeLabels && (
         <g transform={`translate(${figure.offset.x} ${-figure.offset.y})`}>
-          <EdgeLabels pts={figure.outline} fs={fs} />
+          <EdgeLabels pts={pts} moves={figure.moves} fs={fs} />
         </g>
       )}
       {/* 下敷き から の ずれ */}
-      {underlay && (figure.offset.x !== 0 || figure.offset.y !== 0) && (
+      {under.length > 0 && (figure.offset.x !== 0 || figure.offset.y !== 0) && (
         <g stroke="#2563eb" strokeWidth={sw * 0.7} fill="#2563eb">
-          <line
-            x1={underlay.outline[0]?.x ?? 0}
-            y1={-(underlay.outline[0]?.y ?? 0)}
-            x2={(underlay.outline[0]?.x ?? 0) + figure.offset.x}
-            y2={-(underlay.outline[0]?.y ?? 0)}
-          />
-          <line
-            x1={(underlay.outline[0]?.x ?? 0) + figure.offset.x}
-            y1={-(underlay.outline[0]?.y ?? 0)}
-            x2={(underlay.outline[0]?.x ?? 0) + figure.offset.x}
-            y2={-((underlay.outline[0]?.y ?? 0) + figure.offset.y)}
-          />
+          <line x1={0} y1={0} x2={figure.offset.x} y2={0} />
+          <line x1={figure.offset.x} y1={0} x2={figure.offset.x} y2={-figure.offset.y} />
         </g>
       )}
     </svg>
