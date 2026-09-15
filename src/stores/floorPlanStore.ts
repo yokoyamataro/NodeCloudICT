@@ -9,7 +9,7 @@ import { errorMessage } from '@/lib/errorMessage'
 import {
   DEFAULT_FRAME,
   DEFAULT_SITE,
-  type FloorFigure,
+  normalizeFigure,
   type FloorPlan,
   type FloorPlanFrame,
   type SitePlan,
@@ -37,7 +37,8 @@ export type FloorPlanPatch = Partial<
 >
 
 function normalize(row: Record<string, unknown>): FloorPlan {
-  const figures = Array.isArray(row.figures) ? (row.figures as FloorFigure[]) : []
+  // 初期 の 版 で 保存 した 行 は 形 が 違う ので ここ で 揃える
+  const figures = Array.isArray(row.figures) ? row.figures.map(normalizeFigure) : []
   const site = { ...DEFAULT_SITE, ...((row.site ?? {}) as Partial<SitePlan>) }
   const frame = { ...DEFAULT_FRAME, ...((row.frame ?? {}) as Partial<FloorPlanFrame>) }
   return {

@@ -123,11 +123,39 @@ export function newFigure(kind: FigureKind, floorNo: number, annexNo: number | n
 }
 
 /**
+ * 保存 されて いた 図形 を 今 の 形 に 揃える。
+ * 初期 の 版 は 頂点 の 並び (outline) で 持って いた ので 辺 に 直す。
+ * moves が 無い まま 画面 に 流す と for...of で 落ちる。
+ */
+export function normalizeFigure(raw: unknown): FloorFigure {
+  const r = (raw ?? {}) as Record<string, unknown>
+  let moves = Array.isArray(r.moves) ? (r.moves as Move[]) : []
+  if (moves.length === 0 && Array.isArray(r.outline)) {
+    const pts = r.outline as Pt[]
+    moves = pts.map((p, i) => {
+      const q = pts[(i + 1) % pts.length]
+      return { v: (q?.y ?? 0) - (p?.y ?? 0), h: (q?.x ?? 0) - (p?.x ?? 0) }
+    })
+  }
+  const off = (r.offset ?? {}) as Partial<Pt>
+  return {
+    id: String(r.id ?? newId()),
+    kind: r.kind === 'annex' ? 'annex' : 'main',
+    annexNo: typeof r.annexNo === 'number' ? r.annexNo : null,
+    floorNo: typeof r.floorNo === 'number' ? r.floorNo : 1,
+    moves: moves.map((m) => ({ v: Number(m?.v ?? 0), h: Number(m?.h ?? 0) })),
+    offset: { x: Number(off.x ?? 0), y: Number(off.y ?? 0) },
+    terms: Array.isArray(r.terms) ? (r.terms as AreaTerm[]) : [],
+  }
+}
+
+/**
  * 辺 の 並び から 多角形 の 頂点 を 作る。 原点 (0,0) から 順 に 足す。
  * 最後 が 原点 に 戻って いれば (= 閉合 して いれば) 重複 する 点 は 落とす。
  */
 export function outlineFromMoves(moves: Move[]): Pt[] {
   const pts: Pt[] = [{ x: 0, y: 0 }]
+  if (!Array.isArray(moves)) return pts
   for (const m of moves) {
     const last = pts[pts.length - 1]
     pts.push({ x: last.x + m.h, y: last.y + m.v })
@@ -144,6 +172,7 @@ export function figureOutline(f: FloorFigure): Pt[] {
 
 /** 閉合差。 (0, 0) なら 形 が 閉じて いる */
 export function closureOf(moves: Move[]): Move {
+  if (!Array.isArray(moves)) return { v: 0, h: 0 }
   return moves.reduce((a, m) => ({ v: a.v + m.v, h: a.h + m.h }), { v: 0, h: 0 })
 }
 
@@ -292,9 +321,30 @@ export interface SiteNote {
   y: number
 }
 
+/** 建物 を 据える やり方 */
+export type PlacementMethod = 'three_point' | 'parallel' | 'manual'
+
+export const PLACEMENT_METHOD_LABEL: Record<PlacementMethod, string> = {
+  three_point: '3点指定',
+  parallel: '1辺平行',
+  manual: '数値で直接',
+}
+
 export interface SitePlan {
   /** 敷地 を 描く ため の 地番構成点 (design_coordinates の id) */
   parcelPointIds: string[]
+  /** 据え方。 offsetE / offsetN / rotationDeg は この 結果 と して 入る */
+  method: PlacementMethod
+  /** 3点指定: 建物 の 角 と 境界線 と 離れ の 組 */
+  constraints: { id: string; vertexIndex: number; edgeIndex: number; distance: number }[]
+  /** 1辺平行 */
+  parallel: {
+    buildingEdge: number
+    siteEdge: number
+    offset: number
+    along: number
+    flip: boolean
+  } | null
   /** 建物 の 基点 を 現地 の どこ に 置く か。 E=東 / N=北 */
   offsetE: number
   offsetN: number
@@ -310,6 +360,9 @@ export interface SitePlan {
 
 export const DEFAULT_SITE: SitePlan = {
   parcelPointIds: [],
+  method: 'three_point',
+  constraints: [],
+  parallel: null,
   offsetE: 0,
   offsetN: 0,
   rotationDeg: 0,

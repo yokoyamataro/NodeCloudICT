@@ -7,9 +7,10 @@
 //
 // どの 段 も 「左 に 表題 / 右 に 入力欄」 に 揃える。
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
 import {
+  PLACEMENT_METHOD_LABEL,
   TERM_KIND_LABEL,
   closureOf,
   figureFloorArea,
@@ -38,10 +39,12 @@ import {
   type FloorPlanFrame,
   type Move,
   type ParcelOption,
+  type PlacementMethod,
   type SitePlan,
   type TermKind,
 } from './floorPlanTypes'
 import { FigureOutlinePreview, SitePlanPreview } from './FloorPlanPreview'
+import { centerOn, siteRing, solveByParallel, solveByPoints } from './floorPlanPlace'
 import type { FloorPlanPatch } from '@/stores/floorPlanStore'
 
 type Patch = (patch: FloorPlanPatch) => void
@@ -768,6 +771,15 @@ function AreaTable({
 // ========================================================================
 // 3. 地番に対する配置 (用紙 右半分 の 建物図面)
 // ========================================================================
+
+/** 境界線 の 見出し 「① 点1→点2」 */
+function edgeLabel(points: { pointNumber: string }[], i: number): string {
+  if (points.length < 2) return `境界線 ${i + 1}`
+  const a = points[i % points.length]
+  const b = points[(i + 1) % points.length]
+  return `${i + 1}: ${a?.pointNumber ?? '?'} → ${b?.pointNumber ?? '?'}`
+}
+
 export function StepSite({
   plan,
   parcels,
@@ -783,13 +795,53 @@ export function StepSite({
   const setSite = (p: Partial<SitePlan>) => onPatch({ site: { ...site, ...p } })
 
   const parcel = parcels.find((p) => p.parcelId != null && p.parcelId === plan.parcel_id) ?? null
-  const sitePoints = parcel?.points ?? []
+  // 毎回 新しい 配列 に なる と useMemo が 効かない ので 一度 で 束ねる
+  const sitePoints = useMemo(() => parcel?.points ?? [], [parcel])
+  const ring = useMemo(() => siteRing(sitePoints), [sitePoints])
 
   const ground = groundFigure(plan.figures)
+  const moves = ground?.moves ?? []
+  const outline = useMemo(() => (ground ? figureOutline(ground) : []), [ground])
+
+  const ready = ring.length >= 3 && moves.length >= 3
+  const [note, setNote] = useState<string | null>(null)
+
+  /** 出た 配置 を 書き戻す */
+  const apply = (pl: { offsetE: number; offsetN: number; rotationDeg: number } | null, msg: string) => {
+    if (!pl) {
+      setNote('計算できませんでした。選んだ辺と境界線を見直してください。')
+      return
+    }
+    setSite(pl)
+    setNote(msg)
+  }
+
+  const runThreePoint = () => {
+    const start =
+      site.offsetE === 0 && site.offsetN === 0
+        ? centerOn(moves, ring, site.rotationDeg)
+        : { offsetE: site.offsetE, offsetN: site.offsetN, rotationDeg: site.rotationDeg }
+    const r = solveByPoints(moves, ring, site.constraints, start)
+    if (!r) {
+      setNote('計算できませんでした。3 行とも入れてください。')
+      return
+    }
+    apply(
+      r.placement,
+      r.residual > 0.005
+        ? `配置しました。ただし指定と ${r.residual.toFixed(3)} m ずれています（条件が矛盾しているかもしれません）。`
+        : '配置しました。',
+    )
+  }
+
+  const runParallel = () => {
+    const spec = site.parallel ?? { buildingEdge: 0, siteEdge: 0, offset: 0, along: 0, flip: false }
+    apply(solveByParallel(moves, ring, spec), '配置しました。')
+  }
 
   return (
     <div className="flex gap-4 h-full min-h-0">
-      <div className="w-80 shrink-0 overflow-auto">
+      <div className="w-[22rem] shrink-0 overflow-auto">
         <Field label="敷地の地番">
           <ParcelSelect plan={plan} parcels={parcels} onSelectParcel={onSelectParcel} />
         </Field>
@@ -801,68 +853,195 @@ export function StepSite({
         )}
         {!ground && (
           <div className="my-2 px-2 py-1.5 rounded bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
-            「2 階層・形状寸法」で 主である建物1階 の形状を入れてください。建物図面はその外形を使います。
+            「2 階層・形状寸法」で 主である建物1階 の形状を入れてください。
           </div>
         )}
 
-        <div className="pt-2 mt-2 border-t text-xs font-semibold text-slate-500">
-          1階の据え付け位置
-        </div>
-        <Field label="東方向 (Y)" hint="平面直角座標。建物の 1 点目をどこに置くか。">
-          <NumField
-            value={site.offsetE}
-            onChange={(v) => setSite({ offsetE: v })}
-          />
+        <Field label="配置方法">
+          <select
+            className={inputCls}
+            value={site.method}
+            onChange={(e) => setSite({ method: e.target.value as PlacementMethod })}
+          >
+            {(Object.keys(PLACEMENT_METHOD_LABEL) as PlacementMethod[]).map((k) => (
+              <option key={k} value={k}>
+                {PLACEMENT_METHOD_LABEL[k]}
+              </option>
+            ))}
+          </select>
         </Field>
-        <Field label="北方向 (X)">
-          <NumField
-            value={site.offsetN}
-            onChange={(v) => setSite({ offsetN: v })}
-          />
-        </Field>
-        <Field label="建物の向き" hint="反時計回りの度。0 なら横が真東を向きます。">
-          <div className="flex items-center gap-1">
-            <NumField
-              value={site.rotationDeg}
-              onChange={(v) => setSite({ rotationDeg: v })}
-            />
-            <span className="text-xs text-slate-500">度</span>
+
+        {site.method === 'three_point' && (
+          <div className="pt-2 mt-2 border-t">
+            <div className="text-[11px] text-slate-500 mb-1">
+              建物の角を 3 つ選び、それぞれが境界線から内側へ何 m 離れているかを入れます。
+            </div>
+            <table className="w-full text-xs">
+              <thead className="text-slate-500">
+                <tr>
+                  <th className="text-left font-medium py-1">建物の角</th>
+                  <th className="text-left font-medium py-1">境界線</th>
+                  <th className="text-right font-medium py-1">離れ</th>
+                  <th className="w-6" />
+                </tr>
+              </thead>
+              <tbody>
+                {site.constraints.map((c, i) => (
+                  <tr key={c.id}>
+                    <td className="py-0.5 pr-1">
+                      <select
+                        className="w-full px-1 py-1 text-xs border rounded"
+                        value={c.vertexIndex}
+                        onChange={(e) =>
+                          setSite({
+                            constraints: site.constraints.map((x, j) =>
+                              j === i ? { ...x, vertexIndex: Number(e.target.value) } : x,
+                            ),
+                          })
+                        }
+                      >
+                        {outline.map((_, k) => (
+                          <option key={k} value={k}>
+                            角 {k + 1}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="py-0.5 pr-1">
+                      <select
+                        className="w-full px-1 py-1 text-xs border rounded"
+                        value={c.edgeIndex}
+                        onChange={(e) =>
+                          setSite({
+                            constraints: site.constraints.map((x, j) =>
+                              j === i ? { ...x, edgeIndex: Number(e.target.value) } : x,
+                            ),
+                          })
+                        }
+                      >
+                        {sitePoints.map((_, k) => (
+                          <option key={k} value={k}>
+                            {edgeLabel(sitePoints, k)}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="py-0.5">
+                      <NumField
+                        value={c.distance}
+                        onChange={(v) =>
+                          setSite({
+                            constraints: site.constraints.map((x, j) =>
+                              j === i ? { ...x, distance: v } : x,
+                            ),
+                          })
+                        }
+                        className="w-16 px-1 py-1 text-xs border rounded text-right font-mono"
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSite({ constraints: site.constraints.filter((_, j) => j !== i) })
+                        }
+                        className="p-0.5 text-slate-400 hover:text-red-600"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-1 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setSite({
+                    constraints: [
+                      ...site.constraints,
+                      { id: newId(), vertexIndex: 0, edgeIndex: 0, distance: 0 },
+                    ],
+                  })
+                }
+                className="px-2 py-0.5 text-xs border rounded hover:bg-slate-50 flex items-center gap-1"
+              >
+                <Plus className="h-3 w-3" />
+                行を追加
+              </button>
+              <button
+                type="button"
+                onClick={runThreePoint}
+                disabled={!ready || site.constraints.length < 3}
+                className="px-3 py-0.5 text-xs border rounded bg-blue-600 text-white border-blue-600 disabled:opacity-40 hover:bg-blue-700"
+              >
+                配置を計算
+              </button>
+            </div>
+            {site.constraints.length > 0 && site.constraints.length < 3 && (
+              <div className="mt-1 text-[11px] text-slate-400">
+                3 行そろうと向きまで決まります。
+              </div>
+            )}
           </div>
-        </Field>
+        )}
+
+        {site.method === 'parallel' && (
+          <ParallelFields
+            site={site}
+            moves={moves}
+            sitePoints={sitePoints}
+            ready={ready}
+            onChange={(p) => setSite({ parallel: p })}
+            onRun={runParallel}
+          />
+        )}
+
+        {site.method === 'manual' && (
+          <div className="pt-2 mt-2 border-t">
+            <Field label="東方向 (Y)">
+              <NumField value={site.offsetE} onChange={(v) => setSite({ offsetE: v })} />
+            </Field>
+            <Field label="北方向 (X)">
+              <NumField value={site.offsetN} onChange={(v) => setSite({ offsetN: v })} />
+            </Field>
+            <Field label="建物の向き">
+              <div className="flex items-center gap-1">
+                <NumField value={site.rotationDeg} onChange={(v) => setSite({ rotationDeg: v })} />
+                <span className="text-xs text-slate-500">度</span>
+              </div>
+            </Field>
+            {ring.length >= 3 && moves.length >= 3 && (
+              <button
+                type="button"
+                onClick={() => setSite(centerOn(moves, ring, site.rotationDeg))}
+                className="px-2 py-1 text-xs border rounded hover:bg-slate-50"
+              >
+                敷地の中心に寄せる
+              </button>
+            )}
+          </div>
+        )}
+
+        {note && (
+          <div className="mt-2 px-2 py-1.5 rounded bg-slate-100 text-[11px] text-slate-700">
+            {note}
+          </div>
+        )}
+
         <Field label="方位" hint="図面の上を真北から何度振るか。0 なら上が真北。">
           <div className="flex items-center gap-1">
-            <NumField
-              value={site.northAngleDeg}
-              onChange={(v) => setSite({ northAngleDeg: v })}
-            />
+            <NumField value={site.northAngleDeg} onChange={(v) => setSite({ northAngleDeg: v })} />
             <span className="text-xs text-slate-500">度</span>
           </div>
         </Field>
-
-        {sitePoints.length > 0 && (
-          <button
-            type="button"
-            onClick={() => {
-              const e = sitePoints.reduce((s, p) => s + p.y, 0) / sitePoints.length
-              const n = sitePoints.reduce((s, p) => s + p.x, 0) / sitePoints.length
-              setSite({
-                offsetE: Math.round(e * 1000) / 1000,
-                offsetN: Math.round(n * 1000) / 1000,
-              })
-            }}
-            className="mt-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
-          >
-            敷地の中心に寄せる
-          </button>
-        )}
 
         <ListEditor
           title="隣地の地番など（注記）"
           empty="例: 54-11 / 292 のように、隣接地の地番を図に添えます。"
           ids={site.notes.map((n) => n.id)}
-          onAdd={() =>
-            setSite({ notes: [...site.notes, { id: newId(), label: '', x: 0, y: 0 }] })
-          }
+          onAdd={() => setSite({ notes: [...site.notes, { id: newId(), label: '', x: 0, y: 0 }] })}
           onRemove={(id) => setSite({ notes: site.notes.filter((n) => n.id !== id) })}
           render={(id) => {
             const n = site.notes.find((x) => x.id === id)!
@@ -894,13 +1073,11 @@ export function StepSite({
         />
 
         <ListEditor
-          title="敷地境界からの離れ"
+          title="敷地境界からの離れ（図面に記入する寸法）"
           empty="例: 北側境界まで 1.20 のように、図面に記入する寸法を足します。"
           ids={site.refDistances.map((d) => d.id)}
           onAdd={() =>
-            setSite({
-              refDistances: [...site.refDistances, { id: newId(), label: '', value: 0 }],
-            })
+            setSite({ refDistances: [...site.refDistances, { id: newId(), label: '', value: 0 }] })
           }
           onRemove={(id) =>
             setSite({ refDistances: site.refDistances.filter((d) => d.id !== id) })
@@ -933,7 +1110,7 @@ export function StepSite({
       <div className="flex-1 min-w-0 border rounded bg-white p-2">
         <SitePlanPreview
           sitePoints={sitePoints}
-          outline={ground ? figureOutline(ground) : []}
+          outline={outline}
           offsetE={site.offsetE}
           offsetN={site.offsetN}
           rotationDeg={site.rotationDeg}
@@ -942,6 +1119,88 @@ export function StepSite({
           className="w-full h-full"
         />
       </div>
+    </div>
+  )
+}
+
+/** 1 辺平行 の 入力 */
+function ParallelFields({
+  site,
+  moves,
+  sitePoints,
+  ready,
+  onChange,
+  onRun,
+}: {
+  site: SitePlan
+  moves: Move[]
+  sitePoints: { pointNumber: string }[]
+  ready: boolean
+  onChange: (p: NonNullable<SitePlan['parallel']>) => void
+  onRun: () => void
+}) {
+  const p = site.parallel ?? {
+    buildingEdge: 0,
+    siteEdge: 0,
+    offset: 0,
+    along: 0,
+    flip: false,
+  }
+  return (
+    <div className="pt-2 mt-2 border-t">
+      <div className="text-[11px] text-slate-500 mb-1">
+        建物の 1 辺を境界線に平行にして据えます。離れと沿いの距離で位置が決まります。
+      </div>
+      <Field label="建物の辺">
+        <select
+          className={inputCls}
+          value={p.buildingEdge}
+          onChange={(e) => onChange({ ...p, buildingEdge: Number(e.target.value) })}
+        >
+          {moves.map((m, i) => (
+            <option key={i} value={i}>
+              辺 {i + 1}（{moveLength(m).toFixed(3)} m）
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="平行にする境界線">
+        <select
+          className={inputCls}
+          value={p.siteEdge}
+          onChange={(e) => onChange({ ...p, siteEdge: Number(e.target.value) })}
+        >
+          {sitePoints.map((_, k) => (
+            <option key={k} value={k}>
+              {edgeLabel(sitePoints, k)}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="離れ" hint="境界線から内側へ何 m 離すか。">
+        <NumField value={p.offset} onChange={(v) => onChange({ ...p, offset: v })} />
+      </Field>
+      <Field label="沿い" hint="境界線の始点から、線に沿って何 m の位置に辺の始点を置くか。">
+        <NumField value={p.along} onChange={(v) => onChange({ ...p, along: v })} />
+      </Field>
+      <Field label="向き">
+        <label className="flex items-center gap-1 text-xs text-slate-600">
+          <input
+            type="checkbox"
+            checked={p.flip}
+            onChange={(e) => onChange({ ...p, flip: e.target.checked })}
+          />
+          180 度返す（建物が境界の外に出たとき）
+        </label>
+      </Field>
+      <button
+        type="button"
+        onClick={onRun}
+        disabled={!ready}
+        className="mt-1 px-3 py-1 text-xs border rounded bg-blue-600 text-white border-blue-600 disabled:opacity-40 hover:bg-blue-700"
+      >
+        配置を計算
+      </button>
     </div>
   )
 }
