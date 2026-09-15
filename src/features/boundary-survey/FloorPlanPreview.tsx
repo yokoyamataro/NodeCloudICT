@@ -1,10 +1,10 @@
-// 各階平面図 の 下絵。
+// 建物図面・各階平面図 の 下絵。
 //
 // 画面 の 中 だけ の 確認用。 最終成果 (p21 / tif / pdf) は 別 の 出力 に する。
 // 座標 は x=東 / y=北 の メートル な ので、SVG に 出す ときに y を 反転 する。
 
 import { useMemo } from 'react'
-import { floorExtent, type FloorRect, type FloorSpec } from './floorPlanTypes'
+import { edgeLength, placeOutline, type FloorFigure, type Pt } from './floorPlanTypes'
 
 interface Box {
   minX: number
@@ -13,18 +13,17 @@ interface Box {
   maxY: number
 }
 
-function unionBox(a: Box | null, b: Box | null): Box | null {
-  if (!a) return b
-  if (!b) return a
+function bumpBox(b: Box | null, x: number, y: number): Box {
+  if (!b) return { minX: x, minY: y, maxX: x, maxY: y }
   return {
-    minX: Math.min(a.minX, b.minX),
-    minY: Math.min(a.minY, b.minY),
-    maxX: Math.max(a.maxX, b.maxX),
-    maxY: Math.max(a.maxY, b.maxY),
+    minX: Math.min(b.minX, x),
+    minY: Math.min(b.minY, y),
+    maxX: Math.max(b.maxX, x),
+    maxY: Math.max(b.maxY, y),
   }
 }
 
-/** 余白 を 付けた viewBox を 作る。 y は 反転 済み の 前提 */
+/** 余白 を 付けた viewBox。 y 反転 済み の 座標系 に 合わせる */
 function viewBoxOf(box: Box | null, pad: number): string {
   if (!box) return '-5 -5 10 10'
   const w = Math.max(box.maxX - box.minX, 0.001)
@@ -36,85 +35,119 @@ function viewBoxOf(box: Box | null, pad: number): string {
 /** 線 の 太さ を 図 の 大きさ に 合わせる (viewBox が m 単位 な ので) */
 function strokeOf(box: Box | null): number {
   if (!box) return 0.05
-  return Math.max(box.maxX - box.minX, box.maxY - box.minY) / 250
+  return Math.max(box.maxX - box.minX, box.maxY - box.minY, 0.001) / 260
 }
 
-function normRect(r: FloorRect) {
-  return {
-    x: Math.min(r.x, r.x + r.w),
-    y: Math.min(r.y, r.y + r.h),
-    w: Math.abs(r.w),
-    h: Math.abs(r.h),
-  }
+const ptsAttr = (pts: Pt[], dx = 0, dy = 0) =>
+  pts.map((p) => `${p.x + dx},${-(p.y + dy)}`).join(' ')
+
+/** 辺 の 寸法。 実物 と 同じ く 辺 に 沿わせて 置く */
+function EdgeLabels({ pts, fs }: { pts: Pt[]; fs: number }) {
+  if (pts.length < 2) return null
+  return (
+    <>
+      {pts.map((a, i) => {
+        const b = pts[(i + 1) % pts.length]
+        const len = edgeLength(pts, i)
+        if (len < 0.001) return null
+        const mx = (a.x + b.x) / 2
+        const my = (a.y + b.y) / 2
+        let deg = (Math.atan2(-(b.y - a.y), b.x - a.x) * 180) / Math.PI
+        // 逆さま に ならない ように 反転
+        if (deg > 90 || deg < -90) deg += 180
+        return (
+          <text
+            key={i}
+            x={mx}
+            y={-my}
+            fontSize={fs}
+            textAnchor="middle"
+            fill="#475569"
+            transform={`rotate(${deg} ${mx} ${-my})`}
+            dy={-fs * 0.35}
+          >
+            {len.toFixed(3)}
+          </text>
+        )
+      })}
+    </>
+  )
 }
 
 /**
- * 1 つ の 階 の 形。 矩形 ごと に 縦横 の 寸法 を 添える。
- * selectedRect が あれば その 矩形 だけ 色 を 変える。
+ * 1 つ の 図形。 2 階 以降 は 1 階 (underlay) を 点線 で 下敷き に する。
+ * 実物 の 「主である建物2階」 が その 描き方。
  */
-export function FloorShapePreview({
-  floor,
-  selectedRect,
+export function FigureOutlinePreview({
+  figure,
+  underlay,
+  showEdgeLabels = true,
   className,
 }: {
-  floor: FloorSpec
-  selectedRect?: number | null
+  figure: FloorFigure
+  underlay?: FloorFigure | null
+  showEdgeLabels?: boolean
   className?: string
 }) {
-  const box = useMemo(() => floorExtent(floor), [floor])
+  const box = useMemo(() => {
+    let b: Box | null = null
+    for (const p of figure.outline) b = bumpBox(b, p.x + figure.offset.x, p.y + figure.offset.y)
+    if (underlay) for (const p of underlay.outline) b = bumpBox(b, p.x, p.y)
+    return b
+  }, [figure, underlay])
+
   const sw = strokeOf(box)
   const fs = sw * 9
 
   if (!box) {
     return (
-      <div
-        className={`flex items-center justify-center text-xs text-slate-400 ${className ?? ''}`}
-      >
-        寸法を入力すると形が表示されます
+      <div className={`flex items-center justify-center text-xs text-slate-400 ${className ?? ''}`}>
+        形状を入力すると図が表示されます
       </div>
     )
   }
 
   return (
-    <svg className={className} viewBox={viewBoxOf(box, 0.18)} preserveAspectRatio="xMidYMid meet">
-      {floor.rects.map((raw, i) => {
-        const r = normRect(raw)
-        const on = selectedRect === i
-        return (
-          <g key={i}>
-            <rect
-              x={r.x}
-              y={-(r.y + r.h)}
-              width={r.w}
-              height={r.h}
-              fill={on ? 'rgba(59,130,246,0.18)' : 'rgba(100,116,139,0.10)'}
-              stroke={on ? '#2563eb' : '#334155'}
-              strokeWidth={sw}
-            />
-            {/* 横 (下辺) */}
-            <text
-              x={r.x + r.w / 2}
-              y={-r.y + fs * 1.2}
-              fontSize={fs}
-              textAnchor="middle"
-              fill="#475569"
-            >
-              {r.w.toFixed(2)}
-            </text>
-            {/* 縦 (左辺) */}
-            <text
-              x={r.x - fs * 0.4}
-              y={-(r.y + r.h / 2)}
-              fontSize={fs}
-              textAnchor="end"
-              dominantBaseline="middle"
-              fill="#475569"
-            >
-              {r.h.toFixed(2)}
-            </text>
-          </g>
-        )
-      })}
+    <svg className={className} viewBox={viewBoxOf(box, 0.16)} preserveAspectRatio="xMidYMid meet">
+      {underlay && underlay.outline.length >= 3 && (
+        <polygon
+          points={ptsAttr(underlay.outline)}
+          fill="none"
+          stroke="#94a3b8"
+          strokeWidth={sw * 0.8}
+          strokeDasharray={`${sw * 4} ${sw * 3}`}
+        />
+      )}
+      {figure.outline.length >= 3 && (
+        <polygon
+          points={ptsAttr(figure.outline, figure.offset.x, figure.offset.y)}
+          fill="rgba(100,116,139,0.06)"
+          stroke="#0f172a"
+          strokeWidth={sw}
+        />
+      )}
+      {showEdgeLabels && (
+        <g transform={`translate(${figure.offset.x} ${-figure.offset.y})`}>
+          <EdgeLabels pts={figure.outline} fs={fs} />
+        </g>
+      )}
+      {/* 下敷き から の ずれ */}
+      {underlay && (figure.offset.x !== 0 || figure.offset.y !== 0) && (
+        <g stroke="#2563eb" strokeWidth={sw * 0.7} fill="#2563eb">
+          <line
+            x1={underlay.outline[0]?.x ?? 0}
+            y1={-(underlay.outline[0]?.y ?? 0)}
+            x2={(underlay.outline[0]?.x ?? 0) + figure.offset.x}
+            y2={-(underlay.outline[0]?.y ?? 0)}
+          />
+          <line
+            x1={(underlay.outline[0]?.x ?? 0) + figure.offset.x}
+            y1={-(underlay.outline[0]?.y ?? 0)}
+            x2={(underlay.outline[0]?.x ?? 0) + figure.offset.x}
+            y2={-((underlay.outline[0]?.y ?? 0) + figure.offset.y)}
+          />
+        </g>
+      )}
     </svg>
   )
 }
@@ -128,22 +161,25 @@ export interface SitePoint {
 }
 
 /**
- * 地番 の 外形 に 1 階 を 載せた 図。
- * 敷地 は 実座標、建物 は placement で 置いた 位置 に 出す。
+ * 用紙 右半分 の 建物図面。 敷地 の 外形 に 建物 を 載せ、隣地 の 地番 を 添える。
  */
-export function PlacementPreview({
+export function SitePlanPreview({
   sitePoints,
-  floor,
+  outline,
   offsetE,
   offsetN,
   rotationDeg,
+  notes,
+  northAngleDeg,
   className,
 }: {
   sitePoints: SitePoint[]
-  floor: FloorSpec | null
+  outline: Pt[]
   offsetE: number
   offsetN: number
   rotationDeg: number
+  notes: { id: string; label: string; x: number; y: number }[]
+  northAngleDeg: number
   className?: string
 }) {
   // 敷地: X=北 な ので 画面 の 東 は y、北 は x
@@ -151,80 +187,63 @@ export function PlacementPreview({
     () => sitePoints.map((p) => ({ e: p.y, n: p.x, label: p.pointNumber })),
     [sitePoints],
   )
-
-  // 建物: 回転 させて から 現地 の 位置 へ 移す
-  const building = useMemo(() => {
-    if (!floor) return []
-    const t = (rotationDeg * Math.PI) / 180
-    const cos = Math.cos(t)
-    const sin = Math.sin(t)
-    return floor.rects.map((raw) => {
-      const r = normRect(raw)
-      const corners: [number, number][] = [
-        [r.x, r.y],
-        [r.x + r.w, r.y],
-        [r.x + r.w, r.y + r.h],
-        [r.x, r.y + r.h],
-      ]
-      return corners.map(([x, y]) => ({
-        e: offsetE + x * cos - y * sin,
-        n: offsetN + x * sin + y * cos,
-      }))
-    })
-  }, [floor, offsetE, offsetN, rotationDeg])
+  const building = useMemo(
+    () => placeOutline(outline, offsetE, offsetN, rotationDeg),
+    [outline, offsetE, offsetN, rotationDeg],
+  )
 
   const box = useMemo(() => {
     let b: Box | null = null
-    const bump = (e: number, n: number) => {
-      b = unionBox(b, { minX: e, minY: n, maxX: e, maxY: n })
-    }
-    for (const p of site) bump(p.e, p.n)
-    for (const poly of building) for (const p of poly) bump(p.e, p.n)
+    for (const p of site) b = bumpBox(b, p.e, p.n)
+    for (const p of building) b = bumpBox(b, p.e, p.n)
+    for (const p of notes) b = bumpBox(b, p.x, p.y)
     return b
-  }, [site, building])
+  }, [site, building, notes])
 
   const sw = strokeOf(box)
-  const fs = sw * 9
+  const fs = sw * 10
 
   if (!box) {
     return (
-      <div
-        className={`flex items-center justify-center text-xs text-slate-400 ${className ?? ''}`}
-      >
-        地番と階を選ぶと配置が表示されます
+      <div className={`flex items-center justify-center text-xs text-slate-400 ${className ?? ''}`}>
+        地番と建物の形状を入れると配置が表示されます
       </div>
     )
   }
 
   return (
-    <svg className={className} viewBox={viewBoxOf(box, 0.12)} preserveAspectRatio="xMidYMid meet">
-      {/* 敷地 */}
-      {site.length >= 2 && (
+    <svg className={className} viewBox={viewBoxOf(box, 0.14)} preserveAspectRatio="xMidYMid meet">
+      {site.length >= 3 && (
         <polygon
           points={site.map((p) => `${p.e},${-p.n}`).join(' ')}
-          fill="rgba(16,185,129,0.06)"
-          stroke="#059669"
+          fill="rgba(16,185,129,0.05)"
+          stroke="#047857"
           strokeWidth={sw}
         />
       )}
-      {site.map((p, i) => (
-        <g key={i}>
-          <circle cx={p.e} cy={-p.n} r={sw * 2} fill="#059669" />
-          <text x={p.e + sw * 3} y={-p.n - sw * 3} fontSize={fs} fill="#047857">
-            {p.label}
-          </text>
-        </g>
-      ))}
-      {/* 建物 */}
-      {building.map((poly, i) => (
+      {building.length >= 3 && (
         <polygon
-          key={i}
-          points={poly.map((p) => `${p.e},${-p.n}`).join(' ')}
-          fill="rgba(59,130,246,0.18)"
-          stroke="#2563eb"
-          strokeWidth={sw * 1.4}
+          points={building.map((p) => `${p.e},${-p.n}`).join(' ')}
+          fill="rgba(15,23,42,0.08)"
+          stroke="#0f172a"
+          strokeWidth={sw * 1.5}
         />
+      )}
+      {notes.map((n) => (
+        <text key={n.id} x={n.x} y={-n.y} fontSize={fs} textAnchor="middle" fill="#334155">
+          {n.label}
+        </text>
       ))}
+      {/* 方位 */}
+      <g
+        transform={`translate(${box.maxX} ${-box.maxY}) rotate(${-northAngleDeg}) scale(${sw * 3})`}
+      >
+        <line x1={0} y1={3} x2={0} y2={-3} stroke="#334155" strokeWidth={0.3} />
+        <polygon points="0,-4 -0.9,-2 0.9,-2" fill="#334155" />
+        <text x={0} y={-4.8} fontSize={1.8} textAnchor="middle" fill="#334155">
+          N
+        </text>
+      </g>
     </svg>
   )
 }

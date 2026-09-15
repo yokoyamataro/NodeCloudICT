@@ -1,54 +1,307 @@
-// 各階平面図 の 型 と 小道具。
+// 建物図面・各階平面図 の 型 と 計算。
 //
-// 座標 の 向き は 図面 の 中 だけ の 話 な ので、平面直角座標 (X=北 / Y=東) とは
-// 分けて 「x=東 / y=北 の メートル」 で 持つ。 地番 へ 重ねる ときに だけ
-// placement.offsetE / offsetN で 現地 の 座標 に 載せる。
+// doc/tatemono1.tif が 目指す 実物。 B4 1 枚 に
+//   左 … 各階平面図 (図形 + 求積表)  縮尺 1/250
+//   右 … 建物図面   (敷地 + 配置)    縮尺 1/500
+// が 並ぶ。
+//
+// 座標 は 図面 の 中 だけ の 話 な ので、平面直角座標 (X=北 / Y=東) とは 分けて
+// 「x=東 / y=北 の メートル」 で 持つ。 敷地 に 載せる ときに だけ
+// site.offsetE / offsetN で 現地 の 座標 に 移す。
 
-/** 階 の 形 を 作る 矩形 (m)。 w=横 / h=縦 */
-export interface FloorRect {
+export interface Pt {
   x: number
   y: number
-  w: number
-  h: number
 }
 
-/** 1 つ の 階 */
-export interface FloorSpec {
+// ========================================================================
+// 求積表
+// ========================================================================
+
+/**
+ * 求積表 の 1 行。 実物 に 出て くる 形 は 3 つ:
+ *   rect      2.120 × 0.300                = 0.636000
+ *   trapezoid (1.220 + 1.820) × 0.300 / 2  = 0.456000
+ *   triangle  3.640 × 0.910 / 2            = 1.656200
+ * どれ にも 当てはまらない 場合 の ため に manual (式 を 自分 で 書く) を 置く。
+ */
+export type TermKind = 'rect' | 'trapezoid' | 'triangle' | 'manual'
+
+export const TERM_KIND_LABEL: Record<TermKind, string> = {
+  rect: '長方形',
+  trapezoid: '台形',
+  triangle: '三角形',
+  manual: '自由入力',
+}
+
+export interface AreaTerm {
   id: string
-  /** 表示名。 '1階' '2階' '地下1階' など */
-  name: string
-  rects: FloorRect[]
-  /** 床面積 (㎡)。 null なら rects から 算出 */
-  areaSqm: number | null
-  /** true の 間 は areaSqm を 手入力 の まま 保つ */
-  areaOverride: boolean
+  kind: TermKind
+  /** rect: 横 / trapezoid: 上底 / triangle: 底辺 */
+  a: number
+  /** rect: 縦 / trapezoid: 下底 / triangle: 高さ */
+  b: number
+  /** trapezoid: 高さ (他 では 使わない) */
+  h: number
+  /** manual の とき の 面積 */
+  manual: number
+  /** manual の とき に 図面 へ 出す 式 */
+  note: string
 }
 
-/** 地番 に対する 建物 の 置き方 */
-export interface FloorPlanPlacement {
+export function newTerm(kind: TermKind = 'rect'): AreaTerm {
+  return { id: newId(), kind, a: 0, b: 0, h: 0, manual: 0, note: '' }
+}
+
+export function termValue(t: AreaTerm): number {
+  switch (t.kind) {
+    case 'rect':
+      return t.a * t.b
+    case 'trapezoid':
+      return ((t.a + t.b) * t.h) / 2
+    case 'triangle':
+      return (t.a * t.b) / 2
+    case 'manual':
+      return t.manual
+  }
+}
+
+/** 寸法 は 3 桁。 図面 も その 書き方 */
+const d3 = (v: number) => v.toFixed(3)
+
+/** 求積表 に 出す 式 の 文字列 */
+export function termFormula(t: AreaTerm): string {
+  switch (t.kind) {
+    case 'rect':
+      return `${d3(t.a)} × ${d3(t.b)}`
+    case 'trapezoid':
+      return `(${d3(t.a)} + ${d3(t.b)}) × ${d3(t.h)} / 2`
+    case 'triangle':
+      return `${d3(t.a)} × ${d3(t.b)} / 2`
+    case 'manual':
+      return t.note
+  }
+}
+
+/** 求積 の 途中 は 6 桁 まで 出す (実物 が そう なって いる) */
+export const termValueText = (v: number) => v.toFixed(6)
+
+// ========================================================================
+// 図形 (主である建物 の 各階 / 附属建物)
+// ========================================================================
+
+export type FigureKind = 'main' | 'annex'
+
+export interface FloorFigure {
+  id: string
+  kind: FigureKind
+  /** 附属建物 の 符号。 kind === 'annex' の とき だけ 使う */
+  annexNo: number | null
+  /** 階。 地下 は 負 の 数 */
+  floorNo: number
+  /** 形状 (m)。 多角形 の 頂点 を 反時計回り に */
+  outline: Pt[]
+  /** 1 階 に対する ずれ。 2 階 以降 を 1 階 の 点線 に 重ねて 描く ため */
+  offset: Pt
+  /** 求積表 */
+  terms: AreaTerm[]
+}
+
+export function newFigure(kind: FigureKind, floorNo: number, annexNo: number | null): FloorFigure {
+  return { id: newId(), kind, annexNo, floorNo, outline: [], offset: { x: 0, y: 0 }, terms: [] }
+}
+
+/** 「主である建物1階」「附属建物（符号1）」 */
+export function figureLabel(f: FloorFigure): string {
+  if (f.kind === 'annex') {
+    const head = `附属建物（符号${f.annexNo ?? 1}）`
+    // 附属建物 が 2 階建 の ときだけ 階 を 添える
+    return f.floorNo === 1 ? head : `${head}${floorText(f.floorNo)}`
+  }
+  return `主である建物${floorText(f.floorNo)}`
+}
+
+function floorText(n: number): string {
+  return n < 0 ? `地下${Math.abs(n)}階` : `${n}階`
+}
+
+/** 求積表 の 「計」 */
+export function figureSum(f: FloorFigure): number {
+  return f.terms.reduce((s, t) => s + termValue(t), 0)
+}
+
+/** 床面積。 登記 は 1/100 ㎡ 未満 切り捨て */
+export function figureFloorArea(f: FloorFigure): number {
+  return Math.floor(figureSum(f) * 100) / 100
+}
+
+export const floorAreaText = (v: number) => v.toFixed(2)
+
+/** 多角形 の 面積 (座標法)。 求積表 と 合って いる か の 照合 に 使う */
+export function polygonArea(pts: Pt[]): number {
+  if (pts.length < 3) return 0
+  let s = 0
+  for (let i = 0; i < pts.length; i += 1) {
+    const a = pts[i]
+    const b = pts[(i + 1) % pts.length]
+    s += a.x * b.y - b.x * a.y
+  }
+  return Math.abs(s) / 2
+}
+
+/** 辺 の 長さ。 i 番目 の 点 から 次 の 点 まで */
+export function edgeLength(pts: Pt[], i: number): number {
+  if (pts.length < 2) return 0
+  const a = pts[i]
+  const b = pts[(i + 1) % pts.length]
+  return Math.hypot(b.x - a.x, b.y - a.y)
+}
+
+/** 図形 の 外接矩形 */
+export function outlineExtent(
+  pts: Pt[],
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  if (pts.length === 0) return null
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.y > maxY) maxY = p.y
+  }
+  return { minX, minY, maxX, maxY }
+}
+
+/** 建物 の 外形 を 現地 の 座標 に 載せる (回転 → 移動) */
+export function placeOutline(
+  outline: Pt[],
+  offsetE: number,
+  offsetN: number,
+  rotationDeg: number,
+): { e: number; n: number }[] {
+  const t = (rotationDeg * Math.PI) / 180
+  const cos = Math.cos(t)
+  const sin = Math.sin(t)
+  return outline.map((p) => ({
+    e: offsetE + p.x * cos - p.y * sin,
+    n: offsetN + p.x * sin + p.y * cos,
+  }))
+}
+
+/** 一覧 の 見出し用 に 使う、図形 の 大きさ の 短い 説明 */
+export function outlineSummary(pts: Pt[]): string {
+  const ext = outlineExtent(pts)
+  if (!ext) return '形状 未入力'
+  return `${(ext.maxX - ext.minX).toFixed(3)} × ${(ext.maxY - ext.minY).toFixed(3)} m`
+}
+
+/** 矩形 から 始める ため の 4 点 (反時計回り) */
+export function rectOutline(w: number, h: number): Pt[] {
+  return [
+    { x: 0, y: 0 },
+    { x: w, y: 0 },
+    { x: w, y: h },
+    { x: 0, y: h },
+  ]
+}
+
+/** 延べ床面積 (主である建物 の 各階 の 合計) */
+export function totalMainArea(figures: FloorFigure[]): number {
+  return figures.filter((f) => f.kind === 'main').reduce((s, f) => s + figureFloorArea(f), 0)
+}
+
+/** 図形 の 並び。 主である建物 → 附属建物、 それぞれ 階順 */
+export function sortFigures(figures: FloorFigure[]): FloorFigure[] {
+  return [...figures].sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'main' ? -1 : 1
+    if (a.kind === 'annex' && (a.annexNo ?? 0) !== (b.annexNo ?? 0)) {
+      return (a.annexNo ?? 0) - (b.annexNo ?? 0)
+    }
+    return a.floorNo - b.floorNo
+  })
+}
+
+/** 1 階 (下敷き に 使う)。 主である建物 の 1 階 */
+export function groundFigure(figures: FloorFigure[]): FloorFigure | null {
+  return figures.find((f) => f.kind === 'main' && f.floorNo === 1) ?? null
+}
+
+// ========================================================================
+// 建物図面 (用紙 の 右半分)
+// ========================================================================
+
+/** 隣地 の 地番 など、図 に 添える 注記 */
+export interface SiteNote {
+  id: string
+  label: string
+  /** 注記 を 置く 位置 (現地 の 座標、E/N の m) */
+  x: number
+  y: number
+}
+
+export interface SitePlan {
   /** 敷地 を 描く ため の 地番構成点 (design_coordinates の id) */
   parcelPointIds: string[]
-  /** 1 階 の 原点 を 現地 の どこ に 置く か (m)。 E=東 / N=北 */
+  /** 建物 の 基点 を 現地 の どこ に 置く か。 E=東 / N=北 */
   offsetE: number
   offsetN: number
   /** 建物 の 向き (度、反時計回り) */
   rotationDeg: number
+  /** 図面 の 上 を 真北 から 何度 振る か */
+  northAngleDeg: number
+  /** 隣地 の 地番 など の 注記 */
+  notes: SiteNote[]
   /** 敷地境界 から の 離れ。 図面 に 記入 する 寸法 */
   refDistances: { id: string; label: string; value: number }[]
 }
 
-/** 図枠 に 入れる 文字 */
+export const DEFAULT_SITE: SitePlan = {
+  parcelPointIds: [],
+  offsetE: 0,
+  offsetN: 0,
+  rotationDeg: 0,
+  northAngleDeg: 0,
+  notes: [],
+  refDistances: [],
+}
+
+// ========================================================================
+// 図枠 (表題欄)
+// ========================================================================
+
 export interface FloorPlanFrame {
-  sheetSize: 'B4'
+  /** 作製年月日。 表題欄 は 「（令和5年11月15日作製）」 と 出す */
   createdOn: string | null
+  makerAddress: string
+  /** 「土地家屋調査士」 など の 肩書 */
+  makerQualification: string
+  makerName: string
   applicantName: string
-  surveyorName: string
-  surveyorOffice: string
-  /** 図面 の 上 を 真北 から 何度 振る か */
-  northAngleDeg: number
-  drawingNumber: string
   remarks: string
 }
+
+export const DEFAULT_FRAME: FloorPlanFrame = {
+  createdOn: null,
+  makerAddress: '',
+  makerQualification: '土地家屋調査士',
+  makerName: '',
+  applicantName: '',
+  remarks: '',
+}
+
+/** 表題欄 の 「（令和5年11月15日作製）」 */
+export function warekiCreatedText(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const y = d.getFullYear()
+  // 令和 は 2019 年 が 元年。 それ 以前 は 西暦 の まま 出す
+  if (y < 2019) return `（${y}年${d.getMonth() + 1}月${d.getDate()}日作製）`
+  const r = y - 2018
+  return `（令和${r === 1 ? '元' : r}年${d.getMonth() + 1}月${d.getDate()}日作製）`
+}
+
+// ========================================================================
 
 export interface FloorPlan {
   id: string
@@ -60,90 +313,19 @@ export interface FloorPlan {
   building_kind: string | null
   building_structure: string | null
   parcel_id: string | null
-  floors: FloorSpec[]
-  placement: FloorPlanPlacement
+  figures: FloorFigure[]
+  site: SitePlan
   frame: FloorPlanFrame
-  scale_denominator: number
+  plan_scale: number
+  site_scale: number
+  sheet_no: number
   sort_order: number
   created_at: string
   updated_at: string
-}
-
-export const DEFAULT_PLACEMENT: FloorPlanPlacement = {
-  parcelPointIds: [],
-  offsetE: 0,
-  offsetN: 0,
-  rotationDeg: 0,
-  refDistances: [],
-}
-
-export const DEFAULT_FRAME: FloorPlanFrame = {
-  sheetSize: 'B4',
-  createdOn: null,
-  applicantName: '',
-  surveyorName: '',
-  surveyorOffice: '',
-  northAngleDeg: 0,
-  drawingNumber: '',
-  remarks: '',
 }
 
 export function newId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-}
-
-/** 矩形 の 合計 面積 (重なり は 考えない) */
-export function rectsArea(rects: FloorRect[]): number {
-  return rects.reduce((s, r) => s + Math.abs(r.w) * Math.abs(r.h), 0)
-}
-
-/** 表示 に 使う 床面積。 手入力 が あれば それ、 なければ 矩形 の 合計 */
-export function floorArea(f: FloorSpec): number {
-  if (f.areaOverride && f.areaSqm != null) return f.areaSqm
-  return rectsArea(f.rects)
-}
-
-/** 全階 の 床面積 の 合計 */
-export function totalArea(floors: FloorSpec[]): number {
-  return floors.reduce((s, f) => s + floorArea(f), 0)
-}
-
-/** 登記 の 面積 は 切り捨て (居宅 は 1/100 ㎡ 未満 切り捨て) */
-export function floorAreaText(v: number): string {
-  return (Math.floor(v * 100) / 100).toFixed(2)
-}
-
-/** 階 の 外接矩形。 空 なら null */
-export function floorExtent(
-  f: FloorSpec,
-): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  if (f.rects.length === 0) return null
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const r of f.rects) {
-    const x1 = Math.min(r.x, r.x + r.w)
-    const x2 = Math.max(r.x, r.x + r.w)
-    const y1 = Math.min(r.y, r.y + r.h)
-    const y2 = Math.max(r.y, r.y + r.h)
-    if (x1 < minX) minX = x1
-    if (x2 > maxX) maxX = x2
-    if (y1 < minY) minY = y1
-    if (y2 > maxY) maxY = y2
-  }
-  return { minX, minY, maxX, maxY }
-}
-
-/** 既定 の 階名。 1階 から 順 に */
-export function defaultFloorName(index: number): string {
-  return `${index + 1}階`
-}
-
-/** 一覧 の 見出し用 に 使う、階 の 大きさ の 短い 説明 */
-export function floorSizeSummary(f: FloorSpec): string {
-  const ext = floorExtent(f)
-  if (!ext) return '未入力'
-  const w = ext.maxX - ext.minX
-  const h = ext.maxY - ext.minY
-  return `${w.toFixed(2)} × ${h.toFixed(2)} m / ${rectsArea(f.rects).toFixed(2)} ㎡`
 }

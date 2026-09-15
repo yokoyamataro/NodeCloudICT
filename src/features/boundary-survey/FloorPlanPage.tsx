@@ -1,24 +1,25 @@
-// 地籍測量: 各階平面図作成ページ。
+// 地籍測量: 建物図面・各階平面図 の 作成ページ。
 //
-// 1 工区 に 複数枚 作る ので 「左 に 図面 の 一覧 / 右 に 編集」 の 形 に する。
-// 編集 は 作成 の 順序 そのまま の 4 段:
-//   1 建物情報 → 2 階層・形状寸法 → 3 地番に対する配置 → 4 図枠要素
+// 登記 に 出す B4 1 枚 に 「各階平面図 (左)」 と 「建物図面 (右)」 が 同居 する。
+// doc/tatemono1.tif が 実物。 1 工区 に 複数枚 作る ので 「左 に 図面 の 一覧 /
+// 右 に 編集」 の 形 に する。 編集 は 作成 の 順序 そのまま の 4 段:
+//   1 建物情報 → 2 階層・形状寸法 (+ 求積表) → 3 地番に対する配置 → 4 図枠要素
 //
-// 最終成果 (B4 の p21 / tif / pdf) の 出力 は この後 の 実装。
+// 最終成果 (p21 / tif / pdf) の 出力 は この後 の 実装。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, LayoutTemplate, Loader2, Plus, Trash2 } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useFloorPlanStore, type FloorPlanPatch } from '@/stores/floorPlanStore'
-import { floorAreaText, totalArea, type FloorPlan } from './floorPlanTypes'
-import { StepBuilding, StepFloors, StepFrame, StepPlacement } from './FloorPlanSteps'
+import { floorAreaText, totalMainArea, type FloorPlan } from './floorPlanTypes'
+import { StepBuilding, StepFigures, StepFrame, StepSite } from './FloorPlanSteps'
 
 const STEPS = [
   { key: 1, label: '建物情報', hint: '所在・地番・家屋番号' },
-  { key: 2, label: '階層・形状寸法', hint: '階ごとの縦横' },
-  { key: 3, label: '配置', hint: '地番に対する位置' },
-  { key: 4, label: '図枠要素', hint: 'B4 の枠' },
+  { key: 2, label: '階層・形状寸法', hint: '形状と求積表' },
+  { key: 3, label: '配置', hint: '建物図面（右半分）' },
+  { key: 4, label: '図枠要素', hint: '表題欄と縮尺' },
 ] as const
 
 /** 一覧 に 出す 見出し */
@@ -39,7 +40,7 @@ export function FloorPlanPage() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1)
-  const [activeFloorId, setActiveFloorId] = useState<string | null>(null)
+  const [activeFigureId, setActiveFigureId] = useState<string | null>(null)
 
   useEffect(() => {
     if (farmId) {
@@ -159,7 +160,7 @@ export function FloorPlanPage() {
                     onClick={() => {
                       flush()
                       setSelectedId(p.id)
-                      setActiveFloorId(null)
+                      setActiveFigureId(null)
                     }}
                     className={`px-3 py-2 cursor-pointer ${
                       currentId === p.id ? 'bg-white border-l-2 border-blue-500' : 'hover:bg-white/60'
@@ -167,7 +168,8 @@ export function FloorPlanPage() {
                   >
                     <div className="text-sm truncate">{planTitle(p)}</div>
                     <div className="text-[11px] text-slate-500 font-mono">
-                      {p.floors.length} 階 / {floorAreaText(totalArea(p.floors))} ㎡
+                      {p.sheet_no > 1 && `${p.sheet_no}枚目 / `}
+                      {p.figures.length} 図形 / {floorAreaText(totalMainArea(p.figures))} ㎡
                     </div>
                     <div className="mt-1 flex items-center gap-1">
                       <button
@@ -239,17 +241,17 @@ export function FloorPlanPage() {
                   <StepBuilding plan={selected} parcels={parcels} onPatch={onPatch} />
                 )}
                 {step === 2 && (
-                  <StepFloors
+                  <StepFigures
                     plan={selected}
-                    activeFloorId={activeFloorId}
-                    onActiveFloor={setActiveFloorId}
+                    activeFigureId={activeFigureId}
+                    onActiveFigure={setActiveFigureId}
                     onPatch={onPatch}
                   />
                 )}
-                {step === 3 && (
-                  <StepPlacement plan={selected} parcels={parcels} onPatch={onPatch} />
+                {step === 3 && <StepSite plan={selected} parcels={parcels} onPatch={onPatch} />}
+                {step === 4 && (
+                  <StepFrame plan={selected} parcels={parcels} onPatch={onPatch} />
                 )}
-                {step === 4 && <StepFrame plan={selected} onPatch={onPatch} />}
               </div>
 
               <div className="px-4 py-2 border-t bg-white flex items-center gap-2">

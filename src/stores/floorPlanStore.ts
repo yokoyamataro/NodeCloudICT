@@ -8,11 +8,11 @@ import { supabase } from '@/lib/supabase'
 import { errorMessage } from '@/lib/errorMessage'
 import {
   DEFAULT_FRAME,
-  DEFAULT_PLACEMENT,
+  DEFAULT_SITE,
+  type FloorFigure,
   type FloorPlan,
   type FloorPlanFrame,
-  type FloorPlanPlacement,
-  type FloorSpec,
+  type SitePlan,
 } from '@/features/boundary-survey/floorPlanTypes'
 
 /** 画面 から 更新 できる 列 */
@@ -26,20 +26,19 @@ export type FloorPlanPatch = Partial<
     | 'building_kind'
     | 'building_structure'
     | 'parcel_id'
-    | 'floors'
-    | 'placement'
+    | 'figures'
+    | 'site'
     | 'frame'
-    | 'scale_denominator'
+    | 'plan_scale'
+    | 'site_scale'
+    | 'sheet_no'
     | 'sort_order'
   >
 >
 
 function normalize(row: Record<string, unknown>): FloorPlan {
-  const floors = Array.isArray(row.floors) ? (row.floors as FloorSpec[]) : []
-  const placement = {
-    ...DEFAULT_PLACEMENT,
-    ...((row.placement ?? {}) as Partial<FloorPlanPlacement>),
-  }
+  const figures = Array.isArray(row.figures) ? (row.figures as FloorFigure[]) : []
+  const site = { ...DEFAULT_SITE, ...((row.site ?? {}) as Partial<SitePlan>) }
   const frame = { ...DEFAULT_FRAME, ...((row.frame ?? {}) as Partial<FloorPlanFrame>) }
   return {
     id: String(row.id),
@@ -51,10 +50,12 @@ function normalize(row: Record<string, unknown>): FloorPlan {
     building_kind: (row.building_kind as string) ?? null,
     building_structure: (row.building_structure as string) ?? null,
     parcel_id: (row.parcel_id as string) ?? null,
-    floors,
-    placement,
+    figures,
+    site,
     frame,
-    scale_denominator: Number(row.scale_denominator ?? 250),
+    plan_scale: Number(row.plan_scale ?? 250),
+    site_scale: Number(row.site_scale ?? 500),
+    sheet_no: Number(row.sheet_no ?? 1),
     sort_order: Number(row.sort_order ?? 0),
     created_at: String(row.created_at ?? ''),
     updated_at: String(row.updated_at ?? ''),
@@ -115,7 +116,7 @@ export const useFloorPlanStore = create<State>((set, get) => ({
         .insert({
           farm_id: farmId,
           sort_order: next,
-          placement: DEFAULT_PLACEMENT,
+          site: DEFAULT_SITE,
           frame: DEFAULT_FRAME,
         } as never)
         .select('*')
@@ -140,17 +141,19 @@ export const useFloorPlanStore = create<State>((set, get) => ({
         .from('floor_plans')
         .insert({
           farm_id: src.farm_id,
-          title: src.title ? `${src.title} の複製` : null,
+          title: src.title ? `${src.title}（${src.sheet_no + 1}枚目）` : null,
           location: src.location,
           parcel_number: src.parcel_number,
           house_number: src.house_number,
           building_kind: src.building_kind,
           building_structure: src.building_structure,
           parcel_id: src.parcel_id,
-          floors: src.floors,
-          placement: src.placement,
+          figures: src.figures,
+          site: src.site,
           frame: src.frame,
-          scale_denominator: src.scale_denominator,
+          plan_scale: src.plan_scale,
+          site_scale: src.site_scale,
+          sheet_no: src.sheet_no + 1,
           sort_order: next,
         } as never)
         .select('*')
