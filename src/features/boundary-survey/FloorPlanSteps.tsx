@@ -1148,9 +1148,130 @@ export function StepFrame({
   )
 }
 
+
+// ========================================================================
+// B4 の 用紙
+// ========================================================================
+
 /**
- * B4 横 (364 × 257 mm) の 用紙。 実物 と 同じ く
- * 左 に 各階平面図、右 に 建物図面、下 に 表題欄 を 置く。
+ * 枠線 の 位置 (mm)。 doc/tatemono1.tif (400dpi / 5732 × 4047 px) の 罫線 を
+ * 実測 した もの。 px × 25.4 / 400 で mm に 直して いる。
+ *
+ *   上 は 段違い。 左半分 (各階平面図) が y=19.9、右半分 (建物図面) が y=24.9。
+ *   その 段差 の 中 に 家屋番号 の 枡 が 収まる。
+ *   表題欄 は 左右 2 つ の 箱 に 分かれ、間 (156.9〜206.9) は 空き。
+ */
+const SHEET = {
+  w: 364,
+  h: 257,
+  left: 25.0,
+  right: 340.9,
+  /** 左半分 の 上辺 */
+  topLeft: 19.9,
+  /** 用紙 の 中心。 左右 の 境 は 線 では なく 上下 の 短い 印 で 示す */
+  centerX: 182.0,
+  /** 中心 の 印 の 長さ (上 は 上辺 から 下 へ、下 は 表題欄 の 上辺 から 上 へ) */
+  centerTick: 8.1,
+  /** 家屋番号 の 枡 の 左辺 */
+  midX: 191.0,
+  /** 家屋番号 の 枡 */
+  hnTop: 9.8,
+  hnRight: 266.1,
+  /** 家屋番号 の 下辺 = 右半分 の 上辺 */
+  hnBottom: 24.9,
+  /** 建物の所在 の 行 の 下辺 */
+  locBottom: 34.9,
+  /** 表題欄 の 上辺 */
+  bodyBottom: 219.8,
+  /** 用紙 の 一番下 の 罫線 */
+  titleBottom: 239.9,
+  /** 表題欄 左 の 箱: 見出し | 中身 | 縮尺見出し | 縮尺値 */
+  tlLeft: [25.0, 33.9, 128.0, 136.0, 156.9],
+  /** 表題欄 右 の 箱 */
+  tlRight: [206.9, 215.9, 310.9, 319.9, 340.9],
+} as const
+
+/** 罫線 の 太さ。 実物 は 400dpi で 2px (= 0.13mm) だが 画面 では 細すぎる */
+const LW = 0.25
+
+/** 字間 を 空けた 見出し。 実物 の 「各 階 平 面 図」 の 置き方 に 合わせる */
+function SpacedText({
+  text,
+  x,
+  y,
+  pitch,
+  size,
+  fill = '#0f172a',
+}: {
+  text: string
+  x: number
+  y: number
+  pitch: number
+  size: number
+  fill?: string
+}) {
+  return (
+    <>
+      {Array.from(text).map((c, i) => (
+        <text key={i} x={x + pitch * i} y={y} fontSize={size} fill={fill}>
+          {c}
+        </text>
+      ))}
+    </>
+  )
+}
+
+/** 縦書き の 見出し (作製者 / 申請人 / 縮尺) */
+function VerticalText({
+  text,
+  cx,
+  top,
+  bottom,
+  size,
+}: {
+  text: string
+  cx: number
+  top: number
+  bottom: number
+  size: number
+}) {
+  const n = Array.from(text).length
+  const step = (bottom - top) / n
+  return (
+    <>
+      {Array.from(text).map((c, i) => (
+        <text
+          key={i}
+          x={cx}
+          y={top + step * (i + 0.5) + size * 0.36}
+          fontSize={size}
+          textAnchor="middle"
+          fill="#0f172a"
+        >
+          {c}
+        </text>
+      ))}
+    </>
+  )
+}
+
+/** 表題欄 の 縮尺 欄。 「1／」 が 小さく 上、分母 が 大きく 下 */
+function ScaleCell({ x0, x1, scale }: { x0: number; x1: number; scale: number }) {
+  return (
+    <>
+      <text x={x0 + 2.3} y={SHEET.bodyBottom + 11.2} fontSize={2.6} fill="#0f172a">
+        1／
+      </text>
+      <text x={x1 - 3.9} y={SHEET.bodyBottom + 15.1} fontSize={4.6} textAnchor="end" fill="#0f172a">
+        {scale}
+      </text>
+    </>
+  )
+}
+
+/**
+ * B4 横 (364 × 257 mm) の 用紙。 罫線 は SHEET の 実測値 の とおり に 引く。
+ * 左 に 各階平面図、右 に 建物図面、下 に 表題欄。
  */
 export function SheetPreview({
   plan,
@@ -1159,11 +1280,7 @@ export function SheetPreview({
   plan: FloorPlan
   parcels: WorkAreaRow[]
 }) {
-  const W = 364
-  const H = 257
-  const m = 10
-  const mid = W / 2 + 12 // 実物 は 各階平面図 の 側 が やや 広い
-
+  const S = SHEET
   const figures = sortFigures(plan.figures)
   const ground = groundFigure(plan.figures)
 
@@ -1175,79 +1292,115 @@ export function SheetPreview({
     : []
   const sitePoints = src.map((p) => ({ id: p.id, pointNumber: p.pointNumber, x: p.x, y: p.y }))
 
-  const titleTop = H - m - 26
+  // 図形 を 置く 領域 (左半分)
+  const planArea = {
+    x: S.left,
+    y: S.topLeft,
+    w: S.centerX - S.left,
+    h: S.bodyBottom - S.topLeft,
+  }
+  // 建物図面 を 置く 領域 (右半分)
+  const siteArea = {
+    x: S.centerX,
+    y: S.locBottom,
+    w: S.right - S.centerX,
+    h: S.bodyBottom - S.locBottom,
+  }
+
+  const [tlA, tlB, tlC, tlD, tlE] = S.tlLeft
+  const [trA, trB, trC, trD, trE] = S.tlRight
 
   return (
     <svg
-      viewBox={`0 0 ${W} ${H}`}
+      viewBox={`0 0 ${S.w} ${S.h}`}
       className="w-full h-auto bg-white shadow"
       preserveAspectRatio="xMidYMid meet"
     >
-      <rect x={0} y={0} width={W} height={H} fill="#fff" />
-      <rect
-        x={m}
-        y={m}
-        width={W - m * 2}
-        height={H - m * 2}
-        fill="none"
-        stroke="#334155"
-        strokeWidth={0.5}
-      />
-      {/* 左右 の 仕切り */}
-      <line x1={mid} y1={m} x2={mid} y2={titleTop} stroke="#334155" strokeWidth={0.4} />
+      <rect x={0} y={0} width={S.w} height={S.h} fill="#fff" />
 
-      {/* 見出し */}
-      <text x={m + 70} y={m + 10} fontSize={7} letterSpacing={3} fill="#0f172a">
-        各階平面図
-      </text>
-      <text x={W - m - 70} y={m + 10} fontSize={7} letterSpacing={3} fill="#0f172a">
-        建物図面
-      </text>
-      <text x={mid - 60} y={m + 9} fontSize={4} fill="#475569">
-        家 屋 番 号
-      </text>
-      <text x={mid - 25} y={m + 9} fontSize={4.5} fill="#0f172a">
+      <g stroke="#0f172a" strokeWidth={LW} fill="none" strokeLinecap="square">
+        {/* 本体 の 枠。 上辺 は 左右 で 段違い */}
+        <line x1={S.left} y1={S.topLeft} x2={S.midX} y2={S.topLeft} />
+        <line x1={S.left} y1={S.topLeft} x2={S.left} y2={S.titleBottom} />
+        <line x1={S.right} y1={S.hnBottom} x2={S.right} y2={S.titleBottom} />
+        <line x1={S.left} y1={S.bodyBottom} x2={S.right} y2={S.bodyBottom} />
+
+        {/* 用紙 中心 の 合わせ印 */}
+        <line x1={S.centerX} y1={S.topLeft} x2={S.centerX} y2={S.topLeft + S.centerTick} />
+        <line
+          x1={S.centerX}
+          y1={S.bodyBottom - S.centerTick}
+          x2={S.centerX}
+          y2={S.bodyBottom}
+        />
+
+        {/* 家屋番号 の 枡 と 建物の所在 の 行 */}
+        <line x1={S.midX} y1={S.hnTop} x2={S.hnRight} y2={S.hnTop} />
+        <line x1={S.midX} y1={S.hnTop} x2={S.midX} y2={S.locBottom} />
+        <line x1={S.hnRight} y1={S.hnTop} x2={S.hnRight} y2={S.hnBottom} />
+        <line x1={S.midX} y1={S.hnBottom} x2={S.right} y2={S.hnBottom} />
+        <line x1={S.midX} y1={S.locBottom} x2={S.right} y2={S.locBottom} />
+
+        {/* 表題欄 左 の 箱 */}
+        <line x1={tlA} y1={S.titleBottom} x2={tlE} y2={S.titleBottom} />
+        {[tlA, tlB, tlC, tlD, tlE].map((x) => (
+          <line key={`l${x}`} x1={x} y1={S.bodyBottom} x2={x} y2={S.titleBottom} />
+        ))}
+        {/* 表題欄 右 の 箱 */}
+        <line x1={trA} y1={S.titleBottom} x2={trE} y2={S.titleBottom} />
+        {[trA, trB, trC, trD, trE].map((x) => (
+          <line key={`r${x}`} x1={x} y1={S.bodyBottom} x2={x} y2={S.titleBottom} />
+        ))}
+      </g>
+
+      {/* 用紙 の 見出し。 枠 の 外 に 字間 を 空けて 置く */}
+      <SpacedText text="各階平面図" x={80.4} y={17.2} pitch={11.0} size={5.4} />
+      <SpacedText text="建物図面" x={280.7} y={21.5} pitch={13.1} size={5.4} />
+
+      {/* 家屋番号 / 建物の所在 */}
+      <SpacedText text="家屋番号" x={195.1} y={19.4} pitch={3.9} size={2.8} fill="#0f172a" />
+      <text x={232.3} y={19.4} fontSize={3.0} fill="#0f172a">
         {plan.house_number ?? ''}
       </text>
-      <text x={mid - 60} y={m + 19} fontSize={4} fill="#475569">
-        建物の所在
-      </text>
-      <text x={mid - 25} y={m + 19} fontSize={4.5} fill="#0f172a">
+      <SpacedText text="建物の所在" x={195.1} y={30.7} pitch={3.9} size={2.8} fill="#0f172a" />
+      <text x={234.0} y={30.7} fontSize={3.0} fill="#0f172a">
         {plan.location ?? ''}
       </text>
 
-      {/* 左: 各階平面図 の 図形 を 2 列 に 並べる */}
+      {/* 左: 各階平面図 の 図形 と 求積表 を 2 列 に 並べる */}
       {figures.slice(0, 6).map((f, i) => {
         const cols = 2
-        const cw = (mid - m - 8) / cols
         const rows = Math.ceil(Math.min(figures.length, 6) / cols)
-        const ch = (titleTop - (m + 26)) / rows
-        const cx = m + 4 + cw * (i % cols)
-        const cy = m + 26 + ch * Math.floor(i / cols)
+        const cw = planArea.w / cols
+        const ch = planArea.h / rows
+        const cx = planArea.x + cw * (i % cols) + 3
+        const cy = planArea.y + ch * Math.floor(i / cols) + 3
+        const iw = cw - 6
+        const ih = ch * 0.5
         return (
           <g key={f.id}>
-            <text x={cx + 2} y={cy + 4} fontSize={3.6} fill="#0f172a">
+            <text x={cx} y={cy + 3} fontSize={3.0} fill="#0f172a">
               {figureLabel(f)}
             </text>
-            <svg x={cx + 2} y={cy + 6} width={cw - 6} height={ch * 0.52}>
+            <svg x={cx} y={cy + 5} width={iw} height={ih}>
               <FigureOutlinePreview
                 figure={f}
                 underlay={f.id === ground?.id ? null : ground}
                 className="w-full h-full"
               />
             </svg>
-            <text x={cx + 2} y={cy + ch * 0.52 + 12} fontSize={3.6} fontWeight="bold" fill="#0f172a">
+            <text x={cx + iw / 2} y={cy + ih + 10} fontSize={3.2} fontWeight="bold" textAnchor="middle" fill="#0f172a">
               求積表
             </text>
-            {f.terms.slice(0, 6).map((t, j) => (
+            {f.terms.slice(0, 5).map((t, j) => (
               <g key={t.id}>
-                <text x={cx + 6} y={cy + ch * 0.52 + 18 + j * 4.2} fontSize={3.2} fill="#0f172a">
+                <text x={cx + 4} y={cy + ih + 15 + j * 3.8} fontSize={2.8} fill="#0f172a">
                   {termFormula(t)}
                 </text>
                 <text
-                  x={cx + cw - 8}
-                  y={cy + ch * 0.52 + 18 + j * 4.2}
-                  fontSize={3.2}
+                  x={cx + iw - 2}
+                  y={cy + ih + 15 + j * 3.8}
+                  fontSize={2.8}
                   textAnchor="end"
                   fill="#0f172a"
                 >
@@ -1255,21 +1408,60 @@ export function SheetPreview({
                 </text>
               </g>
             ))}
+            {f.terms.length > 1 && (
+              <>
+                <line
+                  x1={cx + 4}
+                  y1={cy + ih + 16.5 + Math.min(f.terms.length, 5) * 3.8}
+                  x2={cx + iw - 2}
+                  y2={cy + ih + 16.5 + Math.min(f.terms.length, 5) * 3.8}
+                  stroke="#0f172a"
+                  strokeWidth={LW}
+                />
+                <text
+                  x={cx + iw - 24}
+                  y={cy + ih + 20.5 + Math.min(f.terms.length, 5) * 3.8}
+                  fontSize={2.8}
+                  textAnchor="end"
+                  fill="#0f172a"
+                >
+                  計
+                </text>
+                <text
+                  x={cx + iw - 2}
+                  y={cy + ih + 20.5 + Math.min(f.terms.length, 5) * 3.8}
+                  fontSize={2.8}
+                  textAnchor="end"
+                  fill="#0f172a"
+                >
+                  {termValueText(figureSum(f))}
+                </text>
+              </>
+            )}
             <text
-              x={cx + cw - 8}
-              y={cy + ch * 0.52 + 22 + Math.min(f.terms.length, 6) * 4.2}
-              fontSize={3.4}
+              x={cx + iw - 24}
+              y={cy + ih + 25 + Math.min(f.terms.length, 5) * 3.8}
+              fontSize={2.8}
               textAnchor="end"
               fill="#0f172a"
             >
-              床面積 {floorAreaText(figureFloorArea(f))} ㎡
+              床面積
+            </text>
+            <text
+              x={cx + iw - 2}
+              y={cy + ih + 25 + Math.min(f.terms.length, 5) * 3.8}
+              fontSize={2.8}
+              textAnchor="end"
+              fill="#0f172a"
+            >
+              {floorAreaText(figureFloorArea(f))} ㎡
             </text>
           </g>
         )
       })}
 
       {/* 右: 建物図面 */}
-      <svg x={mid + 6} y={m + 26} width={W - m - mid - 12} height={titleTop - (m + 26) - 4}>
+      <svg x={siteArea.x + 4} y={siteArea.y + 4} width={siteArea.w - 8} height={siteArea.h - 8}>
         <SitePlanPreview
           sitePoints={sitePoints}
           outline={ground?.outline ?? []}
@@ -1282,101 +1474,45 @@ export function SheetPreview({
         />
       </svg>
 
-      {/* 表題欄 */}
-      <line x1={m} y1={titleTop} x2={W - m} y2={titleTop} stroke="#334155" strokeWidth={0.5} />
-      <TitleBlock
-        x={m}
-        y={titleTop}
-        w={mid - m}
-        h={H - m - titleTop}
-        caption="作製者"
-        scale={plan.plan_scale}
-      >
-        <text x={m + 22} y={titleTop + 7} fontSize={3.4} fill="#0f172a">
-          {warekiCreatedText(plan.frame.createdOn)}
-        </text>
-        <text x={m + 44} y={titleTop + 14} fontSize={3.4} fill="#0f172a">
-          {plan.frame.makerAddress}
-        </text>
-        <text x={m + 24} y={titleTop + 21} fontSize={3} fill="#475569">
-          {plan.frame.makerQualification}
-        </text>
-        <text x={m + 60} y={titleTop + 22} fontSize={5.5} letterSpacing={2} fill="#0f172a">
-          {plan.frame.makerName}
-        </text>
-      </TitleBlock>
-      <TitleBlock
-        x={mid}
-        y={titleTop}
-        w={W - m - mid}
-        h={H - m - titleTop}
-        caption="申請人"
-        scale={plan.site_scale}
-      >
-        <text x={mid + 46} y={titleTop + 17} fontSize={5.5} letterSpacing={2} fill="#0f172a">
-          {plan.frame.applicantName}
-        </text>
-      </TitleBlock>
-    </svg>
-  )
-}
-
-/** 表題欄 の 1 区画 (見出し / 中身 / 縮尺) */
-function TitleBlock({
-  x,
-  y,
-  w,
-  h,
-  caption,
-  scale,
-  children,
-}: {
-  x: number
-  y: number
-  w: number
-  h: number
-  caption: string
-  scale: number
-  children: React.ReactNode
-}) {
-  const capW = 12
-  const scaleW = 34
-  return (
-    <g>
-      <line x1={x + capW} y1={y} x2={x + capW} y2={y + h} stroke="#334155" strokeWidth={0.4} />
-      <line
-        x1={x + w - scaleW}
-        y1={y}
-        x2={x + w - scaleW}
-        y2={y + h}
-        stroke="#334155"
-        strokeWidth={0.4}
+      {/* 表題欄 左: 作製者 */}
+      <VerticalText text="作製者" cx={(tlA + tlB) / 2} top={S.bodyBottom + 2.8} bottom={S.titleBottom - 3.3} size={3.1} />
+      <text x={38.7} y={225.1} fontSize={2.3} fill="#0f172a">
+        {warekiCreatedText(plan.frame.createdOn)}
+      </text>
+      <text x={(tlB + tlC) / 2} y={229.7} fontSize={2.1} textAnchor="middle" fill="#0f172a">
+        {plan.frame.makerAddress}
+      </text>
+      {/* 資格 は 2 行 に 折る (実物 が 「土地家屋 / 調査士」) */}
+      <text x={40.4} y={232.3} fontSize={1.8} fill="#0f172a">
+        {plan.frame.makerQualification.slice(0, 4)}
+      </text>
+      <text x={40.4} y={234.6} fontSize={1.8} fill="#0f172a">
+        {plan.frame.makerQualification.slice(4)}
+      </text>
+      <SpacedText
+        text={plan.frame.makerName}
+        x={61.1}
+        y={236.5}
+        pitch={plan.frame.makerName.length > 0 ? 48.5 / Math.max(Array.from(plan.frame.makerName).length, 1) : 0}
+        size={3.8}
       />
-      {Array.from(caption).map((c, i) => (
-        <text
-          key={i}
-          x={x + capW / 2}
-          y={y + 8 + i * 6}
-          fontSize={4.5}
-          textAnchor="middle"
-          fill="#0f172a"
-        >
-          {c}
-        </text>
-      ))}
-      {children}
-      <text x={x + w - scaleW + 4} y={y + 8} fontSize={3} fill="#475569">
-        縮
+      <VerticalText text="縮尺" cx={(tlC + tlD) / 2} top={S.bodyBottom + 3.4} bottom={S.titleBottom - 4.0} size={2.8} />
+      <ScaleCell x0={tlD} x1={tlE} scale={plan.plan_scale} />
+
+      {/* 表題欄 右: 申請人 */}
+      <VerticalText text="申請人" cx={(trA + trB) / 2} top={S.bodyBottom + 2.8} bottom={S.titleBottom - 3.3} size={3.1} />
+      <text
+        x={(trB + trC) / 2}
+        y={232.2}
+        fontSize={4.5}
+        textAnchor="middle"
+        letterSpacing={1.6}
+        fill="#0f172a"
+      >
+        {plan.frame.applicantName}
       </text>
-      <text x={x + w - scaleW + 4} y={y + 18} fontSize={3} fill="#475569">
-        尺
-      </text>
-      <text x={x + w - scaleW + 12} y={y + 11} fontSize={4} fill="#0f172a">
-        1／
-      </text>
-      <text x={x + w - 6} y={y + 18} fontSize={6} textAnchor="end" fill="#0f172a">
-        {scale}
-      </text>
-    </g>
+      <VerticalText text="縮尺" cx={(trC + trD) / 2} top={S.bodyBottom + 3.4} bottom={S.titleBottom - 4.0} size={2.8} />
+      <ScaleCell x0={trD} x1={trE} scale={plan.site_scale} />
+    </svg>
   )
 }
