@@ -163,3 +163,7 @@ CREATE POLICY floor_plans_delete ON public.floor_plans FOR DELETE
         )
     )
   );
+
+-- PostgREST の スキーマキャッシュ を 更新 する。 これ が 無い と 列 を 足した 直後 に
+-- PGRST204 (Could not find the '…' column in the schema cache) が 出る。
+NOTIFY pgrst, 'reload schema';
