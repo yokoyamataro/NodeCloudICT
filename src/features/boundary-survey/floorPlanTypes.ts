@@ -273,17 +273,20 @@ export interface FloorPlanFrame {
   /** 作製年月日。 表題欄 は 「（令和5年11月15日作製）」 と 出す */
   createdOn: string | null
   makerAddress: string
-  /** 「土地家屋調査士」 など の 肩書 */
-  makerQualification: string
+  /** 土地家屋調査士法人 の 場合 の 名称。 空 なら 個人 と して 氏名 だけ 出す */
+  makerCorporation: string
   makerName: string
   applicantName: string
   remarks: string
 }
 
+/** 資格 は この 様式 では 固定 */
+export const MAKER_QUALIFICATION = '土地家屋調査士'
+
 export const DEFAULT_FRAME: FloorPlanFrame = {
   createdOn: null,
   makerAddress: '',
-  makerQualification: '土地家屋調査士',
+  makerCorporation: '',
   makerName: '',
   applicantName: '',
   remarks: '',

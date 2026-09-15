@@ -28,6 +28,7 @@ import {
   termFormula,
   termValue,
   termValueText,
+  MAKER_QUALIFICATION,
   totalMainArea,
   warekiCreatedText,
   type AreaTerm,
@@ -1101,14 +1102,18 @@ export function StepFrame({
             placeholder="例: 斜里郡斜里町青葉町9番地13"
           />
         </Field>
-        <Field label="資格">
+        <Field
+          label="法人名"
+          hint="土地家屋調査士法人のときだけ入れます。氏名の上に出ます。個人なら空のまま。"
+        >
           <input
             className={inputCls}
-            value={frame.makerQualification}
-            onChange={(e) => setFrame({ makerQualification: e.target.value })}
+            value={frame.makerCorporation}
+            onChange={(e) => setFrame({ makerCorporation: e.target.value })}
+            placeholder="例: 土地家屋調査士法人〇〇"
           />
         </Field>
-        <Field label="氏名">
+        <Field label="氏名" hint="資格「土地家屋調査士」は様式で固定のため入力は不要です。">
           <input
             className={inputCls}
             value={frame.makerName}
@@ -1174,6 +1179,8 @@ const SHEET = {
   centerTick: 8.1,
   /** 家屋番号 の 枡 の 左辺 */
   midX: 191.0,
+  /** 「家屋番号」「建物の所在」 の 見出し と 値 を 分ける 縦罫 */
+  hnLabelRight: 232.6,
   /** 家屋番号 の 枡 */
   hnTop: 9.8,
   hnRight: 266.1,
@@ -1251,6 +1258,55 @@ function VerticalText({
           {c}
         </text>
       ))}
+    </>
+  )
+}
+
+/**
+ * 表題欄 左 の 作製者 の 中身。
+ * 個人 なら 住所 → 資格 + 氏名 の 2 段。
+ * 土地家屋調査士法人 なら その 名称 を 氏名 の 上 に 挟んで 3 段 に する。
+ */
+function MakerBlock({
+  frame,
+  x0,
+  x1,
+}: {
+  frame: FloorPlanFrame
+  x0: number
+  x1: number
+}) {
+  const corp = frame.makerCorporation.trim()
+  const cx = (x0 + x1) / 2
+  // 行 の 高さ を 詰めて 3 段 を 収める
+  const yAddress = corp ? 228.8 : 229.7
+  const yCorp = 232.6
+  const yName = corp ? 237.6 : 236.5
+  const nameChars = Math.max(Array.from(frame.makerName).length, 1)
+  return (
+    <>
+      <text x={cx} y={yAddress} fontSize={2.1} textAnchor="middle" fill="#0f172a">
+        {frame.makerAddress}
+      </text>
+      {corp && (
+        <text x={cx} y={yCorp} fontSize={2.6} textAnchor="middle" fill="#0f172a">
+          {corp}
+        </text>
+      )}
+      {/* 資格 は この 様式 では 固定。 実物 と 同じ く 2 行 に 折る */}
+      <text x={x0 + 6.5} y={yName - 4.2} fontSize={1.8} fill="#0f172a">
+        {MAKER_QUALIFICATION.slice(0, 4)}
+      </text>
+      <text x={x0 + 6.5} y={yName - 1.9} fontSize={1.8} fill="#0f172a">
+        {MAKER_QUALIFICATION.slice(4)}
+      </text>
+      <SpacedText
+        text={frame.makerName}
+        x={x0 + 27.2}
+        y={yName}
+        pitch={48.5 / nameChars}
+        size={3.8}
+      />
     </>
   )
 }
@@ -1338,6 +1394,7 @@ export function SheetPreview({
         <line x1={S.midX} y1={S.hnTop} x2={S.hnRight} y2={S.hnTop} />
         <line x1={S.midX} y1={S.hnTop} x2={S.midX} y2={S.locBottom} />
         <line x1={S.hnRight} y1={S.hnTop} x2={S.hnRight} y2={S.hnBottom} />
+        <line x1={S.hnLabelRight} y1={S.hnTop} x2={S.hnLabelRight} y2={S.locBottom} />
         <line x1={S.midX} y1={S.hnBottom} x2={S.right} y2={S.hnBottom} />
         <line x1={S.midX} y1={S.locBottom} x2={S.right} y2={S.locBottom} />
 
@@ -1358,12 +1415,12 @@ export function SheetPreview({
       <SpacedText text="建物図面" x={280.7} y={21.5} pitch={13.1} size={5.4} />
 
       {/* 家屋番号 / 建物の所在 */}
-      <SpacedText text="家屋番号" x={195.1} y={19.4} pitch={3.9} size={2.8} fill="#0f172a" />
-      <text x={232.3} y={19.4} fontSize={3.0} fill="#0f172a">
+      <SpacedText text="家屋番号" x={195.1} y={19.4} pitch={11.0} size={2.8} />
+      <text x={234.6} y={19.4} fontSize={3.0} fill="#0f172a">
         {plan.house_number ?? ''}
       </text>
-      <SpacedText text="建物の所在" x={195.1} y={30.7} pitch={3.9} size={2.8} fill="#0f172a" />
-      <text x={234.0} y={30.7} fontSize={3.0} fill="#0f172a">
+      <SpacedText text="建物の所在" x={195.1} y={30.7} pitch={8.5} size={2.8} />
+      <text x={234.6} y={30.7} fontSize={3.0} fill="#0f172a">
         {plan.location ?? ''}
       </text>
 
@@ -1479,23 +1536,7 @@ export function SheetPreview({
       <text x={38.7} y={225.1} fontSize={2.3} fill="#0f172a">
         {warekiCreatedText(plan.frame.createdOn)}
       </text>
-      <text x={(tlB + tlC) / 2} y={229.7} fontSize={2.1} textAnchor="middle" fill="#0f172a">
-        {plan.frame.makerAddress}
-      </text>
-      {/* 資格 は 2 行 に 折る (実物 が 「土地家屋 / 調査士」) */}
-      <text x={40.4} y={232.3} fontSize={1.8} fill="#0f172a">
-        {plan.frame.makerQualification.slice(0, 4)}
-      </text>
-      <text x={40.4} y={234.6} fontSize={1.8} fill="#0f172a">
-        {plan.frame.makerQualification.slice(4)}
-      </text>
-      <SpacedText
-        text={plan.frame.makerName}
-        x={61.1}
-        y={236.5}
-        pitch={plan.frame.makerName.length > 0 ? 48.5 / Math.max(Array.from(plan.frame.makerName).length, 1) : 0}
-        size={3.8}
-      />
+      <MakerBlock frame={plan.frame} x0={tlB} x1={tlC} />
       <VerticalText text="縮尺" cx={(tlC + tlD) / 2} top={S.bodyBottom + 3.4} bottom={S.titleBottom - 4.0} size={2.8} />
       <ScaleCell x0={tlD} x1={tlE} scale={plan.plan_scale} />
 
