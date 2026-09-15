@@ -68,9 +68,53 @@ export function Field({
 const inputCls = 'w-full px-2 py-1 text-sm border rounded'
 const numCls = 'w-24 px-2 py-1 text-sm border rounded text-right font-mono'
 
-const readNum = (v: string): number => {
-  const n = Number(v)
-  return Number.isFinite(n) ? n : 0
+/**
+ * 数値 の 入力欄。
+ *
+ * type="number" に パース 済み の 数値 を そのまま 流す と、「3.」 と 打った 時点 で
+ * Number('3.') = 3 に 丸められ 小数点 が 消える。 空 に すれば 0 が 入る。
+ * それ を 避ける ため、触って いる 間 は 打った 文字列 を そのまま 持ち、
+ * 離れた ときに 保存値 の 表示 へ 戻す。
+ */
+function NumField({
+  value,
+  onChange,
+  className = numCls,
+  placeholder,
+  title,
+  disabled,
+}: {
+  value: number
+  onChange: (v: number) => void
+  className?: string
+  placeholder?: string
+  title?: string
+  disabled?: boolean
+}) {
+  const [text, setText] = useState<string | null>(null)
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className={className}
+      placeholder={placeholder}
+      title={title}
+      disabled={disabled}
+      value={text ?? String(value)}
+      onChange={(e) => {
+        const t = e.target.value
+        setText(t)
+        if (t.trim() === '') {
+          onChange(0)
+          return
+        }
+        const n = Number(t)
+        if (Number.isFinite(n)) onChange(n)
+      }}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={() => setText(null)}
+    />
+  )
 }
 
 // ========================================================================
@@ -99,12 +143,9 @@ export function StepBuilding({
       </Field>
       <Field label="枚数" hint="1 申請が 1 枚に収まらないとき、2 枚目以降に分けます。">
         <div className="flex items-center gap-1">
-          <input
-            type="number"
-            min={1}
-            className={numCls}
+          <NumField
             value={plan.sheet_no}
-            onChange={(e) => onPatch({ sheet_no: Math.max(1, readNum(e.target.value)) })}
+            onChange={(v) => onPatch({ sheet_no: Math.max(1, v) })}
           />
           <span className="text-xs text-slate-500">枚目</span>
         </div>
@@ -370,20 +411,18 @@ function FigureEditor({
         <div className="text-sm font-semibold">{figureLabel(figure)}</div>
         <div className="flex items-center gap-1 ml-2">
           <label className="text-xs text-slate-500">階</label>
-          <input
-            type="number"
-            className="w-16 px-2 py-0.5 text-sm border rounded text-right"
+          <NumField
             value={figure.floorNo}
-            onChange={(e) => onChange({ floorNo: Math.trunc(readNum(e.target.value)) || 1 })}
+            onChange={(v) => onChange({ floorNo: Math.trunc(v) || 1 })}
+            className="w-16 px-2 py-0.5 text-sm border rounded text-right"
           />
           {figure.kind === 'annex' && (
             <>
               <label className="ml-2 text-xs text-slate-500">符号</label>
-              <input
-                type="number"
-                className="w-16 px-2 py-0.5 text-sm border rounded text-right"
+              <NumField
                 value={figure.annexNo ?? 1}
-                onChange={(e) => onChange({ annexNo: Math.trunc(readNum(e.target.value)) || 1 })}
+                onChange={(v) => onChange({ annexNo: Math.trunc(v) || 1 })}
+                className="w-16 px-2 py-0.5 text-sm border rounded text-right"
               />
             </>
           )}
@@ -478,20 +517,14 @@ function OutlineEditor({
           <div className="text-xs font-semibold text-slate-600 mb-1">矩形から始める</div>
           <div className="flex items-center gap-1 text-sm">
             <span className="text-xs text-slate-500">横</span>
-            <input
-              type="number"
-              step="0.001"
-              className={numCls}
+            <NumField
               value={seedW}
-              onChange={(e) => setSeedW(readNum(e.target.value))}
+              onChange={(v) => setSeedW(v)}
             />
             <span className="text-xs text-slate-500">縦</span>
-            <input
-              type="number"
-              step="0.001"
-              className={numCls}
+            <NumField
               value={seedH}
-              onChange={(e) => setSeedH(readNum(e.target.value))}
+              onChange={(v) => setSeedH(v)}
             />
             <button
               type="button"
@@ -509,8 +542,8 @@ function OutlineEditor({
           <thead className="bg-slate-50 text-xs text-slate-600 sticky top-0">
             <tr>
               <th className="px-2 py-1 text-left font-medium w-8">#</th>
-              <th className="px-2 py-1 text-right font-medium">X（東）</th>
-              <th className="px-2 py-1 text-right font-medium">Y（北）</th>
+              <th className="px-2 py-1 text-right font-medium">X</th>
+              <th className="px-2 py-1 text-right font-medium">Y</th>
               <th className="px-2 py-1 text-right font-medium">辺長</th>
               <th className="w-8" />
             </tr>
@@ -520,25 +553,17 @@ function OutlineEditor({
               <tr key={i}>
                 <td className="px-2 py-1 text-xs text-slate-400">{i + 1}</td>
                 <td className="px-2 py-1 text-right">
-                  <input
-                    type="number"
-                    step="0.001"
-                    className={numCls}
+                  <NumField
                     value={p.x}
-                    onChange={(e) =>
-                      setPts(pts.map((q, j) => (j === i ? { ...q, x: readNum(e.target.value) } : q)))
-                    }
+                    onChange={(v) =>
+                      setPts(pts.map((q, j) => (j === i ? { ...q, x: v } : q)))}
                   />
                 </td>
                 <td className="px-2 py-1 text-right">
-                  <input
-                    type="number"
-                    step="0.001"
-                    className={numCls}
+                  <NumField
                     value={p.y}
-                    onChange={(e) =>
-                      setPts(pts.map((q, j) => (j === i ? { ...q, y: readNum(e.target.value) } : q)))
-                    }
+                    onChange={(v) =>
+                      setPts(pts.map((q, j) => (j === i ? { ...q, y: v } : q)))}
                   />
                 </td>
                 <td className="px-2 py-1 text-right font-mono text-xs text-slate-600">
@@ -567,17 +592,14 @@ function OutlineEditor({
             value={dir}
             onChange={(e) => setDir(e.target.value as 'E' | 'W' | 'N' | 'S')}
           >
-            <option value="E">右（東）へ</option>
-            <option value="W">左（西）へ</option>
-            <option value="N">上（北）へ</option>
-            <option value="S">下（南）へ</option>
+            <option value="E">右へ</option>
+            <option value="W">左へ</option>
+            <option value="N">上へ</option>
+            <option value="S">下へ</option>
           </select>
-          <input
-            type="number"
-            step="0.001"
-            className={numCls}
+          <NumField
             value={len}
-            onChange={(e) => setLen(readNum(e.target.value))}
+            onChange={(v) => setLen(v)}
           />
           <span className="text-xs text-slate-500">m</span>
           <button
@@ -597,20 +619,14 @@ function OutlineEditor({
       <div className="mt-2 flex items-center gap-2 text-xs">
         <span className="text-slate-500">1階からのずれ</span>
         <span className="text-slate-400">X</span>
-        <input
-          type="number"
-          step="0.001"
-          className={numCls}
+        <NumField
           value={figure.offset.x}
-          onChange={(e) => onChange({ offset: { ...figure.offset, x: readNum(e.target.value) } })}
+          onChange={(v) => onChange({ offset: { ...figure.offset, x: v } })}
         />
         <span className="text-slate-400">Y</span>
-        <input
-          type="number"
-          step="0.001"
-          className={numCls}
+        <NumField
           value={figure.offset.y}
-          onChange={(e) => onChange({ offset: { ...figure.offset, y: readNum(e.target.value) } })}
+          onChange={(v) => onChange({ offset: { ...figure.offset, y: v } })}
         />
       </div>
     </div>
@@ -678,43 +694,35 @@ function AreaTable({
                       />
                     </td>
                     <td className="px-1 py-1 text-right">
-                      <input
-                        type="number"
-                        step="0.000001"
-                        className="w-24 px-1 py-0.5 text-xs border rounded text-right font-mono"
+                      <NumField
                         value={t.manual}
-                        onChange={(e) => patch(i, { manual: readNum(e.target.value) })}
+                        onChange={(v) => patch(i, { manual: v })}
+                        className="w-24 px-1 py-0.5 text-xs border rounded text-right font-mono"
                       />
                     </td>
                   </>
                 ) : (
                   <>
                     <td className="px-1 py-1 text-right">
-                      <input
-                        type="number"
-                        step="0.001"
-                        className="w-20 px-1 py-0.5 text-xs border rounded text-right font-mono"
+                      <NumField
                         value={t.a}
-                        onChange={(e) => patch(i, { a: readNum(e.target.value) })}
+                        onChange={(v) => patch(i, { a: v })}
+                        className="w-20 px-1 py-0.5 text-xs border rounded text-right font-mono"
                       />
                     </td>
                     <td className="px-1 py-1 text-right">
-                      <input
-                        type="number"
-                        step="0.001"
-                        className="w-20 px-1 py-0.5 text-xs border rounded text-right font-mono"
+                      <NumField
                         value={t.b}
-                        onChange={(e) => patch(i, { b: readNum(e.target.value) })}
+                        onChange={(v) => patch(i, { b: v })}
+                        className="w-20 px-1 py-0.5 text-xs border rounded text-right font-mono"
                       />
                     </td>
                     <td className="px-1 py-1 text-right">
                       {t.kind === 'trapezoid' ? (
-                        <input
-                          type="number"
-                          step="0.001"
-                          className="w-20 px-1 py-0.5 text-xs border rounded text-right font-mono"
+                        <NumField
                           value={t.h}
-                          onChange={(e) => patch(i, { h: readNum(e.target.value) })}
+                          onChange={(v) => patch(i, { h: v })}
+                          className="w-20 px-1 py-0.5 text-xs border rounded text-right font-mono"
                         />
                       ) : (
                         <span className="text-slate-300">—</span>
@@ -822,43 +830,31 @@ export function StepSite({
           1階の据え付け位置
         </div>
         <Field label="東方向 (Y)" hint="平面直角座標。建物の 1 点目をどこに置くか。">
-          <input
-            type="number"
-            step="0.001"
-            className={numCls}
+          <NumField
             value={site.offsetE}
-            onChange={(e) => setSite({ offsetE: readNum(e.target.value) })}
+            onChange={(v) => setSite({ offsetE: v })}
           />
         </Field>
         <Field label="北方向 (X)">
-          <input
-            type="number"
-            step="0.001"
-            className={numCls}
+          <NumField
             value={site.offsetN}
-            onChange={(e) => setSite({ offsetN: readNum(e.target.value) })}
+            onChange={(v) => setSite({ offsetN: v })}
           />
         </Field>
         <Field label="建物の向き" hint="反時計回りの度。0 なら横が真東を向きます。">
           <div className="flex items-center gap-1">
-            <input
-              type="number"
-              step="0.1"
-              className={numCls}
+            <NumField
               value={site.rotationDeg}
-              onChange={(e) => setSite({ rotationDeg: readNum(e.target.value) })}
+              onChange={(v) => setSite({ rotationDeg: v })}
             />
             <span className="text-xs text-slate-500">度</span>
           </div>
         </Field>
         <Field label="方位" hint="図面の上を真北から何度振るか。0 なら上が真北。">
           <div className="flex items-center gap-1">
-            <input
-              type="number"
-              step="0.1"
-              className={numCls}
+            <NumField
               value={site.northAngleDeg}
-              onChange={(e) => setSite({ northAngleDeg: readNum(e.target.value) })}
+              onChange={(v) => setSite({ northAngleDeg: v })}
             />
             <span className="text-xs text-slate-500">度</span>
           </div>
@@ -901,21 +897,17 @@ export function StepSite({
                   value={n.label}
                   onChange={(e) => upd({ label: e.target.value })}
                 />
-                <input
-                  type="number"
-                  step="0.001"
+                <NumField
+                  value={n.x}
+                  onChange={(v) => upd({ x: v })}
                   className="w-20 px-1 py-1 text-xs border rounded text-right font-mono"
                   title="東 (Y)"
-                  value={n.x}
-                  onChange={(e) => upd({ x: readNum(e.target.value) })}
                 />
-                <input
-                  type="number"
-                  step="0.001"
+                <NumField
+                  value={n.y}
+                  onChange={(v) => upd({ y: v })}
                   className="w-20 px-1 py-1 text-xs border rounded text-right font-mono"
                   title="北 (X)"
-                  value={n.y}
-                  onChange={(e) => upd({ y: readNum(e.target.value) })}
                 />
               </>
             )
@@ -948,12 +940,10 @@ export function StepSite({
                   value={d.label}
                   onChange={(e) => upd({ label: e.target.value })}
                 />
-                <input
-                  type="number"
-                  step="0.01"
-                  className="w-20 px-2 py-1 text-sm border rounded text-right font-mono"
+                <NumField
                   value={d.value}
-                  onChange={(e) => upd({ value: readNum(e.target.value) })}
+                  onChange={(v) => upd({ value: v })}
+                  className="w-20 px-2 py-1 text-sm border rounded text-right font-mono"
                 />
               </>
             )
@@ -1055,21 +1045,19 @@ export function StepFrame({
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500 w-16">各階平面図</span>
             <span className="text-sm text-slate-600">1 /</span>
-            <input
-              type="number"
-              className="w-20 px-2 py-1 text-sm border rounded text-right font-mono"
+            <NumField
               value={plan.plan_scale}
-              onChange={(e) => onPatch({ plan_scale: Math.max(1, readNum(e.target.value)) })}
+              onChange={(v) => onPatch({ plan_scale: Math.max(1, v) })}
+              className="w-20 px-2 py-1 text-sm border rounded text-right font-mono"
             />
           </div>
           <div className="flex items-center gap-2 mt-1">
             <span className="text-xs text-slate-500 w-16">建物図面</span>
             <span className="text-sm text-slate-600">1 /</span>
-            <input
-              type="number"
-              className="w-20 px-2 py-1 text-sm border rounded text-right font-mono"
+            <NumField
               value={plan.site_scale}
-              onChange={(e) => onPatch({ site_scale: Math.max(1, readNum(e.target.value)) })}
+              onChange={(v) => onPatch({ site_scale: Math.max(1, v) })}
+              className="w-20 px-2 py-1 text-sm border rounded text-right font-mono"
             />
           </div>
         </Field>
