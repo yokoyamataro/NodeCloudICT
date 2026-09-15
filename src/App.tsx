@@ -39,6 +39,8 @@ import { FarmMemosPage } from '@/features/memo/FarmMemosPage'
 import { BoundarySurveyWorkAreaPage } from '@/features/boundary-survey/BoundarySurveyWorkAreaPage'
 import { LandownersPage } from '@/features/boundary-survey/LandownersPage'
 import { LandReportPage } from '@/features/boundary-survey/LandReportPage'
+import { BuildingDrawingPage } from '@/features/boundary-survey/BuildingDrawingPage'
+import { FloorPlanPage } from '@/features/boundary-survey/FloorPlanPage'
 // オルソ画像
 import { OrthophotoPage } from '@/features/orthophoto/OrthophotoPage'
 // 新規工種
@@ -331,6 +333,8 @@ function AppRoutes() {
           <Route path="work-area" element={<BoundarySurveyWorkAreaPage />} />
           <Route path="landowners" element={<LandownersPage />} />
           <Route path="land-report" element={<LandReportPage />} />
+          <Route path="building-drawing" element={<BuildingDrawingPage />} />
+          <Route path="floor-plan" element={<FloorPlanPage />} />
         </Route>
         {/* オルソ画像 */}
         <Route path="orthophoto" element={<OrthophotoPage />} />
