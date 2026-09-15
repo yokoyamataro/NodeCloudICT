@@ -39,7 +39,7 @@ import { FarmMemosPage } from '@/features/memo/FarmMemosPage'
 import { BoundarySurveyWorkAreaPage } from '@/features/boundary-survey/BoundarySurveyWorkAreaPage'
 import { LandownersPage } from '@/features/boundary-survey/LandownersPage'
 import { LandReportPage } from '@/features/boundary-survey/LandReportPage'
-import { BuildingDrawingPage } from '@/features/boundary-survey/BuildingDrawingPage'
+import { LandSurveyDrawingPage } from '@/features/boundary-survey/LandSurveyDrawingPage'
 import { FloorPlanPage } from '@/features/boundary-survey/FloorPlanPage'
 // オルソ画像
 import { OrthophotoPage } from '@/features/orthophoto/OrthophotoPage'
@@ -333,7 +333,7 @@ function AppRoutes() {
           <Route path="work-area" element={<BoundarySurveyWorkAreaPage />} />
           <Route path="landowners" element={<LandownersPage />} />
           <Route path="land-report" element={<LandReportPage />} />
-          <Route path="building-drawing" element={<BuildingDrawingPage />} />
+          <Route path="land-survey-drawing" element={<LandSurveyDrawingPage />} />
           <Route path="floor-plan" element={<FloorPlanPage />} />
         </Route>
         {/* オルソ画像 */}

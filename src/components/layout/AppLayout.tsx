@@ -39,7 +39,6 @@ import {
   ShieldCheck,
   ClipboardList,
   Megaphone,
-  Building2,
   LayoutTemplate,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -88,7 +87,7 @@ const navigation: NavGroup[] = [
   { name: '地番管理', href: '/boundary-survey/work-area', icon: Compass },
   { name: '地権者管理', href: '/boundary-survey/landowners', icon: Users },
   { name: '土地調査報告書作成', href: '/boundary-survey/land-report', icon: FileText },
-  { name: '建物図面作成', href: '/boundary-survey/building-drawing', icon: Building2 },
+  { name: '地積測量図作成', href: '/boundary-survey/land-survey-drawing', icon: Ruler },
   { name: '各階平面図作成', href: '/boundary-survey/floor-plan', icon: LayoutTemplate },
   {
     name: '暗渠工事',
