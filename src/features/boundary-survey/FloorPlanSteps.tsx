@@ -9,7 +9,6 @@
 
 import { useState } from 'react'
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
-import type { WorkAreaRow } from '@/stores/workAreaStore'
 import {
   TERM_KIND_LABEL,
   edgeLength,
@@ -35,6 +34,7 @@ import {
   type FloorFigure,
   type FloorPlan,
   type FloorPlanFrame,
+  type ParcelOption,
   type Pt,
   type SitePlan,
   type TermKind,
@@ -79,10 +79,12 @@ const readNum = (v: string): number => {
 export function StepBuilding({
   plan,
   parcels,
+  onSelectParcel,
   onPatch,
 }: {
   plan: FloorPlan
-  parcels: WorkAreaRow[]
+  parcels: ParcelOption[]
+  onSelectParcel: (workAreaId: string) => void
   onPatch: Patch
 }) {
   return (
@@ -163,29 +165,42 @@ export function StepBuilding({
             地番管理との紐づけ
           </div>
           <Field label="敷地の地番" hint="選ぶと「3 配置」で敷地の外形を下敷きに使えます。">
-            <select
-              className={inputCls}
-              value={plan.parcel_id ?? ''}
-              onChange={(e) => {
-                const wa = parcels.find((p) => p.id === e.target.value)
-                onPatch({
-                  parcel_id: e.target.value || null,
-                  parcel_number: plan.parcel_number || (wa?.name ?? null),
-                  site: { ...plan.site, parcelPointIds: wa ? wa.pointIds : [] },
-                })
-              }}
-            >
-              <option value="">（紐づけない）</option>
-              {parcels.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name || p.zoneNumber || p.id.slice(0, 8)}
-                </option>
-              ))}
-            </select>
+            <ParcelSelect plan={plan} parcels={parcels} onSelectParcel={onSelectParcel} />
           </Field>
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * 地番 の プルダウン。
+ * 表示 と 選択 は 工事区域 の id で 行い、保存 する のは parcels.id。
+ * 地籍属性 の 行 が まだ 無い 地番 は 選んだ 時点 で 親 が 作る。
+ */
+function ParcelSelect({
+  plan,
+  parcels,
+  onSelectParcel,
+}: {
+  plan: FloorPlan
+  parcels: ParcelOption[]
+  onSelectParcel: (workAreaId: string) => void
+}) {
+  const current = parcels.find((p) => p.parcelId != null && p.parcelId === plan.parcel_id)
+  return (
+    <select
+      className={inputCls}
+      value={current?.workAreaId ?? ''}
+      onChange={(e) => onSelectParcel(e.target.value)}
+    >
+      <option value="">（紐づけない）</option>
+      {parcels.map((p) => (
+        <option key={p.workAreaId} value={p.workAreaId}>
+          {p.label}
+        </option>
+      ))}
+    </select>
   )
 }
 
@@ -769,28 +784,19 @@ function AreaTable({
 export function StepSite({
   plan,
   parcels,
+  onSelectParcel,
   onPatch,
 }: {
   plan: FloorPlan
-  parcels: WorkAreaRow[]
+  parcels: ParcelOption[]
+  onSelectParcel: (workAreaId: string) => void
   onPatch: Patch
 }) {
   const site = plan.site
   const setSite = (p: Partial<SitePlan>) => onPatch({ site: { ...site, ...p } })
 
-  const parcel = parcels.find((p) => p.id === plan.parcel_id) ?? null
-  // 確定境界 が あれば そちら を 使う
-  const src = parcel
-    ? parcel.confirmedPoints.length > 0
-      ? parcel.confirmedPoints
-      : parcel.points
-    : []
-  const sitePoints = src.map((p) => ({
-    id: p.id,
-    pointNumber: p.pointNumber,
-    x: p.x,
-    y: p.y,
-  }))
+  const parcel = parcels.find((p) => p.parcelId != null && p.parcelId === plan.parcel_id) ?? null
+  const sitePoints = parcel?.points ?? []
 
   const ground = groundFigure(plan.figures)
 
@@ -798,24 +804,7 @@ export function StepSite({
     <div className="flex gap-4 h-full min-h-0">
       <div className="w-80 shrink-0 overflow-auto">
         <Field label="敷地の地番">
-          <select
-            className={inputCls}
-            value={plan.parcel_id ?? ''}
-            onChange={(e) => {
-              const wa = parcels.find((p) => p.id === e.target.value)
-              onPatch({
-                parcel_id: e.target.value || null,
-                site: { ...site, parcelPointIds: wa ? wa.pointIds : [] },
-              })
-            }}
-          >
-            <option value="">（選択）</option>
-            {parcels.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name || p.zoneNumber || p.id.slice(0, 8)}
-              </option>
-            ))}
-          </select>
+          <ParcelSelect plan={plan} parcels={parcels} onSelectParcel={onSelectParcel} />
         </Field>
 
         {parcel && sitePoints.length === 0 && (
@@ -1048,7 +1037,7 @@ export function StepFrame({
   onPatch,
 }: {
   plan: FloorPlan
-  parcels: WorkAreaRow[]
+  parcels: ParcelOption[]
   onPatch: Patch
 }) {
   const frame = plan.frame
@@ -1334,19 +1323,14 @@ export function SheetPreview({
   parcels,
 }: {
   plan: FloorPlan
-  parcels: WorkAreaRow[]
+  parcels: ParcelOption[]
 }) {
   const S = SHEET
   const figures = sortFigures(plan.figures)
   const ground = groundFigure(plan.figures)
 
-  const parcel = parcels.find((p) => p.id === plan.parcel_id) ?? null
-  const src = parcel
-    ? parcel.confirmedPoints.length > 0
-      ? parcel.confirmedPoints
-      : parcel.points
-    : []
-  const sitePoints = src.map((p) => ({ id: p.id, pointNumber: p.pointNumber, x: p.x, y: p.y }))
+  const parcel = parcels.find((p) => p.parcelId != null && p.parcelId === plan.parcel_id) ?? null
+  const sitePoints = parcel?.points ?? []
 
   // 図形 を 置く 領域 (左半分)
   const planArea = {

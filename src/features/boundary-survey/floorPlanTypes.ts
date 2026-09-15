@@ -227,6 +227,28 @@ export function groundFigure(figures: FloorFigure[]): FloorFigure | null {
 }
 
 // ========================================================================
+// 地番 の 選択肢
+// ========================================================================
+
+/**
+ * 図面 に 結びつける 地番。
+ *
+ * 地番 は design_work_areas (構成点 を 持つ) と parcels (地籍属性 を 持つ) の
+ * 2 枚 に 分かれて いる。 floor_plans.parcel_id が 指す のは parcels の 方 な ので、
+ * 画面 では 両方 を 束ねた この 形 で 扱う。
+ */
+export interface ParcelOption {
+  /** parcels.id。 まだ 地籍属性 の 行 が 無い 地番 は null */
+  parcelId: string | null
+  /** design_work_areas.id */
+  workAreaId: string
+  label: string
+  /** 敷地 を 描く 構成点 (確定境界 が あれば そちら) */
+  points: { id: string; pointNumber: string; x: number; y: number }[]
+  pointIds: string[]
+}
+
+// ========================================================================
 // 建物図面 (用紙 の 右半分)
 // ========================================================================
 

@@ -12,7 +12,14 @@ import { Copy, LayoutTemplate, Loader2, Plus, Trash2 } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useFloorPlanStore, type FloorPlanPatch } from '@/stores/floorPlanStore'
-import { floorAreaText, totalMainArea, type FloorPlan } from './floorPlanTypes'
+import { useParcelStore } from '@/stores/parcelStore'
+import {
+  DEFAULT_SITE,
+  floorAreaText,
+  totalMainArea,
+  type FloorPlan,
+  type ParcelOption,
+} from './floorPlanTypes'
 import { StepBuilding, StepFigures, StepFrame, StepSite } from './FloorPlanSteps'
 
 const STEPS = [
@@ -37,6 +44,7 @@ export function FloorPlanPage() {
   const { plans, loading, saving, error, fetchByFarm, createPlan, duplicatePlan, updatePlan, deletePlan } =
     useFloorPlanStore()
   const { getWorkAreasByType, fetchWorkAreas } = useWorkAreaStore()
+  const { byWorkAreaId, fetchByWorkAreaIds, upsertParcel } = useParcelStore()
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1)
@@ -49,10 +57,54 @@ export function FloorPlanPage() {
     }
   }, [farmId, fetchByFarm, fetchWorkAreas])
 
-  // 地番 (境界測量 の 工事区域) を 配置 の 下敷き に 使う。
+  // 地番 は 構成点 を 持つ design_work_areas と 地籍属性 を 持つ parcels の
+  // 2 枚 に 分かれて いる。 図面 が 指す のは parcels の 方 な ので 束ねて 渡す。
   // getWorkAreasByType は 呼ぶ たび に 現在 の 状態 を 読む ので useMemo に
   // 入れて しまう と 読み込み 後 に 更新 されない。 毎回 呼ぶ。
-  const parcels = getWorkAreasByType('boundary_survey')
+  const workAreas = getWorkAreasByType('boundary_survey')
+
+  useEffect(() => {
+    if (workAreas.length > 0) void fetchByWorkAreaIds(workAreas.map((w) => w.id))
+    // 工区 が 変われば 工事区域 も 入れ替わる
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [farmId, workAreas.length, fetchByWorkAreaIds])
+
+  const parcels: ParcelOption[] = workAreas.map((wa) => {
+    const p = byWorkAreaId.get(wa.id) ?? null
+    // 確定境界 が あれば そちら を 敷地 の 外形 に 使う
+    const src = wa.confirmedPoints.length > 0 ? wa.confirmedPoints : wa.points
+    return {
+      parcelId: p?.id && p.id !== 'pending' ? p.id : null,
+      workAreaId: wa.id,
+      label: p?.parcel_number || wa.name || wa.zoneNumber || wa.id.slice(0, 8),
+      points: src.map((q) => ({ id: q.id, pointNumber: q.pointNumber, x: q.x, y: q.y })),
+      pointIds: wa.confirmedPoints.length > 0 ? wa.confirmedPointIds : wa.pointIds,
+    }
+  })
+
+  /**
+   * 地番 を 選ぶ。 floor_plans.parcel_id は parcels.id を 指す ので、
+   * 地籍属性 の 行 が まだ 無い 地番 は ここ で 作って から 結びつける。
+   */
+  const handleSelectParcel = async (workAreaId: string) => {
+    if (!workAreaId) {
+      onPatch({ parcel_id: null, site: { ...(selected?.site ?? DEFAULT_SITE), parcelPointIds: [] } })
+      return
+    }
+    const opt = parcels.find((p) => p.workAreaId === workAreaId)
+    if (!opt) return
+    let parcelId = opt.parcelId
+    if (!parcelId) {
+      const created = await upsertParcel(workAreaId, {})
+      parcelId = created?.id ?? null
+      if (!parcelId) return
+    }
+    onPatch({
+      parcel_id: parcelId,
+      parcel_number: selected?.parcel_number || opt.label,
+      site: { ...(selected?.site ?? DEFAULT_SITE), parcelPointIds: opt.pointIds },
+    })
+  }
 
   // 未選択 の 間 は 先頭 を 開いた こと に する (effect で setState しない)
   const selected = useMemo(() => {
@@ -238,7 +290,12 @@ export function FloorPlanPage() {
 
               <div className="flex-1 min-h-0 overflow-auto p-4">
                 {step === 1 && (
-                  <StepBuilding plan={selected} parcels={parcels} onPatch={onPatch} />
+                  <StepBuilding
+                    plan={selected}
+                    parcels={parcels}
+                    onSelectParcel={(id) => void handleSelectParcel(id)}
+                    onPatch={onPatch}
+                  />
                 )}
                 {step === 2 && (
                   <StepFigures
@@ -248,7 +305,14 @@ export function FloorPlanPage() {
                     onPatch={onPatch}
                   />
                 )}
-                {step === 3 && <StepSite plan={selected} parcels={parcels} onPatch={onPatch} />}
+                {step === 3 && (
+                  <StepSite
+                    plan={selected}
+                    parcels={parcels}
+                    onSelectParcel={(id) => void handleSelectParcel(id)}
+                    onPatch={onPatch}
+                  />
+                )}
                 {step === 4 && (
                   <StepFrame plan={selected} parcels={parcels} onPatch={onPatch} />
                 )}
