@@ -1562,6 +1562,41 @@ export function StepSite({
           </div>
         </Field>
 
+        <div className="pt-3 mt-3 border-t">
+          <div className="text-xs font-semibold text-slate-500 mb-1">隣接地のヒゲ線</div>
+          <label className="flex items-center gap-1 text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={site.whisker?.show ?? true}
+              onChange={(e) =>
+                setSite({
+                  whisker: { lengthMm: site.whisker?.lengthMm ?? 10, show: e.target.checked },
+                })
+              }
+            />
+            接する土地の境界線を外側へ伸ばし、地番を添える
+          </label>
+          {(site.whisker?.show ?? true) && (
+            <div className="mt-1 flex items-center gap-1 text-xs">
+              <span className="text-slate-500">伸ばす長さ</span>
+              <NumField
+                value={site.whisker?.lengthMm ?? 10}
+                onChange={(v) =>
+                  setSite({ whisker: { show: true, lengthMm: Math.max(0, v) } })
+                }
+                className="w-16 px-2 py-1 text-sm border rounded text-right font-mono"
+              />
+              <span className="text-slate-500">mm（用紙の上）</span>
+              <span className="text-slate-400">
+                = 現地 {(((site.whisker?.lengthMm ?? 10) * plan.site_scale) / 1000).toFixed(1)} m
+              </span>
+            </div>
+          )}
+          <div className="mt-1 text-[11px] text-slate-400">
+            取り込んである地番のうち、敷地と節点を共有するものを隣接地とみなします。
+          </div>
+        </div>
+
         <ListEditor
           title="隣地の地番など（注記）"
           empty="例: 54-11 / 292 のように、隣接地の地番を図に添えます。"
@@ -1933,6 +1968,10 @@ function ExportBar({ plan, parcels }: { plan: FloorPlan; parcels: ParcelOption[]
     .map((id) => parcels.find((p) => p.parcelId === id))
     .filter((p): p is ParcelOption => p != null)
     .map((p) => ({ label: p.label, points: p.points }))
+  // 敷地 以外 の 地番。 接して いる もの から ヒゲ線 を 作る
+  const neighborParcels = parcels
+    .filter((p) => p.parcelId != null && !plan.site.parcelIds.includes(p.parcelId))
+    .map((p) => ({ label: p.label, points: p.points }))
   const base = safeFileName(
     plan.title || plan.house_number || plan.parcel_number || '建物図面',
   )
@@ -1941,7 +1980,7 @@ function ExportBar({ plan, parcels }: { plan: FloorPlan; parcels: ParcelOption[]
     setBusy(kind)
     setNote(null)
     try {
-      const items = buildSheet(plan, siteParcels)
+      const items = buildSheet(plan, siteParcels, neighborParcels)
       if (kind === 'p21') {
         saveBlob(
           new Blob([buildP21(items, base)], { type: 'application/octet-stream' }),
@@ -2022,7 +2061,18 @@ export function SheetPreview({
         .map((p) => ({ label: p.label, points: p.points })),
     [plan.site.parcelIds, parcels],
   )
-  const items = useMemo(() => buildSheet(plan, siteParcels), [plan, siteParcels])
+  // 敷地 以外 の 地番。 接して いる もの から ヒゲ線 を 作る
+  const neighborParcels = useMemo(
+    () =>
+      parcels
+        .filter((p) => p.parcelId != null && !plan.site.parcelIds.includes(p.parcelId))
+        .map((p) => ({ label: p.label, points: p.points })),
+    [parcels, plan.site.parcelIds],
+  )
+  const items = useMemo(
+    () => buildSheet(plan, siteParcels, neighborParcels),
+    [plan, siteParcels, neighborParcels],
+  )
 
   return (
     <svg

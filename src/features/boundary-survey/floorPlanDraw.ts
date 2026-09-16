@@ -10,6 +10,7 @@
 // 収まる ように 勝手 に 縮める こと は しない。
 
 import { polyArea, polyCentroid } from './floorPlanRegion'
+import { buildWhiskers } from './floorPlanWhisker'
 import {
   buildingKeys,
   groundOfBuilding,
@@ -131,8 +132,15 @@ export interface SiteParcelForDraw {
   points: SitePointForDraw[]
 }
 
-/** 用紙 1 枚 を 描く もの の 並び に する */
-export function buildSheet(plan: FloorPlan, parcels: SiteParcelForDraw[]): DrawItem[] {
+/**
+ * 用紙 1 枚 を 描く もの の 並び に する。
+ * neighbors は 敷地 以外 の 地番。 接して いる もの から ヒゲ線 を 作る。
+ */
+export function buildSheet(
+  plan: FloorPlan,
+  parcels: SiteParcelForDraw[],
+  neighbors: SiteParcelForDraw[] = [],
+): DrawItem[] {
   const S = SHEET
   const out: DrawItem[] = []
   const line = (x1: number, y1: number, x2: number, y2: number, w = LW) =>
@@ -214,7 +222,7 @@ export function buildSheet(plan: FloorPlan, parcels: SiteParcelForDraw[]): DrawI
   })
 
   // ---- 右: 建物図面 ----
-  drawSite(out, plan, parcels)
+  drawSite(out, plan, parcels, neighbors)
 
   // ---- 表題欄 の 中身 ----
   const [tlA, tlB, tlC, tlD, tlE] = S.tlLeft
@@ -453,7 +461,12 @@ function drawAreaTable(out: DrawItem[], f: FloorFigure, bx: number, by: number, 
 }
 
 /** 用紙 右半分 の 建物図面 */
-function drawSite(out: DrawItem[], plan: FloorPlan, parcels: SiteParcelForDraw[]) {
+function drawSite(
+  out: DrawItem[],
+  plan: FloorPlan,
+  parcels: SiteParcelForDraw[],
+  neighbors: SiteParcelForDraw[],
+) {
   const S = SHEET
   const bx = S.centerX + 4
   const by = S.locBottom + 4
@@ -480,9 +493,18 @@ function drawSite(out: DrawItem[], plan: FloorPlan, parcels: SiteParcelForDraw[]
     if (pts.length >= 3) buildings.push({ key, pts })
   }
 
+  // 隣接地 の ヒゲ線。 伸ばす 長さ は 用紙 の mm を 現地 の m に 直す
+  const wk = plan.site.whisker ?? { show: true, lengthMm: 10 }
+  const whisker =
+    wk.show && parcels.length > 0
+      ? buildWhiskers(parcels, neighbors, (wk.lengthMm * plan.site_scale) / 1000)
+      : { stubs: [], labels: [] }
+
   const all = [
     ...site,
     ...buildings.flatMap((b) => b.pts),
+    ...whisker.stubs.flatMap((s2) => [s2.a, s2.b]),
+    ...whisker.labels.map((l) => l.at),
     ...plan.site.notes.map((n) => ({ e: n.x, n: n.y })),
   ]
   if (all.length === 0) return
@@ -546,6 +568,26 @@ function drawSite(out: DrawItem[], plan: FloorPlan, parcels: SiteParcelForDraw[]
       })
     }
   }
+  // 隣接地 の ヒゲ線 と 地番
+  for (const st of whisker.stubs) {
+    const a = toSheet(st.a.e, st.a.n)
+    const b = toSheet(st.b.e, st.b.n)
+    out.push({ kind: 'line', x1: a.x, y1: a.y, x2: b.x, y2: b.y, w: LW, layer: L.site })
+  }
+  for (const lb of whisker.labels) {
+    const p = toSheet(lb.at.e, lb.at.n)
+    out.push({
+      kind: 'text',
+      x: p.x,
+      y: p.y,
+      text: lb.text,
+      h: 2.2,
+      anchor: 'middle',
+      rot: 0,
+      layer: L.site,
+    })
+  }
+
   for (const n of plan.site.notes) {
     if (!n.label) continue
     const p = toSheet(n.x, n.y)

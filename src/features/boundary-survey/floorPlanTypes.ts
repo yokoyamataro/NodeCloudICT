@@ -429,7 +429,12 @@ export interface SitePlan {
   >
   /** 図面 の 上 を 真北 から 何度 振る か */
   northAngleDeg: number
-  /** 隣地 の 地番 など の 注記 */
+  /**
+   * 隣接地 の ヒゲ線。 敷地 に 接する 土地 の 境界線 を 外側 へ 少し 伸ばし、
+   * その 地番 を 添える。 長さ は 用紙 の 上 の mm で 決める。
+   */
+  whisker?: { show: boolean; lengthMm: number }
+  /** 隣地 の 地番 など の 注記 (手 で 足す 分) */
   notes: SiteNote[]
   /** 敷地境界 から の 離れ。 図面 に 記入 する 寸法 */
   refDistances: { id: string; label: string; value: number }[]
@@ -437,6 +442,7 @@ export interface SitePlan {
 
 export const DEFAULT_SITE: SitePlan = {
   parcelIds: [],
+  whisker: { show: true, lengthMm: 10 },
   parcelPointIds: [],
   placed: false,
   method: 'three_point',
