@@ -58,6 +58,10 @@ export interface AreaTerm {
   manual: number
   /** manual の とき に 図面 へ 出す 式 */
   note: string
+  /** 求積 の 記号 (イ・ロ・ハ…)。 区分 から 作った 行 に 付く */
+  label?: string
+  /** その 行 が 指す 区画 (建物 の 局所座標)。 図面 に 一点鎖線 で 描く */
+  region?: Pt[]
 }
 
 export function newTerm(kind: TermKind = 'rect'): AreaTerm {
@@ -116,10 +120,21 @@ export interface FloorFigure {
   offset: Pt
   /** 求積表 */
   terms: AreaTerm[]
+  /** 求積 の 区切り線 (外形 の 頂点 を 結ぶ)。 手 で 分ける ときに 使う */
+  cuts?: { id: string; a: number; b: number }[]
 }
 
 export function newFigure(kind: FigureKind, floorNo: number, annexNo: number | null): FloorFigure {
-  return { id: newId(), kind, annexNo, floorNo, moves: [], offset: { x: 0, y: 0 }, terms: [] }
+  return {
+    id: newId(),
+    kind,
+    annexNo,
+    floorNo,
+    moves: [],
+    offset: { x: 0, y: 0 },
+    terms: [],
+    cuts: [],
+  }
 }
 
 /**
@@ -146,6 +161,7 @@ export function normalizeFigure(raw: unknown): FloorFigure {
     moves: moves.map((m) => ({ v: Number(m?.v ?? 0), h: Number(m?.h ?? 0) })),
     offset: { x: Number(off.x ?? 0), y: Number(off.y ?? 0) },
     terms: Array.isArray(r.terms) ? (r.terms as AreaTerm[]) : [],
+    cuts: Array.isArray(r.cuts) ? (r.cuts as FloorFigure['cuts']) : [],
   }
 }
 

@@ -9,6 +9,7 @@
 // 図形 は 実尺 で 置く。 1/250 なら 1 m が 4 mm。 法定図面 な ので 画面 に
 // 収まる ように 勝手 に 縮める こと は しない。
 
+import { polyArea, polyCentroid } from './floorPlanRegion'
 import {
   figureFloorArea,
   figureLabel,
@@ -30,6 +31,9 @@ import {
   type Pt,
 } from './floorPlanTypes'
 
+/** 線 の 種類。 一点鎖線 は 求積 の 区切り に 使う */
+export type LineStyle = 'solid' | 'dash' | 'dashdot'
+
 export interface DrawLine {
   kind: 'line'
   x1: number
@@ -38,7 +42,7 @@ export interface DrawLine {
   y2: number
   w: number
   layer: string
-  dash?: boolean
+  style?: LineStyle
 }
 export interface DrawPoly {
   kind: 'poly'
@@ -46,7 +50,16 @@ export interface DrawPoly {
   closed: boolean
   w: number
   layer: string
-  dash?: boolean
+  style?: LineStyle
+}
+
+export interface DrawCircle {
+  kind: 'circle'
+  cx: number
+  cy: number
+  r: number
+  w: number
+  layer: string
 }
 export interface DrawText {
   kind: 'text'
@@ -63,7 +76,7 @@ export interface DrawText {
   pitch?: number
   bold?: boolean
 }
-export type DrawItem = DrawLine | DrawPoly | DrawText
+export type DrawItem = DrawLine | DrawPoly | DrawCircle | DrawText
 
 /** 用紙 (B4 横) と 罫線 の 位置。 doc/tatemono1.tif の 実測値 */
 export const SHEET = {
@@ -98,6 +111,7 @@ const L = {
   title: '文字',
   figure: '建物',
   dim: '寸法',
+  region: '求積区分',
   site: '敷地',
 } as const
 
@@ -304,11 +318,13 @@ function drawFigure(
       closed: true,
       w: LW,
       layer: L.figure,
-      dash: true,
+      style: 'dash',
     })
   }
   const sheetPts = pts.map((p) => toSheet({ x: p.x + f.offset.x, y: p.y + f.offset.y }))
   out.push({ kind: 'poly', pts: sheetPts, closed: true, w: LW_FIG, layer: L.figure })
+
+  drawRegions(out, f, toSheet, mmPerM)
 
   // 辺 の 寸法。 打った 値 を そのまま
   f.moves.forEach((m, i) => {
@@ -335,6 +351,71 @@ function drawFigure(
   })
 }
 
+/**
+ * 求積 の 区分。 区画 の 境目 (外形 に 無い 辺) を 一点鎖線 で 引き、
+ * 真ん中 に 丸 で 囲んだ 記号 を 置く。 どの 式 が どこ か が 分かる。
+ */
+function drawRegions(
+  out: DrawItem[],
+  f: FloorFigure,
+  toSheet: (p: Pt) => Pt,
+  mmPerM: number,
+) {
+  const withRegion = f.terms.filter((t) => t.region && t.region.length >= 3)
+  if (withRegion.length === 0) return
+
+  // 外形 の 辺 (どちら 向き でも 同じ もの と 見る)
+  const pts = figureOutline(f)
+  const key = (a: Pt, b: Pt) => {
+    const k = (p: Pt) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`
+    return [k(a), k(b)].sort().join('/')
+  }
+  const onOutline = new Set<string>()
+  for (let i = 0; i < pts.length; i += 1) {
+    onOutline.add(key(pts[i], pts[(i + 1) % pts.length]))
+  }
+
+  const drawn = new Set<string>()
+  for (const t of withRegion) {
+    const rp = t.region!
+    for (let i = 0; i < rp.length; i += 1) {
+      const a = rp[i]
+      const b = rp[(i + 1) % rp.length]
+      const k = key(a, b)
+      if (onOutline.has(k) || drawn.has(k)) continue
+      drawn.add(k)
+      const sa = toSheet({ x: a.x + f.offset.x, y: a.y + f.offset.y })
+      const sb = toSheet({ x: b.x + f.offset.x, y: b.y + f.offset.y })
+      out.push({
+        kind: 'line',
+        x1: sa.x,
+        y1: sa.y,
+        x2: sb.x,
+        y2: sb.y,
+        w: LW,
+        layer: L.region,
+        style: 'dashdot',
+      })
+    }
+    if (!t.label) continue
+    const c = polyCentroid(rp)
+    const sc = toSheet({ x: c.x + f.offset.x, y: c.y + f.offset.y })
+    // 区画 が 小さい ときは 丸 も 小さく する
+    const r = Math.min(2.0, Math.max(1.1, Math.sqrt(polyArea(rp)) * mmPerM * 0.12))
+    out.push({ kind: 'circle', cx: sc.x, cy: sc.y, r, w: LW, layer: L.region })
+    out.push({
+      kind: 'text',
+      x: sc.x,
+      y: sc.y + r * 0.62,
+      text: t.label,
+      h: r * 1.25,
+      anchor: 'middle',
+      rot: 0,
+      layer: L.region,
+    })
+  }
+}
+
 /** 求積表 */
 function drawAreaTable(out: DrawItem[], f: FloorFigure, bx: number, by: number, bw: number) {
   const t = (x: number, y: number, s: string, h: number, anchor: DrawText['anchor'], bold = false) =>
@@ -342,9 +423,11 @@ function drawAreaTable(out: DrawItem[], f: FloorFigure, bx: number, by: number, 
 
   t(bx + bw / 2, by, '求積表', 3.2, 'middle', true)
   const rows = f.terms.slice(0, 5)
+  const hasLabel = rows.some((r) => r.label)
   rows.forEach((term, j) => {
     const y = by + 5 + j * 3.8
-    t(bx + 4, y, termFormula(term), 2.8, 'start')
+    if (term.label) t(bx + 1.6, y, term.label, 2.4, 'start')
+    t(bx + (hasLabel ? 6.5 : 4), y, termFormula(term), 2.8, 'start')
     t(bx + bw - 2, y, `= ${termValueText(termValue(term))}`, 2.8, 'end')
   })
   let y = by + 6.5 + rows.length * 3.8

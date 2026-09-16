@@ -6,6 +6,7 @@
 
 import { useMemo } from 'react'
 import { figureOutline, moveLength, type FloorFigure, type Move, type Pt } from './floorPlanTypes'
+import { polyCentroid as regionCentroid } from './floorPlanRegion'
 
 interface Box {
   minX: number
@@ -131,6 +132,41 @@ export function FigureOutlinePreview({
           strokeWidth={sw}
         />
       )}
+      {/* 求積 の 区分。 境目 は 一点鎖線、真ん中 に 丸 で 囲んだ 記号 */}
+      <g transform={`translate(${figure.offset.x} ${-figure.offset.y})`}>
+        {figure.terms.map((t) => {
+          if (!t.region || t.region.length < 3) return null
+          const c = regionCentroid(t.region)
+          const r = Math.max(sw * 8, 0.25)
+          return (
+            <g key={t.id}>
+              <polygon
+                points={ptsAttr(t.region)}
+                fill="none"
+                stroke="#7c3aed"
+                strokeWidth={sw * 0.8}
+                strokeDasharray={`${sw * 8} ${sw * 2} ${sw * 1.6} ${sw * 2}`}
+              />
+              {t.label && (
+                <>
+                  <circle cx={c.x} cy={-c.y} r={r} fill="#fff" stroke="#7c3aed" strokeWidth={sw * 0.7} />
+                  <text
+                    x={c.x}
+                    y={-c.y}
+                    fontSize={r * 1.25}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill="#5b21b6"
+                  >
+                    {t.label}
+                  </text>
+                </>
+              )}
+            </g>
+          )
+        })}
+      </g>
+
       {showEdgeLabels && (
         <g transform={`translate(${figure.offset.x} ${-figure.offset.y})`}>
           <EdgeLabels pts={pts} moves={figure.moves} fs={fs} />

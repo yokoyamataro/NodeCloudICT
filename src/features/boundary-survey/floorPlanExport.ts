@@ -8,7 +8,21 @@
 // 画面 の フォント しか 無い ので、文字 は 画布 に 描いて 画素 に する。
 // p21 だけ は 文字 も 文字 の まま 出せる。
 
-import { SHEET, type DrawItem, type DrawText } from './floorPlanDraw'
+import { SHEET, type DrawItem, type DrawText, type LineStyle } from './floorPlanDraw'
+
+/** 線種 ごと の 刻み (mm)。 一点鎖線 は 長・短 の 繰り返し */
+function dashPattern(style: LineStyle | undefined): number[] {
+  if (style === 'dash') return [1.2, 0.8]
+  if (style === 'dashdot') return [4, 1.0, 0.8, 1.0]
+  return []
+}
+
+/** SXF の 既定 の 線種 番号 */
+function sxfLineType(style: LineStyle | undefined): number {
+  if (style === 'dash') return 2
+  if (style === 'dashdot') return 4
+  return 1
+}
 
 // ========================================================================
 // 画布 に 描く (tif / pdf の 元)
@@ -33,7 +47,7 @@ export function renderToCanvas(items: DrawItem[], dpi = 400): HTMLCanvasElement 
   const X = (mm: number) => mm * pxPerMm
   for (const it of items) {
     if (it.kind === 'line') {
-      g.setLineDash(it.dash ? [X(1.2), X(0.8)] : [])
+      g.setLineDash(dashPattern(it.style).map(X))
       g.lineWidth = Math.max(1, X(it.w))
       g.beginPath()
       g.moveTo(X(it.x1), X(it.y1))
@@ -41,12 +55,18 @@ export function renderToCanvas(items: DrawItem[], dpi = 400): HTMLCanvasElement 
       g.stroke()
     } else if (it.kind === 'poly') {
       if (it.pts.length < 2) continue
-      g.setLineDash(it.dash ? [X(1.2), X(0.8)] : [])
+      g.setLineDash(dashPattern(it.style).map(X))
       g.lineWidth = Math.max(1, X(it.w))
       g.beginPath()
       g.moveTo(X(it.pts[0].x), X(it.pts[0].y))
       for (let i = 1; i < it.pts.length; i += 1) g.lineTo(X(it.pts[i].x), X(it.pts[i].y))
       if (it.closed) g.closePath()
+      g.stroke()
+    } else if (it.kind === 'circle') {
+      g.setLineDash([])
+      g.lineWidth = Math.max(1, X(it.w))
+      g.beginPath()
+      g.arc(X(it.cx), X(it.cy), X(it.r), 0, Math.PI * 2)
       g.stroke()
     } else {
       drawTextOnCanvas(g, it, pxPerMm)
@@ -263,15 +283,19 @@ export function buildP21(items: DrawItem[], title: string): string {
     const lay = layerNo(it.layer)
     if (it.kind === 'line') {
       body.push(
-        `LINE_FEATURE(${lay},1,${it.dash ? 2 : 1},${widthNo(it.w)},` +
+        `LINE_FEATURE(${lay},1,${sxfLineType(it.style)},${widthNo(it.w)},` +
           `${n3(it.x1)},${n3(Y(it.y1))},${n3(it.x2)},${n3(Y(it.y2))})`,
       )
     } else if (it.kind === 'poly') {
       const pts = it.closed ? [...it.pts, it.pts[0]] : it.pts
       if (pts.length < 2) continue
       body.push(
-        `POLYLINE_FEATURE(${lay},1,${it.dash ? 2 : 1},${widthNo(it.w)},${pts.length},` +
+        `POLYLINE_FEATURE(${lay},1,${sxfLineType(it.style)},${widthNo(it.w)},${pts.length},` +
           `(${pts.map((p) => n3(p.x)).join(',')}),(${pts.map((p) => n3(Y(p.y))).join(',')}))`,
+      )
+    } else if (it.kind === 'circle') {
+      body.push(
+        `CIRCLE_FEATURE(${lay},1,1,${widthNo(it.w)},${n3(it.cx)},${n3(Y(it.cy))},${n3(it.r)})`,
       )
     } else {
       // 字間 を 空ける 指定 は 1 文字 ずつ に 割る

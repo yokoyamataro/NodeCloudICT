@@ -40,7 +40,8 @@ import {
   type TermKind,
 } from './floorPlanTypes'
 import { FigureOutlinePreview } from './FloorPlanPreview'
-import { SHEET, buildSheet } from './floorPlanDraw'
+import { SHEET, buildSheet, type LineStyle } from './floorPlanDraw'
+import { autoSlabs, splitByCuts, termsFromRegions } from './floorPlanRegion'
 import {
   buildP21,
   canvasToPdf,
@@ -739,12 +740,136 @@ function AreaTable({
   const patch = (i: number, p: Partial<AreaTerm>) =>
     setTerms(terms.map((t, j) => (j === i ? { ...t, ...p } : t)))
 
+  const pts = figureOutline(figure)
+  const cuts = figure.cuts ?? []
+  const hasRegions = terms.some((t) => t.region && t.region.length >= 3)
+
+  /** 区分 を 作り直し、求積表 を 置き換える */
+  const rebuild = (nextCuts: { id: string; a: number; b: number }[] | null) => {
+    const regions =
+      nextCuts == null ? autoSlabs(pts) : splitByCuts(pts, nextCuts)
+    if (regions.length === 0) return
+    onChange({
+      cuts: nextCuts ?? [],
+      terms: termsFromRegions(regions),
+    })
+  }
+
   return (
     <div className="flex flex-col min-h-0">
+      {/* 求積 の 区分 */}
+      <div className="mb-2 p-2 border rounded bg-slate-50">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-slate-600">求積の区分</span>
+          <button
+            type="button"
+            onClick={() => rebuild(null)}
+            disabled={pts.length < 3}
+            className="px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-100 disabled:opacity-40"
+            title="頂点の高さで横に切り、台形の足し算にします"
+          >
+            自動で区分
+          </button>
+          <button
+            type="button"
+            onClick={() => rebuild(cuts)}
+            disabled={pts.length < 3 || cuts.length === 0}
+            className="px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-100 disabled:opacity-40"
+          >
+            区切り線で区分
+          </button>
+          {hasRegions && (
+            <button
+              type="button"
+              onClick={() =>
+                setTerms(terms.map((t) => ({ ...t, label: undefined, region: undefined })))
+              }
+              className="ml-auto px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-100 text-slate-500"
+            >
+              区分を外す
+            </button>
+          )}
+        </div>
+
+        <div className="mt-1 flex items-center gap-1 flex-wrap">
+          <span className="text-[11px] text-slate-500">区切り線</span>
+          {cuts.length === 0 && (
+            <span className="text-[11px] text-slate-400">
+              頂点どうしを結んで切ります。未指定なら「自動で区分」をどうぞ。
+            </span>
+          )}
+          {cuts.map((c, i) => (
+            <span
+              key={c.id}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-white text-[11px]"
+            >
+              <select
+                className="text-[11px] bg-transparent"
+                value={c.a}
+                onChange={(e) =>
+                  onChange({
+                    cuts: cuts.map((x, j) =>
+                      j === i ? { ...x, a: Number(e.target.value) } : x,
+                    ),
+                  })
+                }
+              >
+                {pts.map((_, k) => (
+                  <option key={k} value={k}>
+                    {k + 1}
+                  </option>
+                ))}
+              </select>
+              <span className="text-slate-400">→</span>
+              <select
+                className="text-[11px] bg-transparent"
+                value={c.b}
+                onChange={(e) =>
+                  onChange({
+                    cuts: cuts.map((x, j) =>
+                      j === i ? { ...x, b: Number(e.target.value) } : x,
+                    ),
+                  })
+                }
+              >
+                {pts.map((_, k) => (
+                  <option key={k} value={k}>
+                    {k + 1}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => onChange({ cuts: cuts.filter((_, j) => j !== i) })}
+                className="text-slate-400 hover:text-red-600"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            onClick={() =>
+              onChange({ cuts: [...cuts, { id: newId(), a: 0, b: Math.min(2, pts.length - 1) }] })
+            }
+            disabled={pts.length < 4}
+            className="px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-100 disabled:opacity-40"
+          >
+            + 追加
+          </button>
+        </div>
+        {hasRegions && (
+          <div className="mt-1 text-[11px] text-slate-500">
+            区分は図面に一点鎖線で描き、イ・ロ・ハ…を丸で囲んで置きます。
+          </div>
+        )}
+      </div>
+
       <div className="border rounded overflow-auto flex-1 min-h-0">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs text-slate-600 sticky top-0">
             <tr>
+              <th className="px-2 py-1 text-left font-medium w-7">記号</th>
               <th className="px-2 py-1 text-left font-medium">種類</th>
               <th className="px-2 py-1 text-right font-medium">a</th>
               <th className="px-2 py-1 text-right font-medium">b</th>
@@ -756,13 +881,20 @@ function AreaTable({
           <tbody className="divide-y">
             {terms.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-2 py-6 text-center text-xs text-slate-400">
-                  「行を追加」で求積の式を並べます。
+                <td colSpan={7} className="px-2 py-6 text-center text-xs text-slate-400">
+                  上の「自動で区分」か、「行を追加」で式を並べます。
                 </td>
               </tr>
             )}
             {terms.map((t, i) => (
               <tr key={t.id}>
+                <td className="px-1 py-1 text-center">
+                  {t.label && (
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full border border-slate-500 text-[10px]">
+                      {t.label}
+                    </span>
+                  )}
+                </td>
                 <td className="px-1 py-1">
                   <select
                     className="px-1 py-0.5 text-xs border rounded"
@@ -861,7 +993,10 @@ function AreaTable({
           <div className="font-sans font-semibold text-slate-600 mb-1">求積表</div>
           {terms.map((t) => (
             <div key={t.id} className="flex justify-between">
-              <span>{termFormula(t)}</span>
+              <span>
+                {t.label && <span className="mr-1 text-slate-500">{t.label}</span>}
+                {termFormula(t)}
+              </span>
               <span>= {termValueText(termValue(t))}</span>
             </div>
           ))}
@@ -1751,6 +1886,13 @@ function ExportBar({ plan, parcels }: { plan: FloorPlan; parcels: ParcelOption[]
 // B4 の 用紙
 // ========================================================================
 
+/** 線種 を SVG の 刻み に */
+function svgDash(style: LineStyle | undefined): string | undefined {
+  if (style === 'dash') return '1.2 0.8'
+  if (style === 'dashdot') return '4 1 0.8 1'
+  return undefined
+}
+
 /**
  * 用紙 の 下絵。 出力 と 同じ 「描く もの の 並び」 を そのまま SVG に する ので、
  * 見えて いる もの と 出る もの が ずれない。
@@ -1785,7 +1927,7 @@ export function SheetPreview({
               y2={it.y2}
               stroke="#0f172a"
               strokeWidth={Math.max(it.w, 0.18)}
-              strokeDasharray={it.dash ? '1.2 0.8' : undefined}
+              strokeDasharray={svgDash(it.style)}
             />
           )
         }
@@ -1800,7 +1942,20 @@ export function SheetPreview({
               fill="none"
               stroke="#0f172a"
               strokeWidth={Math.max(it.w, 0.18)}
-              strokeDasharray={it.dash ? '1.2 0.8' : undefined}
+              strokeDasharray={svgDash(it.style)}
+            />
+          )
+        }
+        if (it.kind === 'circle') {
+          return (
+            <circle
+              key={i}
+              cx={it.cx}
+              cy={it.cy}
+              r={it.r}
+              fill="none"
+              stroke="#0f172a"
+              strokeWidth={Math.max(it.w, 0.18)}
             />
           )
         }
