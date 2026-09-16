@@ -877,6 +877,47 @@ function AreaTable({
 // 3. 地番に対する配置 (用紙 右半分 の 建物図面)
 // ========================================================================
 
+/** 地図 から 拾う もの */
+type PickTarget =
+  | { kind: 'buildingEdge' }
+  | { kind: 'siteEdge' }
+  | { kind: 'vertex'; row: number }
+  | { kind: 'edge'; row: number }
+
+function samePick(a: PickTarget | null, b: PickTarget): boolean {
+  if (!a || a.kind !== b.kind) return false
+  if (a.kind === 'vertex' && b.kind === 'vertex') return a.row === b.row
+  if (a.kind === 'edge' && b.kind === 'edge') return a.row === b.row
+  return true
+}
+
+/** 「選択」 を 押す と 地図 から 拾える ように なる ボタン */
+function PickButton({
+  active,
+  label,
+  onClick,
+  wide,
+}: {
+  active: boolean
+  label: string
+  onClick: () => void
+  wide?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${wide ? 'w-full' : 'w-full'} px-2 py-1 text-xs border rounded text-left ${
+        active
+          ? 'bg-blue-600 text-white border-blue-600 animate-pulse'
+          : 'bg-white hover:bg-slate-50 border-slate-300'
+      }`}
+    >
+      {active ? '地図で押してください…' : label}
+    </button>
+  )
+}
+
 export function StepSite({
   plan,
   parcels,
@@ -915,10 +956,19 @@ export function StepSite({
 
   const ready = ring.length >= 3 && moves.length >= 3
   const [note, setNote] = useState<string | null>(null)
-  /** 地図 で 押した 先 を 入れる 行 */
-  const [activeRow, setActiveRow] = useState(0)
+  /**
+   * 今 地図 から 何 を 拾う か。
+   * 「選択」 を 押して から 地図 を 押す、の 一往復。 押した ら すぐ 解除 する ので
+   * 地図 の 操作 と ぶつからない。
+   */
+  const [pick, setPick] = useState<PickTarget | null>(null)
   /** 地番 の 選択中 か。 この 間 だけ 地図 の 地番 を 押せる */
   const [pickingParcel, setPickingParcel] = useState(false)
+
+  const startPick = (t: PickTarget) => {
+    setPickingParcel(false)
+    setPick((cur) => (samePick(cur, t) ? null : t))
+  }
 
   const apply = (pl: { offsetE: number; offsetN: number; rotationDeg: number } | null, msg: string) => {
     if (!pl) {
@@ -1016,34 +1066,36 @@ export function StepSite({
   const highlightVertex =
     site.method === 'three_point' ? site.constraints.map((c) => c.vertexIndex) : []
 
-  /** 地図 の 境界線 を 押した ら、今 の 行 に 入れる */
+  /** 地図 の 境界線 を 押した */
   const pickEdge = (edgeIndex: number) => {
-    if (site.method === 'parallel') {
+    if (!pick) return
+    if (pick.kind === 'siteEdge') {
       setSite({ parallel: { ...parallelSpec, siteEdge: edgeIndex } })
-      return
+    } else if (pick.kind === 'edge') {
+      setSite({
+        constraints: site.constraints.map((c, j) => (j === pick.row ? { ...c, edgeIndex } : c)),
+      })
     }
-    if (site.method !== 'three_point') return
-    const cs = [...site.constraints]
-    if (cs.length === 0) {
-      cs.push({ id: newId(), vertexIndex: 0, edgeIndex, distance: 0 })
-    } else {
-      const i = Math.min(activeRow, cs.length - 1)
-      cs[i] = { ...cs[i], edgeIndex }
-    }
-    setSite({ constraints: cs })
+    setPick(null)
   }
 
-  /** 地図 の 建物 の 角 を 押した ら、今 の 行 に 入れる */
+  /** 地図 の 建物 の 角 を 押した */
   const pickVertex = (vertexIndex: number) => {
-    if (site.method !== 'three_point' || site.constraints.length === 0) return
-    const i = Math.min(activeRow, site.constraints.length - 1)
+    if (pick?.kind !== 'vertex') return
     setSite({
-      constraints: site.constraints.map((c, j) => (j === i ? { ...c, vertexIndex } : c)),
+      constraints: site.constraints.map((c, j) =>
+        j === pick.row ? { ...c, vertexIndex } : c,
+      ),
     })
+    setPick(null)
   }
 
-  const rowCls = (i: number) =>
-    i === activeRow ? 'bg-orange-50 ring-1 ring-orange-300' : ''
+  /** 地図 の 建物 の 辺 を 押した */
+  const pickBuildingEdge = (i: number) => {
+    if (pick?.kind !== 'buildingEdge') return
+    setSite({ parallel: { ...parallelSpec, buildingEdge: i } })
+    setPick(null)
+  }
 
   return (
     <div className="flex gap-4 h-full min-h-0">
@@ -1092,7 +1144,7 @@ export function StepSite({
           <div className="pt-2 mt-2 border-t">
             <div className="text-[11px] text-slate-500 mb-1">
               建物の角を 3 つ選び、それぞれが境界線から内側へ何 m 離れているかを入れます。
-              行をクリックしてから地図の境界線や角を押すと、その行に入ります。
+              「角」「境界線」のボタンを押してから、地図の該当箇所を押します。
             </div>
             <table className="w-full text-xs">
               <thead className="text-slate-500">
@@ -1105,44 +1157,20 @@ export function StepSite({
               </thead>
               <tbody>
                 {site.constraints.map((c, i) => (
-                  <tr key={c.id} className={rowCls(i)} onClick={() => setActiveRow(i)}>
+                  <tr key={c.id}>
                     <td className="py-0.5 pr-1">
-                      <select
-                        className="w-full px-1 py-1 text-xs border rounded"
-                        value={c.vertexIndex}
-                        onChange={(e) =>
-                          setSite({
-                            constraints: site.constraints.map((x, j) =>
-                              j === i ? { ...x, vertexIndex: Number(e.target.value) } : x,
-                            ),
-                          })
-                        }
-                      >
-                        {outline.map((_, k) => (
-                          <option key={k} value={k}>
-                            角 {k + 1}
-                          </option>
-                        ))}
-                      </select>
+                      <PickButton
+                        active={pick?.kind === 'vertex' && pick.row === i}
+                        onClick={() => startPick({ kind: 'vertex', row: i })}
+                        label={outline[c.vertexIndex] ? `角 ${c.vertexIndex + 1}` : '未選択'}
+                      />
                     </td>
                     <td className="py-0.5 pr-1">
-                      <select
-                        className="w-full px-1 py-1 text-xs border rounded"
-                        value={c.edgeIndex}
-                        onChange={(e) =>
-                          setSite({
-                            constraints: site.constraints.map((x, j) =>
-                              j === i ? { ...x, edgeIndex: Number(e.target.value) } : x,
-                            ),
-                          })
-                        }
-                      >
-                        {sitePoints.map((_, k) => (
-                          <option key={k} value={k}>
-                            境界線 {k + 1}
-                          </option>
-                        ))}
-                      </select>
+                      <PickButton
+                        active={pick?.kind === 'edge' && pick.row === i}
+                        onClick={() => startPick({ kind: 'edge', row: i })}
+                        label={`境界線 ${c.edgeIndex + 1}`}
+                      />
                     </td>
                     <td className="py-0.5">
                       <NumField
@@ -1161,9 +1189,10 @@ export function StepSite({
                       <button
                         type="button"
                         tabIndex={-1}
-                        onClick={() =>
+                        onClick={() => {
+                          setPick(null)
                           setSite({ constraints: site.constraints.filter((_, j) => j !== i) })
-                        }
+                        }}
                         className="p-0.5 text-slate-400 hover:text-red-600"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -1176,15 +1205,14 @@ export function StepSite({
             <div className="mt-1 flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => {
+                onClick={() =>
                   setSite({
                     constraints: [
                       ...site.constraints,
                       { id: newId(), vertexIndex: 0, edgeIndex: 0, distance: 0 },
                     ],
                   })
-                  setActiveRow(site.constraints.length)
-                }}
+                }
                 className="px-2 py-0.5 text-xs border rounded hover:bg-slate-50 flex items-center gap-1"
               >
                 <Plus className="h-3 w-3" />
@@ -1211,7 +1239,8 @@ export function StepSite({
           <ParallelFields
             site={site}
             moves={moves}
-            siteEdgeCount={sitePoints.length}
+            pick={pick}
+            onStartPick={startPick}
             ready={ready}
             onChange={(p) => setSite({ parallel: p })}
             onRun={runParallel}
@@ -1386,13 +1415,9 @@ export function StepSite({
           highlightBuildingEdge={
             site.method === 'parallel' ? parallelSpec.buildingEdge : null
           }
-          onBuildingEdgePick={
-            site.method === 'parallel'
-              ? (i) => setSite({ parallel: { ...parallelSpec, buildingEdge: i } })
-              : undefined
-          }
-          onEdgePick={pickEdge}
-          onVertexPick={pickVertex}
+          onBuildingEdgePick={pick?.kind === 'buildingEdge' ? pickBuildingEdge : undefined}
+          onEdgePick={pick?.kind === 'siteEdge' || pick?.kind === 'edge' ? pickEdge : undefined}
+          onVertexPick={pick?.kind === 'vertex' ? pickVertex : undefined}
         />
       </div>
     </div>
@@ -1403,14 +1428,16 @@ export function StepSite({
 function ParallelFields({
   site,
   moves,
-  siteEdgeCount,
+  pick,
+  onStartPick,
   ready,
   onChange,
   onRun,
 }: {
   site: SitePlan
   moves: Move[]
-  siteEdgeCount: number
+  pick: PickTarget | null
+  onStartPick: (t: PickTarget) => void
   ready: boolean
   onChange: (p: NonNullable<SitePlan['parallel']>) => void
   onRun: () => void
@@ -1428,25 +1455,25 @@ function ParallelFields({
       <div className="text-[11px] text-slate-500 mb-1">
         建物の 1 辺を境界線に平行にして据えます。打っている間、地図に仮の配置を破線で出します。
       </div>
-      <Field label="建物の辺" hint="地図の建物の辺を押して選びます。">
-        <div className="px-2 py-1 text-sm rounded bg-orange-50 border border-orange-200 text-orange-900">
-          {moves[p.buildingEdge]
-            ? `辺 ${p.buildingEdge + 1}（${moveLength(moves[p.buildingEdge]).toFixed(3)} m）`
-            : '未選択'}
-        </div>
+      <Field label="建物の辺">
+        <PickButton
+          active={pick?.kind === 'buildingEdge'}
+          onClick={() => onStartPick({ kind: 'buildingEdge' })}
+          label={
+            moves[p.buildingEdge]
+              ? `辺 ${p.buildingEdge + 1}（${moveLength(moves[p.buildingEdge]).toFixed(3)} m）`
+              : '未選択'
+          }
+          wide
+        />
       </Field>
       <Field label="平行にする境界線">
-        <select
-          className={inputCls}
-          value={p.siteEdge}
-          onChange={(e) => onChange({ ...p, siteEdge: Number(e.target.value) })}
-        >
-          {Array.from({ length: siteEdgeCount }, (_, k) => (
-            <option key={k} value={k}>
-              境界線 {k + 1}
-            </option>
-          ))}
-        </select>
+        <PickButton
+          active={pick?.kind === 'siteEdge'}
+          onClick={() => onStartPick({ kind: 'siteEdge' })}
+          label={`境界線 ${p.siteEdge + 1}`}
+          wide
+        />
       </Field>
       <Field label="基点" hint="延長をどちらの端から測るか。">
         <select
