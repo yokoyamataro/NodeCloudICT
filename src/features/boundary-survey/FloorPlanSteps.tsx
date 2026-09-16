@@ -43,7 +43,15 @@ import {
   type TermKind,
 } from './floorPlanTypes'
 import { FigureOutlinePreview, SitePlanPreview } from './FloorPlanPreview'
-import { centerOn, siteRing, solveByParallel, solveByPoints } from './floorPlanPlace'
+import {
+  centerOn,
+  ringCentroid,
+  siteRing,
+  solveByParallel,
+  solveByPoints,
+} from './floorPlanPlace'
+
+const round3 = (v: number) => Math.round(v * 1000) / 1000
 import type { FloorPlanPatch } from '@/stores/floorPlanStore'
 
 type Patch = (patch: FloorPlanPatch) => void
@@ -828,7 +836,7 @@ export function StepSite({
       setNote('計算できませんでした。選んだ辺と境界線を見直してください。')
       return
     }
-    setSite(pl)
+    setSite({ ...pl, placed: true })
     setNote(msg)
   }
 
@@ -861,6 +869,12 @@ export function StepSite({
         <Field label="敷地の地番">
           <ParcelSelect plan={plan} parcels={parcels} onSelectParcel={onSelectParcel} />
         </Field>
+
+        {ready && !site.placed && (
+          <div className="my-2 px-2 py-1.5 rounded bg-blue-50 border border-blue-200 text-[11px] text-blue-800">
+            まだ建物を据えていないので、図には敷地だけを出しています。下の方法で配置すると建物が現れます。
+          </div>
+        )}
 
         {parcel && sitePoints.length === 0 && (
           <div className="my-2 px-2 py-1.5 rounded bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
@@ -1017,21 +1031,30 @@ export function StepSite({
         {site.method === 'manual' && (
           <div className="pt-2 mt-2 border-t">
             <Field label="東方向 (Y)">
-              <NumField value={site.offsetE} onChange={(v) => setSite({ offsetE: v })} />
+              <NumField
+                value={site.offsetE}
+                onChange={(v) => setSite({ offsetE: v, placed: true })}
+              />
             </Field>
             <Field label="北方向 (X)">
-              <NumField value={site.offsetN} onChange={(v) => setSite({ offsetN: v })} />
+              <NumField
+                value={site.offsetN}
+                onChange={(v) => setSite({ offsetN: v, placed: true })}
+              />
             </Field>
             <Field label="建物の向き">
               <div className="flex items-center gap-1">
-                <NumField value={site.rotationDeg} onChange={(v) => setSite({ rotationDeg: v })} />
+                <NumField
+                  value={site.rotationDeg}
+                  onChange={(v) => setSite({ rotationDeg: v, placed: true })}
+                />
                 <span className="text-xs text-slate-500">度</span>
               </div>
             </Field>
-            {ring.length >= 3 && moves.length >= 3 && (
+            {ready && (
               <button
                 type="button"
-                onClick={() => setSite(centerOn(moves, ring, site.rotationDeg))}
+                onClick={() => setSite({ ...centerOn(moves, ring, site.rotationDeg), placed: true })}
                 className="px-2 py-1 text-xs border rounded hover:bg-slate-50"
               >
                 敷地の中心に寄せる
@@ -1046,6 +1069,19 @@ export function StepSite({
           </div>
         )}
 
+        {site.placed && (
+          <button
+            type="button"
+            onClick={() => {
+              setSite({ placed: false, offsetE: 0, offsetN: 0, rotationDeg: 0 })
+              setNote(null)
+            }}
+            className="mt-2 px-2 py-1 text-xs border rounded hover:bg-slate-50 text-slate-600"
+          >
+            配置をやり直す
+          </button>
+        )}
+
         <Field label="方位" hint="図面の上を真北から何度振るか。0 なら上が真北。">
           <div className="flex items-center gap-1">
             <NumField value={site.northAngleDeg} onChange={(v) => setSite({ northAngleDeg: v })} />
@@ -1057,7 +1093,13 @@ export function StepSite({
           title="隣地の地番など（注記）"
           empty="例: 54-11 / 292 のように、隣接地の地番を図に添えます。"
           ids={site.notes.map((n) => n.id)}
-          onAdd={() => setSite({ notes: [...site.notes, { id: newId(), label: '', x: 0, y: 0 }] })}
+          onAdd={() => {
+            // 0,0 に 置く と 敷地 (数十万 m) と の 間 で 縮尺 が 壊れる
+            const g = ringCentroid(ring)
+            setSite({
+              notes: [...site.notes, { id: newId(), label: '', x: round3(g.e), y: round3(g.n) }],
+            })
+          }}
           onRemove={(id) => setSite({ notes: site.notes.filter((n) => n.id !== id) })}
           render={(id) => {
             const n = site.notes.find((x) => x.id === id)!
@@ -1132,6 +1174,7 @@ export function StepSite({
           rotationDeg={site.rotationDeg}
           notes={site.notes}
           northAngleDeg={site.northAngleDeg}
+          showBuilding={site.placed}
           interactive
           className="w-full h-full"
         />
@@ -1754,6 +1797,7 @@ export function SheetPreview({
           rotationDeg={plan.site.rotationDeg}
           notes={plan.site.notes}
           northAngleDeg={plan.site.northAngleDeg}
+          showBuilding={plan.site.placed}
           className="w-full h-full"
         />
       </svg>

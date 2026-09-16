@@ -323,6 +323,13 @@ export const PLACEMENT_METHOD_LABEL: Record<PlacementMethod, string> = {
 export interface SitePlan {
   /** 敷地 を 描く ため の 地番構成点 (design_coordinates の id) */
   parcelPointIds: string[]
+  /**
+   * 配置 が 済んで いる か。
+   * 済む まで 建物 は 図 に 出さない。 敷地 は 平面直角座標 (数十万 m) に
+   * ある のに 建物 は 原点 に いる ので、両方 を 囲む と 縮尺 が 桁違い に
+   * 小さく なって 何も 見えなく なる ため。
+   */
+  placed: boolean
   /** 据え方。 offsetE / offsetN / rotationDeg は この 結果 と して 入る */
   method: PlacementMethod
   /** 3点指定: 建物 の 角 と 境界線 と 離れ の 組 */
@@ -350,6 +357,7 @@ export interface SitePlan {
 
 export const DEFAULT_SITE: SitePlan = {
   parcelPointIds: [],
+  placed: false,
   method: 'three_point',
   constraints: [],
   parallel: null,

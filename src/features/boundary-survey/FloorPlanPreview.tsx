@@ -172,6 +172,7 @@ export function SitePlanPreview({
   rotationDeg,
   notes,
   northAngleDeg,
+  showBuilding = true,
   interactive = false,
   className,
 }: {
@@ -182,6 +183,12 @@ export function SitePlanPreview({
   rotationDeg: number
   notes: { id: string; label: string; x: number; y: number }[]
   northAngleDeg: number
+  /**
+   * 配置 が 決まる まで は false。 建物 を 描かず 敷地 だけ で 縮尺 を 取る。
+   * 敷地 は 平面直角座標 (数十万 m) に ある のに 建物 は 原点 に いる ので、
+   * 両方 を 囲む と 縮尺 が 桁違い に 小さく なって 何も 見えなく なる。
+   */
+  showBuilding?: boolean
   /** 画面 で 確かめる とき は 拡大 と 移動 を 効かせる */
   interactive?: boolean
   className?: string
@@ -192,8 +199,8 @@ export function SitePlanPreview({
     [sitePoints],
   )
   const building = useMemo(
-    () => placeOutline(outline, offsetE, offsetN, rotationDeg),
-    [outline, offsetE, offsetN, rotationDeg],
+    () => (showBuilding ? placeOutline(outline, offsetE, offsetN, rotationDeg) : []),
+    [showBuilding, outline, offsetE, offsetN, rotationDeg],
   )
 
   const box = useMemo(() => {
@@ -250,7 +257,7 @@ export function SitePlanPreview({
   if (!box) {
     return (
       <div className={`flex items-center justify-center text-xs text-slate-400 ${className ?? ''}`}>
-        地番と建物の形状を入れると配置が表示されます
+        地番を選ぶと敷地が表示されます
       </div>
     )
   }
