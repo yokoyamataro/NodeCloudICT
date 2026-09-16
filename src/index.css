@@ -263,17 +263,27 @@ input[type="number"] {
   }
 }
 
-/* 建物 の 配置 で 出す 寸法 の ラベル。 地図 の 上 で 読める よう 背景 を 薄く */
-.fp-guide-label {
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid #7c3aed;
+/* 建物 の 配置 で 出す 寸法。 吹き出し では なく 文字 だけ を 線 に 沿わせる。
+   背景 が 無い ぶん 読みにくく なる ので 白 の 縁取り で 浮かせる。 */
+.fp-guide-icon {
+  background: none;
+  border: none;
+}
+.fp-guide-rot {
+  position: absolute;
+  display: inline-block;
+  transform-origin: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.fp-guide-text {
+  display: block;
+  /* 線 の 上 に 少し 浮かせる (回転 の 後 に 掛かる) */
+  transform: translateY(-0.85em);
   color: #5b21b6;
   font-size: 11px;
-  font-weight: 600;
-  padding: 1px 4px;
-  box-shadow: none;
-  white-space: nowrap;
-}
-.fp-guide-label::before {
-  display: none;
+  font-weight: 700;
+  line-height: 1;
+  paint-order: stroke fill;
+  -webkit-text-stroke: 3px rgba(255, 255, 255, 0.85);
 }

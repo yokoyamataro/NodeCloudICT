@@ -233,7 +233,11 @@ export function StepBuilding({
             label="敷地の地番"
             hint="複数の土地にまたがる建物は、まとめて選びます。「3 配置」で敷地の外形に使います。"
           >
-            <ParcelPicker plan={plan} parcels={parcels} onToggleParcel={onToggleParcel} />
+            <ParcelPickerStandalone
+              plan={plan}
+              parcels={parcels}
+              onToggleParcel={onToggleParcel}
+            />
           </Field>
         </>
       )}
@@ -249,14 +253,19 @@ export function StepBuilding({
 function ParcelPicker({
   plan,
   parcels,
+  open,
+  onOpenChange,
   onToggleParcel,
 }: {
   plan: FloorPlan
   parcels: ParcelOption[]
+  /** 選択中 か。 この 間 だけ 地図 の 地番 も 押せる */
+  open: boolean
+  onOpenChange: (v: boolean) => void
   onToggleParcel: (workAreaId: string) => void
 }) {
   const chosen = new Set(plan.site.parcelIds)
-  const [open, setOpen] = useState(false)
+  const setOpen = onOpenChange
   const picked = parcels.filter((p) => p.parcelId != null && chosen.has(p.parcelId))
 
   return (
@@ -284,14 +293,22 @@ function ParcelPicker({
         )}
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="px-2 py-0.5 text-xs border rounded hover:bg-slate-50"
+          onClick={() => setOpen(!open)}
+          className={`px-2 py-0.5 text-xs border rounded ${
+            open
+              ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+              : 'hover:bg-slate-50'
+          }`}
         >
           {open ? '確定' : '地番を選ぶ'}
         </button>
       </div>
       {open && (
-        <ul className="mt-1 max-h-48 overflow-auto border rounded divide-y">
+        <>
+          <div className="mt-1 text-[11px] text-blue-700">
+            地図の地番を押しても付け外しできます。終わったら「確定」。
+          </div>
+          <ul className="mt-1 max-h-48 overflow-auto border rounded divide-y">
           {parcels.length === 0 && (
             <li className="p-2 text-xs text-slate-400">地番がありません。</li>
           )}
@@ -311,10 +328,21 @@ function ParcelPicker({
               </li>
             )
           })}
-        </ul>
+          </ul>
+        </>
       )}
     </div>
   )
+}
+
+/** 地図 と 連動 しない 場面 (1 建物情報) 用 の 包み */
+function ParcelPickerStandalone(props: {
+  plan: FloorPlan
+  parcels: ParcelOption[]
+  onToggleParcel: (workAreaId: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  return <ParcelPicker {...props} open={open} onOpenChange={setOpen} />
 }
 
 // ========================================================================
@@ -888,6 +916,8 @@ export function StepSite({
   const [note, setNote] = useState<string | null>(null)
   /** 地図 で 押した 先 を 入れる 行 */
   const [activeRow, setActiveRow] = useState(0)
+  /** 地番 の 選択中 か。 この 間 だけ 地図 の 地番 を 押せる */
+  const [pickingParcel, setPickingParcel] = useState(false)
 
   const apply = (pl: { offsetE: number; offsetN: number; rotationDeg: number } | null, msg: string) => {
     if (!pl) {
@@ -996,11 +1026,14 @@ export function StepSite({
   return (
     <div className="flex gap-4 h-full min-h-0">
       <div className="w-[23rem] shrink-0 overflow-auto">
-        <Field
-          label="敷地の地番"
-          hint="地図の地番を押しても付け外しできます。複数の土地にまたがる建物は、まとめて選びます。"
-        >
-          <ParcelPicker plan={plan} parcels={parcels} onToggleParcel={onToggleParcel} />
+        <Field label="敷地の地番" hint="複数の土地にまたがる建物は、まとめて選びます。">
+          <ParcelPicker
+            plan={plan}
+            parcels={parcels}
+            open={pickingParcel}
+            onOpenChange={setPickingParcel}
+            onToggleParcel={onToggleParcel}
+          />
         </Field>
 
         {chosen.length > 0 && sitePoints.length === 0 && (
@@ -1309,10 +1342,15 @@ export function StepSite({
             .filter((p) => p.parcelId != null)
             .map((p) => ({ parcelId: p.parcelId!, label: p.label, points: p.points }))}
           chosenParcelIds={site.parcelIds}
-          onToggleParcelId={(parcelId) => {
-            const opt = parcels.find((p) => p.parcelId === parcelId)
-            if (opt) onToggleParcel(opt.workAreaId)
-          }}
+          onToggleParcelId={
+            // 選択中 以外 は 押しても 何も 起きない ように する
+            pickingParcel
+              ? (parcelId) => {
+                  const opt = parcels.find((p) => p.parcelId === parcelId)
+                  if (opt) onToggleParcel(opt.workAreaId)
+                }
+              : undefined
+          }
           ring={ring}
           outline={outline}
           placed={site.placed || parallelPreview != null}

@@ -9,8 +9,9 @@
 //
 // 建物 は 平面直角座標 で 計算 して いる ので、描く 直前 に 緯度経度 へ 直す。
 
-import { useEffect, useMemo } from 'react'
-import { CircleMarker, Polygon, Polyline, Tooltip } from 'react-leaflet'
+import { useEffect, useMemo, useReducer } from 'react'
+import L from 'leaflet'
+import { CircleMarker, Marker, Polygon, Polyline, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import { Map as MapIcon } from 'lucide-react'
 import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
@@ -23,6 +24,53 @@ import { useMapViewStore } from '@/stores/mapViewStore'
 import type { CoordinateConverter } from '@/lib/coordinates'
 import { placeOutline, type Pt } from './floorPlanTypes'
 import type { EN } from './floorPlanPlace'
+
+const escapeHtml = (t: string) =>
+  t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
+
+/**
+ * 寸法 の 文字。 白地 の 吹き出し では なく 文字 だけ を 置き、
+ * その 線 の 向き に 合わせて 傾ける。
+ *
+ * 傾き は 画面 上 の 角度 な ので、地図 の 縮尺 や 回転 で 変わる。
+ * 動く たび に 描き直す 必要 が ある。
+ */
+function GuideLabel({
+  from,
+  to,
+  text,
+}: {
+  from: [number, number]
+  to: [number, number]
+  text: string
+}) {
+  const map = useMap()
+  const [, redraw] = useReducer((n: number) => n + 1, 0)
+  useMapEvents({ zoom: redraw, move: redraw, viewreset: redraw })
+  // 回転 (leaflet-rotate) は 型 に 無い ので 直 に 繋ぐ
+  useEffect(() => {
+    map.on('rotate', redraw)
+    return () => {
+      map.off('rotate', redraw)
+    }
+  }, [map])
+
+  const a = map.latLngToContainerPoint(from)
+  const b = map.latLngToContainerPoint(to)
+  let deg = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI
+  // 逆さま に ならない ように
+  if (deg > 90 || deg < -90) deg += 180
+
+  const mid: [number, number] = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2]
+  const icon = L.divIcon({
+    className: 'fp-guide-icon',
+    iconSize: [0, 0],
+    html:
+      `<span class="fp-guide-rot" style="transform:translate(-50%,-50%) rotate(${deg}deg)">` +
+      `<span class="fp-guide-text">${escapeHtml(text)}</span></span>`,
+  })
+  return <Marker position={mid} icon={icon} interactive={false} />
+}
 
 export interface SiteRingForMap {
   parcelId: string
@@ -76,6 +124,10 @@ export function FloorPlanSiteMap({
   guides?: { id: string; from: EN; to: EN; label: string }[]
   /** 確定 前 の 仮 の 配置。 破線 で 描く */
   preview?: boolean
+  /**
+   * 地図 の 地番 を 押した (敷地 の 付け外し)。
+   * 未指定 の 間 は 押しても 何も 起きない。 選択中 だけ 渡す。
+   */
   /** 地図 上 の 境界線 を 押した */
   onEdgePick?: (edgeIndex: number) => void
   /** 地図 上 の 建物 の 角 を 押した */
@@ -222,24 +274,21 @@ export function FloorPlanSiteMap({
         />
       )}
 
-      {/* 入力中 の 寸法 */}
+      {/* 入力中 の 寸法。 文字 は 線 に 沿わせる */}
       {(guides ?? []).map((g) => {
         const a = ll(g.from.e, g.from.n)
         const b = ll(g.to.e, g.to.n)
+        const from: [number, number] = [a.lat, a.lng]
+        const to: [number, number] = [b.lat, b.lng]
         return (
-          <Polyline
-            key={g.id}
-            positions={[
-              [a.lat, a.lng],
-              [b.lat, b.lng],
-            ]}
-            pathOptions={{ color: '#7c3aed', weight: 2, dashArray: '4 3' }}
-            interactive={false}
-          >
-            <Tooltip permanent direction="center" className="fp-guide-label">
-              {g.label}
-            </Tooltip>
-          </Polyline>
+          <g key={g.id}>
+            <Polyline
+              positions={[from, to]}
+              pathOptions={{ color: '#7c3aed', weight: 2, dashArray: '4 3' }}
+              interactive={false}
+            />
+            <GuideLabel from={from} to={to} text={g.label} />
+          </g>
         )
       })}
 
