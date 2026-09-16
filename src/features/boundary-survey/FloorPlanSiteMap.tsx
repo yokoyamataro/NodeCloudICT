@@ -9,9 +9,17 @@
 //
 // 建物 は 平面直角座標 で 計算 して いる ので、描く 直前 に 緯度経度 へ 直す。
 
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { CircleMarker, Polygon, Polyline, Tooltip } from 'react-leaflet'
+import { Map as MapIcon } from 'lucide-react'
 import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
+import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
+import { ParcelBatchImportBar } from '@/features/parcel-maps/ParcelBatchImportBar'
+import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImportSelection'
+import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
+import { useParcelStore } from '@/stores/parcelStore'
+import { useWorkAreaStore } from '@/stores/workAreaStore'
+import { useMapViewStore } from '@/stores/mapViewStore'
 import type { CoordinateConverter } from '@/lib/coordinates'
 import { placeOutline, type Pt } from './floorPlanTypes'
 import type { EN } from './floorPlanPlace'
@@ -25,6 +33,7 @@ export interface SiteRingForMap {
 
 export function FloorPlanSiteMap({
   farmId,
+  zone,
   conv,
   rings,
   ring,
@@ -39,6 +48,8 @@ export function FloorPlanSiteMap({
   onVertexPick,
 }: {
   farmId: string | null
+  /** 平面直角 の 系番号。 地番 の 取込 に 使う */
+  zone: number
   conv: CoordinateConverter
   /** 選んだ 地番 ごと の 外形 (一覧 の 見出し 用) */
   rings: SiteRingForMap[]
@@ -59,6 +70,35 @@ export function FloorPlanSiteMap({
   onVertexPick?: (vertexIndex: number) => void
 }) {
   const ll = useMemo(() => (e: number, n: number) => conv.toLatLng(n, e), [conv])
+
+  // ---- 法務省地図 (地番管理 と 同じ 背景 レイヤ) ----
+  const datasets = useParcelMapDatasetStore((s) => s.datasets)
+  const fetchDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
+  useEffect(() => {
+    void fetchDatasets()
+  }, [fetchDatasets])
+  const hasDataset = datasets.some((d) => d.active)
+  const showParcelMap = useMapViewStore((s) => s.showParcelMap)
+  const setShowParcelMap = useMapViewStore((s) => s.setShowParcelMap)
+
+  // 取込済 の 色分け 用。 キー は 「所在|地番」
+  const parcelsByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
+  const workAreas = useWorkAreaStore((s) => s.workAreas)
+  const importedParcelKeys = useMemo(() => {
+    const set = new Set<string>()
+    for (const p of parcelsByWorkAreaId.values()) {
+      if (p.parcel_number) set.add(`${p.location ?? ''}|${p.parcel_number}`)
+    }
+    // parcels 未作成 の 地番 は 工事区域 の 名前 で 補う
+    for (const a of workAreas['boundary_survey'] ?? []) {
+      if (a.name) set.add(`|${a.name}`)
+      if (a.zoneNumber && a.zoneNumber !== a.name) set.add(`|${a.zoneNumber}`)
+    }
+    return set
+  }, [parcelsByWorkAreaId, workAreas])
+
+  // 地番 の 取込 (地番管理 と 同じ 共通フック)
+  const selection = useParcelImportSelection({ resetTrigger: showParcelMap })
 
   // 地番 の 外形 は CoordinateMap の 外部ポリゴン と して 渡す
   const polygons: ExternalPolygon[] = useMemo(
@@ -107,14 +147,25 @@ export function FloorPlanSiteMap({
   const vertexOn = useMemo(() => new Set(highlightVertex), [highlightVertex])
 
   return (
-    <CoordinateMap
-      farmId={farmId}
-      externalPolygons={polygons}
-      showPolygonLabels
-      showEdgeLengths
-      edgeDigits={3}
-      coordinatesInteractive={false}
-    >
+    <div className="relative w-full h-full">
+      <CoordinateMap
+        farmId={farmId}
+        externalPolygons={polygons}
+        showPolygonLabels
+        showEdgeLengths
+        edgeDigits={3}
+        coordinatesInteractive={false}
+      >
+      {hasDataset && showParcelMap && (
+        <ParcelMapLayer
+          visible
+          bbox={null}
+          importedParcelKeys={importedParcelKeys}
+          selectedKeys={selection.selectedKeys}
+          onToggleSelect={selection.toggleSelect}
+          selectionMode={selection.selectionMode}
+        />
+      )}
       {/* 敷地 の 辺。 選んで いる もの は 太く 色 を 変える */}
       {edges.map((e) => (
         <Polyline
@@ -163,6 +214,35 @@ export function FloorPlanSiteMap({
             </CircleMarker>
           )
         })}
-    </CoordinateMap>
+      </CoordinateMap>
+
+      {/* 地図左下: 法務省地図 の 切替 と 地番 の 取込 (地番管理 と 同じ 並び) */}
+      {hasDataset && (
+        <div className="absolute bottom-6 left-2 z-[1000] flex flex-col items-start gap-2">
+          {showParcelMap && (
+            <ParcelBatchImportBar farmId={farmId} zone={zone} selection={selection} />
+          )}
+          <button
+            type="button"
+            onClick={() => setShowParcelMap(!showParcelMap)}
+            className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
+              showParcelMap
+                ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
+                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+            }`}
+            title="法務省地図データを背景に表示する"
+          >
+            <MapIcon className="h-4 w-4" />
+            法務省地図
+          </button>
+        </div>
+      )}
+
+      {selection.message && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1100] px-3 py-1.5 rounded bg-slate-800/90 text-white text-xs shadow">
+          {selection.message}
+        </div>
+      )}
+    </div>
   )
 }

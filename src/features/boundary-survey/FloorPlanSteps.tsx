@@ -850,6 +850,7 @@ export function StepSite({
   plan,
   parcels,
   farmId,
+  zone,
   conv,
   onToggleParcel,
   onPatch,
@@ -857,6 +858,7 @@ export function StepSite({
   plan: FloorPlan
   parcels: ParcelOption[]
   farmId: string | null
+  zone: number
   conv: CoordinateConverter
   onToggleParcel: (workAreaId: string) => void
   onPatch: Patch
@@ -1263,6 +1265,7 @@ export function StepSite({
       <div className="flex-1 min-w-0 border rounded overflow-hidden">
         <FloorPlanSiteMap
           farmId={farmId}
+          zone={zone}
           conv={conv}
           rings={chosen.map((c) => ({
             parcelId: c.parcelId!,

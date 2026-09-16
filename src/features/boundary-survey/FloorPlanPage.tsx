@@ -337,6 +337,7 @@ export function FloorPlanPage() {
                     plan={selected}
                     parcels={parcels}
                     farmId={farmId}
+                    zone={zone}
                     conv={conv}
                     onToggleParcel={(id) => void handleToggleParcel(id)}
                     onPatch={onPatch}
