@@ -961,7 +961,10 @@ export function StepSite({
   return (
     <div className="flex gap-4 h-full min-h-0">
       <div className="w-[23rem] shrink-0 overflow-auto">
-        <Field label="敷地の地番" hint="複数の土地にまたがる建物は、まとめて選びます。">
+        <Field
+          label="敷地の地番"
+          hint="地図の地番を押しても付け外しできます。複数の土地にまたがる建物は、まとめて選びます。"
+        >
           <ParcelPicker plan={plan} parcels={parcels} onToggleParcel={onToggleParcel} />
         </Field>
 
@@ -1267,11 +1270,14 @@ export function StepSite({
           farmId={farmId}
           zone={zone}
           conv={conv}
-          rings={chosen.map((c) => ({
-            parcelId: c.parcelId!,
-            label: c.label,
-            points: c.points,
-          }))}
+          rings={parcels
+            .filter((p) => p.parcelId != null)
+            .map((p) => ({ parcelId: p.parcelId!, label: p.label, points: p.points }))}
+          chosenParcelIds={site.parcelIds}
+          onToggleParcelId={(parcelId) => {
+            const opt = parcels.find((p) => p.parcelId === parcelId)
+            if (opt) onToggleParcel(opt.workAreaId)
+          }}
           ring={ring}
           outline={outline}
           placed={site.placed}

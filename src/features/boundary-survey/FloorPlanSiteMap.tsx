@@ -36,6 +36,8 @@ export function FloorPlanSiteMap({
   zone,
   conv,
   rings,
+  chosenParcelIds,
+  onToggleParcelId,
   ring,
   outline,
   placed,
@@ -51,8 +53,12 @@ export function FloorPlanSiteMap({
   /** 平面直角 の 系番号。 地番 の 取込 に 使う */
   zone: number
   conv: CoordinateConverter
-  /** 選んだ 地番 ごと の 外形 (一覧 の 見出し 用) */
+  /** 工区 の 地番 すべて。 地図 から 敷地 を 選べる ように 全部 描く */
   rings: SiteRingForMap[]
+  /** その うち 敷地 と して 選んで いる もの */
+  chosenParcelIds: string[]
+  /** 地図 の 地番 を 押した (敷地 の 付け外し) */
+  onToggleParcelId?: (parcelId: string) => void
   /** 配置 の 計算 に 使う 一続き の 敷地 (複数筆 を 繋いだ もの) */
   ring: EN[]
   outline: Pt[]
@@ -100,7 +106,8 @@ export function FloorPlanSiteMap({
   // 地番 の 取込 (地番管理 と 同じ 共通フック)
   const selection = useParcelImportSelection({ resetTrigger: showParcelMap })
 
-  // 地番 の 外形 は CoordinateMap の 外部ポリゴン と して 渡す
+  // 地番 の 外形 は CoordinateMap の 外部ポリゴン と して 渡す。
+  // 選んで いない 地番 も 描いて おき、地図 から 敷地 を 選べる ように する。
   const polygons: ExternalPolygon[] = useMemo(
     () =>
       rings
@@ -115,6 +122,12 @@ export function FloorPlanSiteMap({
           pointIds: r.points.map((p) => p.id),
         })),
     [rings, conv],
+  )
+
+  // 選んで いる 地番 は 橙 で 塗る (CoordinateMap の 複数選択 の 見た目)
+  const checkedPolygonIds = useMemo(
+    () => new Set(chosenParcelIds.map((id) => `fp-${id}`)),
+    [chosenParcelIds],
   )
 
   // 敷地 の 辺 (配置 の 基準 に 使う 通し番号)
@@ -151,6 +164,12 @@ export function FloorPlanSiteMap({
       <CoordinateMap
         farmId={farmId}
         externalPolygons={polygons}
+        checkedExternalPolygonIds={checkedPolygonIds}
+        onPolygonSelect={
+          onToggleParcelId
+            ? (id: string) => onToggleParcelId(id.replace(/^fp-/, ''))
+            : undefined
+        }
         showPolygonLabels
         showEdgeLengths
         edgeDigits={3}
