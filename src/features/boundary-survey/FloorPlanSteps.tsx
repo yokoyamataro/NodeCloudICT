@@ -514,6 +514,8 @@ function FigureEditor({
   onChange: (p: Partial<FloorFigure>) => void
 }) {
   const [tab, setTab] = useState<'shape' | 'area'>('shape')
+  /** 区切り線 の 起点 を 図 から 拾う。 'new' は これから 足す 1 本 */
+  const [cutPick, setCutPick] = useState<string | null>(null)
   const sum = figureSum(figure)
   const pts = figureOutline(figure)
   const poly = polygonArea(pts)
@@ -565,17 +567,44 @@ function FigureEditor({
           {tab === 'shape' ? (
             <ShapeEditor figure={figure} onChange={onChange} />
           ) : (
-            <AreaTable figure={figure} onChange={onChange} />
+            <AreaTable
+              figure={figure}
+              onChange={onChange}
+              cutPick={cutPick}
+              onStartCutPick={(id) => {
+                setTab('area')
+                setCutPick((cur) => (cur === id ? null : id))
+              }}
+            />
           )}
         </div>
 
         <div className="flex-1 min-w-0 flex flex-col min-h-0">
-          <div className="flex-1 min-h-0 border rounded bg-white p-2">
+          <div className="flex-1 min-h-0 border rounded bg-white p-2 relative">
             <FigureOutlinePreview
               figure={figure}
               underlay={underlay}
+              onVertexPick={
+                cutPick == null
+                  ? undefined
+                  : (i) => {
+                      const cuts = figure.cuts ?? []
+                      onChange({
+                        cuts:
+                          cutPick === 'new'
+                            ? [...cuts, { id: newId(), v: i, dir: 'E' as const }]
+                            : cuts.map((c) => (c.id === cutPick ? { ...c, v: i } : c)),
+                      })
+                      setCutPick(null)
+                    }
+              }
               className="w-full h-full"
             />
+            {cutPick != null && (
+              <div className="absolute top-1 left-1 px-2 py-1 rounded bg-blue-600 text-white text-[11px] shadow">
+                区切り線の起点にする折点を押してください
+              </div>
+            )}
           </div>
           <div className="mt-1 flex items-center gap-3 text-xs">
             <span className="text-slate-500">
@@ -738,9 +767,14 @@ function ShapeEditor({
 function AreaTable({
   figure,
   onChange,
+  cutPick,
+  onStartCutPick,
 }: {
   figure: FloorFigure
   onChange: (p: Partial<FloorFigure>) => void
+  /** 図 から 折点 を 拾って いる 対象 (cut の id、または 'new') */
+  cutPick: string | null
+  onStartCutPick: (id: string) => void
 }) {
   const terms = figure.terms
   const setTerms = (next: AreaTerm[]) => onChange({ terms: next })
@@ -803,7 +837,7 @@ function AreaTable({
           <span className="text-[11px] text-slate-500">区切り線</span>
           {cuts.length === 0 && (
             <span className="text-[11px] text-slate-400">
-              折点から水平・垂直に線を伸ばし、当たった辺までで切ります。
+              「+ 図から追加」を押し、右の図で折点を選びます。そこから水平・垂直に線を伸ばし、当たった辺までで切ります。
             </span>
           )}
           {cuts.map((c, i) => (
@@ -811,22 +845,18 @@ function AreaTable({
               key={c.id}
               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-white text-[11px]"
             >
-              <span className="text-slate-400">折点</span>
-              <select
-                className="text-[11px] bg-transparent"
-                value={c.v}
-                onChange={(e) =>
-                  onChange({
-                    cuts: cuts.map((x, j) => (j === i ? { ...x, v: Number(e.target.value) } : x)),
-                  })
-                }
+              <button
+                type="button"
+                onClick={() => onStartCutPick(c.id)}
+                className={`px-1 rounded ${
+                  cutPick === c.id
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+                title="図で折点を選び直す"
               >
-                {pts.map((_, k) => (
-                  <option key={k} value={k}>
-                    {k + 1}
-                  </option>
-                ))}
-              </select>
+                {cutPick === c.id ? '図で選択…' : `折点 ${c.v + 1}`}
+              </button>
               <select
                 className="text-[11px] bg-transparent"
                 value={c.dir}
@@ -855,11 +885,15 @@ function AreaTable({
           ))}
           <button
             type="button"
-            onClick={() => onChange({ cuts: [...cuts, { id: newId(), v: 0, dir: 'E' }] })}
+            onClick={() => onStartCutPick('new')}
             disabled={pts.length < 4}
-            className="px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-100 disabled:opacity-40"
+            className={`px-2 py-0.5 text-[11px] border rounded disabled:opacity-40 ${
+              cutPick === 'new'
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'bg-white hover:bg-slate-100'
+            }`}
           >
-            + 追加
+            {cutPick === 'new' ? '図で折点を選択…' : '+ 図から追加'}
           </button>
         </div>
         {hasRegions && (

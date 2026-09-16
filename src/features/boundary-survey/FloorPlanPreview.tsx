@@ -85,11 +85,14 @@ export function FigureOutlinePreview({
   figure,
   underlay,
   showEdgeLabels = true,
+  onVertexPick,
   className,
 }: {
   figure: FloorFigure
   underlay?: FloorFigure | null
   showEdgeLabels?: boolean
+  /** 渡す と 折点 を 押して 選べる (区切り線 の 起点 に 使う) */
+  onVertexPick?: (index: number) => void
   className?: string
 }) {
   const pts = useMemo(() => figureOutline(figure), [figure])
@@ -172,6 +175,36 @@ export function FigureOutlinePreview({
           <EdgeLabels pts={pts} moves={figure.moves} fs={fs} />
         </g>
       )}
+      {/* 折点。 区切り線 の 起点 を 選ぶ とき だけ 押せる */}
+      {onVertexPick && (
+        <g transform={`translate(${figure.offset.x} ${-figure.offset.y})`}>
+          {pts.map((p, i) => (
+            <g key={i} onClick={() => onVertexPick(i)} style={{ cursor: 'pointer' }}>
+              <circle cx={p.x} cy={-p.y} r={sw * 12} fill="transparent" />
+              <circle
+                cx={p.x}
+                cy={-p.y}
+                r={sw * 4}
+                fill="#fff"
+                stroke="#2563eb"
+                strokeWidth={sw * 1.2}
+              />
+              <text
+                x={p.x}
+                y={-p.y}
+                fontSize={sw * 5}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill="#1d4ed8"
+                pointerEvents="none"
+              >
+                {i + 1}
+              </text>
+            </g>
+          ))}
+        </g>
+      )}
+
       {/* 下敷き から の ずれ */}
       {under.length > 0 && (figure.offset.x !== 0 || figure.offset.y !== 0) && (
         <g stroke="#2563eb" strokeWidth={sw * 0.7} fill="#2563eb">
