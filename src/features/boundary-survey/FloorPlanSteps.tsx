@@ -773,17 +773,18 @@ function AreaTable({
             onClick={() => rebuild(null)}
             disabled={pts.length < 3}
             className="px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-100 disabled:opacity-40"
-            title="頂点の高さで横に切り、台形の足し算にします"
+            title="折点の高さで横に切り、台形の足し算にします"
           >
-            自動で区分
+            自動区分
           </button>
           <button
             type="button"
             onClick={() => rebuild(cuts)}
-            disabled={pts.length < 3 || cuts.length === 0}
+            disabled={pts.length < 3}
             className="px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-100 disabled:opacity-40"
+            title="下の区切り線で分けます。区切り線が無ければ全体で 1 区画になります"
           >
-            区切り線で区分
+            手動区分
           </button>
           {hasRegions && (
             <button
