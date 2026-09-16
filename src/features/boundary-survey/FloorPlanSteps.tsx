@@ -1928,9 +1928,11 @@ function ExportBar({ plan, parcels }: { plan: FloorPlan; parcels: ParcelOption[]
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
 
-  const sitePoints = plan.site.parcelIds.flatMap(
-    (id) => parcels.find((p) => p.parcelId === id)?.points ?? [],
-  )
+  // 筆 ごと に 渡す。 図面 に 地番名 を 入れる ため
+  const siteParcels = plan.site.parcelIds
+    .map((id) => parcels.find((p) => p.parcelId === id))
+    .filter((p): p is ParcelOption => p != null)
+    .map((p) => ({ label: p.label, points: p.points }))
   const base = safeFileName(
     plan.title || plan.house_number || plan.parcel_number || '建物図面',
   )
@@ -1939,7 +1941,7 @@ function ExportBar({ plan, parcels }: { plan: FloorPlan; parcels: ParcelOption[]
     setBusy(kind)
     setNote(null)
     try {
-      const items = buildSheet(plan, sitePoints)
+      const items = buildSheet(plan, siteParcels)
       if (kind === 'p21') {
         saveBlob(
           new Blob([buildP21(items, base)], { type: 'application/octet-stream' }),
@@ -2011,10 +2013,16 @@ export function SheetPreview({
   plan: FloorPlan
   parcels: ParcelOption[]
 }) {
-  const sitePoints = plan.site.parcelIds.flatMap(
-    (id) => parcels.find((p) => p.parcelId === id)?.points ?? [],
+  // 筆 ごと に 渡す。 図面 に 地番名 を 入れる ため
+  const siteParcels = useMemo(
+    () =>
+      plan.site.parcelIds
+        .map((id) => parcels.find((p) => p.parcelId === id))
+        .filter((p): p is ParcelOption => p != null)
+        .map((p) => ({ label: p.label, points: p.points })),
+    [plan.site.parcelIds, parcels],
   )
-  const items = useMemo(() => buildSheet(plan, sitePoints), [plan, sitePoints])
+  const items = useMemo(() => buildSheet(plan, siteParcels), [plan, siteParcels])
 
   return (
     <svg

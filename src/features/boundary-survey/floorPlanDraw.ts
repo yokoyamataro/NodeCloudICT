@@ -125,8 +125,14 @@ export interface SitePointForDraw {
   y: number
 }
 
+/** 敷地 の 1 筆。 複数筆 に またがる 建物 が ある ので 筆 ごと に 持つ */
+export interface SiteParcelForDraw {
+  label: string
+  points: SitePointForDraw[]
+}
+
 /** 用紙 1 枚 を 描く もの の 並び に する */
-export function buildSheet(plan: FloorPlan, sitePoints: SitePointForDraw[]): DrawItem[] {
+export function buildSheet(plan: FloorPlan, parcels: SiteParcelForDraw[]): DrawItem[] {
   const S = SHEET
   const out: DrawItem[] = []
   const line = (x1: number, y1: number, x2: number, y2: number, w = LW) =>
@@ -208,7 +214,7 @@ export function buildSheet(plan: FloorPlan, sitePoints: SitePointForDraw[]): Dra
   })
 
   // ---- 右: 建物図面 ----
-  drawSite(out, plan, sitePoints)
+  drawSite(out, plan, parcels)
 
   // ---- 表題欄 の 中身 ----
   const [tlA, tlB, tlC, tlD, tlE] = S.tlLeft
@@ -447,7 +453,7 @@ function drawAreaTable(out: DrawItem[], f: FloorFigure, bx: number, by: number, 
 }
 
 /** 用紙 右半分 の 建物図面 */
-function drawSite(out: DrawItem[], plan: FloorPlan, sitePoints: SitePointForDraw[]) {
+function drawSite(out: DrawItem[], plan: FloorPlan, parcels: SiteParcelForDraw[]) {
   const S = SHEET
   const bx = S.centerX + 4
   const by = S.locBottom + 4
@@ -456,7 +462,13 @@ function drawSite(out: DrawItem[], plan: FloorPlan, sitePoints: SitePointForDraw
   const mmPerM = 1000 / Math.max(plan.site_scale, 1)
 
   // 敷地 (X=北 / Y=東) と 建物 を E/N に 揃える
-  const site = sitePoints.map((p) => ({ e: p.y, n: p.x, label: p.pointNumber }))
+  const rings = parcels
+    .filter((pc) => pc.points.length >= 3)
+    .map((pc) => ({
+      label: pc.label,
+      pts: pc.points.map((p) => ({ e: p.y, n: p.x })),
+    }))
+  const site = rings.flatMap((r) => r.pts)
 
   // 附属建物 は 別棟 な ので 棟 ごと に 据えた もの を 全部 描く
   const buildings: { key: string; pts: { e: number; n: number }[] }[] = []
@@ -481,12 +493,29 @@ function drawSite(out: DrawItem[], plan: FloorPlan, sitePoints: SitePointForDraw
     y: by + bh / 2 - (n - cn) * mmPerM,
   })
 
-  if (site.length >= 3) {
+  for (const r of rings) {
     out.push({
       kind: 'poly',
-      pts: site.map((p) => toSheet(p.e, p.n)),
+      pts: r.pts.map((p) => toSheet(p.e, p.n)),
       closed: true,
       w: LW_FIG,
+      layer: L.site,
+    })
+    // 敷地 の 地番名 を 筆 の 真ん中 に
+    if (!r.label) continue
+    const c = {
+      e: r.pts.reduce((s2, p) => s2 + p.e, 0) / r.pts.length,
+      n: r.pts.reduce((s2, p) => s2 + p.n, 0) / r.pts.length,
+    }
+    const p = toSheet(c.e, c.n)
+    out.push({
+      kind: 'text',
+      x: p.x,
+      y: p.y,
+      text: r.label,
+      h: 2.6,
+      anchor: 'middle',
+      rot: 0,
       layer: L.site,
     })
   }
