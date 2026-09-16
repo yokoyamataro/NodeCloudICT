@@ -203,12 +203,40 @@ export function SitePlanPreview({
     [showBuilding, outline, offsetE, offsetN, rotationDeg],
   )
 
+  /**
+   * 表示 する 範囲。 敷地 が あれば 敷地 が 必ず 収まる ように する。
+   *
+   * 敷地 は 平面直角座標 (数十万 m) に ある ので、遠く に ある もの を 1 つ
+   * でも 混ぜる と 縮尺 が 桁違い に 小さく なる。 古い 行 に 残って いる
+   * 原点 (0,0) の 注記 が まさに それ。 敷地 の 大きさ の 3 倍 より 外 に
+   * ある もの は 範囲 の 計算 から 外す。
+   */
   const box = useMemo(() => {
     let b: Box | null = null
     for (const p of site) b = bumpBox(b, p.e, p.n)
-    for (const p of building) b = bumpBox(b, p.e, p.n)
-    for (const p of notes) b = bumpBox(b, p.x, p.y)
-    return b
+
+    if (!b) {
+      // 敷地 が 無い とき だけ 建物 と 注記 で 決める
+      for (const p of building) b = bumpBox(b, p.e, p.n)
+      for (const p of notes) b = bumpBox(b, p.x, p.y)
+      return b
+    }
+
+    const w = Math.max(b.maxX - b.minX, 1)
+    const h = Math.max(b.maxY - b.minY, 1)
+    const near = (x: number, y: number) =>
+      x > b!.minX - w * 3 && x < b!.maxX + w * 3 && y > b!.minY - h * 3 && y < b!.maxY + h * 3
+
+    let ext: Box | null = null
+    for (const p of building) if (near(p.e, p.n)) ext = bumpBox(ext, p.e, p.n)
+    for (const p of notes) if (near(p.x, p.y)) ext = bumpBox(ext, p.x, p.y)
+    if (!ext) return b
+    return {
+      minX: Math.min(b.minX, ext.minX),
+      minY: Math.min(b.minY, ext.minY),
+      maxX: Math.max(b.maxX, ext.maxX),
+      maxY: Math.max(b.maxY, ext.maxY),
+    }
   }, [site, building, notes])
 
   const [view, setView] = useState({ k: 1, tx: 0, ty: 0 })
@@ -300,7 +328,7 @@ export function SitePlanPreview({
 
   if (!interactive) {
     return (
-      <svg className={className} viewBox={viewBoxOf(box, 0.14)} preserveAspectRatio="xMidYMid meet">
+      <svg className={className} viewBox={viewBoxOf(box, 0.06)} preserveAspectRatio="xMidYMid meet">
         {content}
       </svg>
     )
@@ -310,9 +338,9 @@ export function SitePlanPreview({
     <div className={`relative ${className ?? ''}`}>
       <svg
         ref={svgRef}
-        className="w-full h-full touch-none"
+        className="block w-full h-full touch-none"
         style={{ cursor: dragging ? 'grabbing' : 'grab' }}
-        viewBox={viewBoxOf(box, 0.14)}
+        viewBox={viewBoxOf(box, 0.06)}
         preserveAspectRatio="xMidYMid meet"
         onWheel={onWheel}
         onPointerDown={(ev) => {
