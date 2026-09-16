@@ -909,7 +909,8 @@ export function StepSite({
   const ring = useMemo(() => siteRing(sitePoints), [sitePoints])
 
   const ground = groundFigure(plan.figures)
-  const moves = ground?.moves ?? []
+  // 毎回 新しい 配列 に なる と useMemo が 効かない ので 一度 で 束ねる
+  const moves = useMemo(() => ground?.moves ?? [], [ground])
   const outline = useMemo(() => (ground ? figureOutline(ground) : []), [ground])
 
   const ready = ring.length >= 3 && moves.length >= 3
@@ -984,6 +985,27 @@ export function StepSite({
     apply(solveByParallel(moves, ring, parallelSpec), '配置しました。')
   }
 
+  /**
+   * 図 に 出す 配置。
+   * 据えて いれば その まま。 まだ なら 仮 の 位置 を 見せる ——
+   * 1辺平行 は 打った 値 の 結果、それ 以外 は 敷地 の 中心 に 置いた もの。
+   * 地番 を 選んだ 直後 に 建物 が どこ にも 見えない のを 避ける ため。
+   */
+  const shown = useMemo(() => {
+    if (site.placed) {
+      return {
+        offsetE: site.offsetE,
+        offsetN: site.offsetN,
+        rotationDeg: site.rotationDeg,
+        preview: false,
+        show: true,
+      }
+    }
+    if (!ready) return { offsetE: 0, offsetN: 0, rotationDeg: 0, preview: true, show: false }
+    const pl = parallelPreview ?? centerOn(moves, ring, site.rotationDeg)
+    return { ...pl, preview: true, show: true }
+  }, [site.placed, site.offsetE, site.offsetN, site.rotationDeg, ready, parallelPreview, moves, ring])
+
   // 地図 で 強調 する もの
   const highlightEdge =
     site.method === 'three_point'
@@ -1048,7 +1070,7 @@ export function StepSite({
         )}
         {ready && !site.placed && (
           <div className="my-2 px-2 py-1.5 rounded bg-blue-50 border border-blue-200 text-[11px] text-blue-800">
-            まだ建物を据えていないので、地図には敷地だけを出しています。下の方法で配置すると建物が現れます。
+            建物は仮の位置（破線）です。下の方法で配置すると確定します。
           </div>
         )}
 
@@ -1353,16 +1375,17 @@ export function StepSite({
           }
           ring={ring}
           outline={outline}
-          placed={site.placed || parallelPreview != null}
-          offsetE={parallelPreview && !site.placed ? parallelPreview.offsetE : site.offsetE}
-          offsetN={parallelPreview && !site.placed ? parallelPreview.offsetN : site.offsetN}
-          rotationDeg={
-            parallelPreview && !site.placed ? parallelPreview.rotationDeg : site.rotationDeg
-          }
-          preview={!site.placed && parallelPreview != null}
+          placed={shown.show}
+          offsetE={shown.offsetE}
+          offsetN={shown.offsetN}
+          rotationDeg={shown.rotationDeg}
+          preview={shown.preview}
           guides={parallelGuideLines}
           highlightEdge={highlightEdge}
           highlightVertex={highlightVertex}
+          highlightBuildingEdge={
+            site.method === 'parallel' ? parallelSpec.buildingEdge : null
+          }
           onEdgePick={pickEdge}
           onVertexPick={pickVertex}
         />

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, LayoutTemplate, Loader2, Plus, Trash2 } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
+import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFloorPlanStore, type FloorPlanPatch } from '@/stores/floorPlanStore'
 import { useParcelStore } from '@/stores/parcelStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -45,6 +46,8 @@ export function FloorPlanPage() {
   const { plans, loading, saving, error, fetchByFarm, createPlan, duplicatePlan, updatePlan, deletePlan } =
     useFloorPlanStore()
   const { getWorkAreasByType, fetchWorkAreas } = useWorkAreaStore()
+  // 地図 の 初期中心 は 座標 の 先頭。 読んで いない と 東京 に 飛ぶ
+  const fetchCoordinates = useCoordinateStore((s) => s.fetchCoordinates)
   const { byWorkAreaId, fetchByWorkAreaIds, upsertParcel } = useParcelStore()
   const { projects } = useProjectListStore()
 
@@ -63,8 +66,9 @@ export function FloorPlanPage() {
     if (farmId) {
       void fetchByFarm(farmId)
       void fetchWorkAreas(farmId)
+      void fetchCoordinates(farmId)
     }
-  }, [farmId, fetchByFarm, fetchWorkAreas])
+  }, [farmId, fetchByFarm, fetchWorkAreas, fetchCoordinates])
 
   // 地番 は 構成点 を 持つ design_work_areas と 地籍属性 を 持つ parcels の
   // 2 枚 に 分かれて いる。 図面 が 指す のは parcels の 方 な ので 束ねて 渡す。

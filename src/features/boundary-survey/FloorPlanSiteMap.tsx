@@ -94,6 +94,7 @@ export function FloorPlanSiteMap({
   rotationDeg,
   highlightEdge,
   highlightVertex,
+  highlightBuildingEdge,
   guides,
   preview = false,
   onEdgePick,
@@ -120,6 +121,8 @@ export function FloorPlanSiteMap({
   highlightEdge: number[]
   /** 今 選んで いる 建物 の 角 (outline の 番号)。 複数 可 */
   highlightVertex: number[]
+  /** 今 選んで いる 建物 の 辺 (1辺平行 で 使う) */
+  highlightBuildingEdge?: number | null
   /** 入力中 の 寸法 を 図 に 出す ため の 線 */
   guides?: { id: string; from: EN; to: EN; label: string }[]
   /** 確定 前 の 仮 の 配置。 破線 で 描く */
@@ -270,6 +273,18 @@ export function FloorPlanSiteMap({
             fillColor: preview ? '#3b82f6' : '#334155',
             fillOpacity: preview ? 0.15 : 0.25,
           }}
+          interactive={false}
+        />
+      )}
+
+      {/* 選んで いる 建物 の 辺 */}
+      {highlightBuildingEdge != null && building.length >= 2 && (
+        <Polyline
+          positions={[
+            building[highlightBuildingEdge % building.length],
+            building[(highlightBuildingEdge + 1) % building.length],
+          ]}
+          pathOptions={{ color: '#f97316', weight: 6, opacity: 0.95 }}
           interactive={false}
         />
       )}
