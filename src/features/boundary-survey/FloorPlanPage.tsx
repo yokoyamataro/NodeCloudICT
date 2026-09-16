@@ -13,8 +13,9 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useFloorPlanStore, type FloorPlanPatch } from '@/stores/floorPlanStore'
 import { useParcelStore } from '@/stores/parcelStore'
+import { useProjectListStore } from '@/stores/projectListStore'
+import { CoordinateConverter } from '@/lib/coordinates'
 import {
-  DEFAULT_SITE,
   floorAreaText,
   totalMainArea,
   type FloorPlan,
@@ -45,6 +46,14 @@ export function FloorPlanPage() {
     useFloorPlanStore()
   const { getWorkAreasByType, fetchWorkAreas } = useWorkAreaStore()
   const { byWorkAreaId, fetchByWorkAreaIds, upsertParcel } = useParcelStore()
+  const { projects } = useProjectListStore()
+
+  // 建物 は 平面直角座標 で 計算 する ので、地図 に 出す とき に 緯度経度 へ 直す
+  const zone = useMemo(
+    () => projects.find((p) => p.id === currentFarm?.project_id)?.coordinate_zone ?? 13,
+    [projects, currentFarm],
+  )
+  const conv = useMemo(() => new CoordinateConverter(zone), [zone])
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1)
@@ -83,26 +92,44 @@ export function FloorPlanPage() {
   })
 
   /**
-   * 地番 を 選ぶ。 floor_plans.parcel_id は parcels.id を 指す ので、
-   * 地籍属性 の 行 が まだ 無い 地番 は ここ で 作って から 結びつける。
+   * 地番 を 付け外し する。 建物 が 複数 の 土地 に またがる こと が ある ので
+   * 一覧 で 持つ。 floor_plans.parcel_id は parcels.id を 指す ので、地籍属性 の
+   * 行 が まだ 無い 地番 は ここ で 作って から 結びつける。
    */
-  const handleSelectParcel = async (workAreaId: string) => {
-    if (!workAreaId) {
-      onPatch({ parcel_id: null, site: { ...(selected?.site ?? DEFAULT_SITE), parcelPointIds: [] } })
-      return
-    }
+  const handleToggleParcel = async (workAreaId: string) => {
     const opt = parcels.find((p) => p.workAreaId === workAreaId)
-    if (!opt) return
+    if (!opt || !selected) return
+    const site = selected.site
+
     let parcelId = opt.parcelId
     if (!parcelId) {
       const created = await upsertParcel(workAreaId, {})
       parcelId = created?.id ?? null
       if (!parcelId) return
     }
+
+    const has = site.parcelIds.includes(parcelId)
+    const nextIds = has
+      ? site.parcelIds.filter((x) => x !== parcelId)
+      : [...site.parcelIds, parcelId]
+
+    // 構成点 は 選んだ 地番 を 順 に 繋げた もの
+    const nextPointIds = nextIds.flatMap(
+      (id) => parcels.find((p) => p.parcelId === id)?.pointIds ?? [],
+    )
+    const head = nextIds[0] ?? null
+    const headOpt = head ? parcels.find((p) => p.parcelId === head) : null
+
     onPatch({
-      parcel_id: parcelId,
-      parcel_number: selected?.parcel_number || opt.label,
-      site: { ...(selected?.site ?? DEFAULT_SITE), parcelPointIds: opt.pointIds },
+      parcel_id: head,
+      parcel_number: selected.parcel_number || headOpt?.label || null,
+      site: {
+        ...site,
+        parcelIds: nextIds,
+        parcelPointIds: nextPointIds,
+        // 敷地 が 変われば 据え直し
+        placed: has || nextIds.length === 0 ? false : site.placed,
+      },
     })
   }
 
@@ -293,7 +320,7 @@ export function FloorPlanPage() {
                   <StepBuilding
                     plan={selected}
                     parcels={parcels}
-                    onSelectParcel={(id) => void handleSelectParcel(id)}
+                    onToggleParcel={(id) => void handleToggleParcel(id)}
                     onPatch={onPatch}
                   />
                 )}
@@ -309,7 +336,9 @@ export function FloorPlanPage() {
                   <StepSite
                     plan={selected}
                     parcels={parcels}
-                    onSelectParcel={(id) => void handleSelectParcel(id)}
+                    farmId={farmId}
+                    conv={conv}
+                    onToggleParcel={(id) => void handleToggleParcel(id)}
                     onPatch={onPatch}
                   />
                 )}

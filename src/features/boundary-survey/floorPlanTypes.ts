@@ -321,6 +321,11 @@ export const PLACEMENT_METHOD_LABEL: Record<PlacementMethod, string> = {
 }
 
 export interface SitePlan {
+  /**
+   * 敷地 の 地番。 建物 が 複数 の 土地 に またがる こと が ある ので 複数 持つ。
+   * floor_plans.parcel_id は 先頭 を 代表 と して 写す (外部キー の ため)。
+   */
+  parcelIds: string[]
   /** 敷地 を 描く ため の 地番構成点 (design_coordinates の id) */
   parcelPointIds: string[]
   /**
@@ -356,6 +361,7 @@ export interface SitePlan {
 }
 
 export const DEFAULT_SITE: SitePlan = {
+  parcelIds: [],
   parcelPointIds: [],
   placed: false,
   method: 'three_point',

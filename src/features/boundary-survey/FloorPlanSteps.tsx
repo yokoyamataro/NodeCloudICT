@@ -43,6 +43,8 @@ import {
   type TermKind,
 } from './floorPlanTypes'
 import { FigureOutlinePreview, SitePlanPreview } from './FloorPlanPreview'
+import { FloorPlanSiteMap } from './FloorPlanSiteMap'
+import type { CoordinateConverter } from '@/lib/coordinates'
 import {
   centerOn,
   ringCentroid,
@@ -142,12 +144,12 @@ function NumField({
 export function StepBuilding({
   plan,
   parcels,
-  onSelectParcel,
+  onToggleParcel,
   onPatch,
 }: {
   plan: FloorPlan
   parcels: ParcelOption[]
-  onSelectParcel: (workAreaId: string) => void
+  onToggleParcel: (workAreaId: string) => void
   onPatch: Patch
 }) {
   return (
@@ -224,8 +226,11 @@ export function StepBuilding({
           <div className="pt-2 mt-2 border-t text-xs font-semibold text-slate-500">
             地番管理との紐づけ
           </div>
-          <Field label="敷地の地番" hint="選ぶと「3 配置」で敷地の外形を下敷きに使えます。">
-            <ParcelSelect plan={plan} parcels={parcels} onSelectParcel={onSelectParcel} />
+          <Field
+            label="敷地の地番"
+            hint="複数の土地にまたがる建物は、まとめて選びます。「3 配置」で敷地の外形に使います。"
+          >
+            <ParcelPicker plan={plan} parcels={parcels} onToggleParcel={onToggleParcel} />
           </Field>
         </>
       )}
@@ -234,33 +239,78 @@ export function StepBuilding({
 }
 
 /**
- * 地番 の プルダウン。
+ * 地番 の 選択。 建物 が 複数 の 土地 に またがる こと が ある ので 複数 選べる。
  * 表示 と 選択 は 工事区域 の id で 行い、保存 する のは parcels.id。
  * 地籍属性 の 行 が まだ 無い 地番 は 選んだ 時点 で 親 が 作る。
  */
-function ParcelSelect({
+function ParcelPicker({
   plan,
   parcels,
-  onSelectParcel,
+  onToggleParcel,
 }: {
   plan: FloorPlan
   parcels: ParcelOption[]
-  onSelectParcel: (workAreaId: string) => void
+  onToggleParcel: (workAreaId: string) => void
 }) {
-  const current = parcels.find((p) => p.parcelId != null && p.parcelId === plan.parcel_id)
+  const chosen = new Set(plan.site.parcelIds)
+  const [open, setOpen] = useState(false)
+  const picked = parcels.filter((p) => p.parcelId != null && chosen.has(p.parcelId))
+
   return (
-    <select
-      className={inputCls}
-      value={current?.workAreaId ?? ''}
-      onChange={(e) => onSelectParcel(e.target.value)}
-    >
-      <option value="">（紐づけない）</option>
-      {parcels.map((p) => (
-        <option key={p.workAreaId} value={p.workAreaId}>
-          {p.label}
-        </option>
-      ))}
-    </select>
+    <div>
+      <div className="flex flex-wrap items-center gap-1">
+        {picked.length === 0 ? (
+          <span className="text-xs text-slate-400">未選択</span>
+        ) : (
+          picked.map((p) => (
+            <span
+              key={p.workAreaId}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-xs text-emerald-800"
+            >
+              {p.label}
+              <button
+                type="button"
+                onClick={() => onToggleParcel(p.workAreaId)}
+                className="text-emerald-500 hover:text-red-600"
+                title="外す"
+              >
+                ×
+              </button>
+            </span>
+          ))
+        )}
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="px-2 py-0.5 text-xs border rounded hover:bg-slate-50"
+        >
+          {open ? '閉じる' : '地番を選ぶ'}
+        </button>
+      </div>
+      {open && (
+        <ul className="mt-1 max-h-48 overflow-auto border rounded divide-y">
+          {parcels.length === 0 && (
+            <li className="p-2 text-xs text-slate-400">地番がありません。</li>
+          )}
+          {parcels.map((p) => {
+            const on = p.parcelId != null && chosen.has(p.parcelId)
+            return (
+              <li key={p.workAreaId}>
+                <label className="flex items-center gap-2 px-2 py-1 text-sm cursor-pointer hover:bg-slate-50">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => onToggleParcel(p.workAreaId)}
+                  />
+                  <span className="flex-1 min-w-0 truncate">{p.label}</span>
+                  <span className="text-[11px] text-slate-400">{p.points.length} 点</span>
+                </label>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
   )
 }
 
@@ -796,31 +846,33 @@ function AreaTable({
 // 3. 地番に対する配置 (用紙 右半分 の 建物図面)
 // ========================================================================
 
-/** 境界線 の 見出し 「① 点1→点2」 */
-function edgeLabel(points: { pointNumber: string }[], i: number): string {
-  if (points.length < 2) return `境界線 ${i + 1}`
-  const a = points[i % points.length]
-  const b = points[(i + 1) % points.length]
-  return `${i + 1}: ${a?.pointNumber ?? '?'} → ${b?.pointNumber ?? '?'}`
-}
-
 export function StepSite({
   plan,
   parcels,
-  onSelectParcel,
+  farmId,
+  conv,
+  onToggleParcel,
   onPatch,
 }: {
   plan: FloorPlan
   parcels: ParcelOption[]
-  onSelectParcel: (workAreaId: string) => void
+  farmId: string | null
+  conv: CoordinateConverter
+  onToggleParcel: (workAreaId: string) => void
   onPatch: Patch
 }) {
   const site = plan.site
   const setSite = (p: Partial<SitePlan>) => onPatch({ site: { ...site, ...p } })
 
-  const parcel = parcels.find((p) => p.parcelId != null && p.parcelId === plan.parcel_id) ?? null
-  // 毎回 新しい 配列 に なる と useMemo が 効かない ので 一度 で 束ねる
-  const sitePoints = useMemo(() => parcel?.points ?? [], [parcel])
+  // 選んだ 地番 を 並び 順 の まま 束ねる (複数筆 に またがる 建物 が ある)
+  const chosen = useMemo(
+    () =>
+      site.parcelIds
+        .map((id) => parcels.find((p) => p.parcelId === id))
+        .filter((p): p is ParcelOption => p != null),
+    [site.parcelIds, parcels],
+  )
+  const sitePoints = useMemo(() => chosen.flatMap((c) => c.points), [chosen])
   const ring = useMemo(() => siteRing(sitePoints), [sitePoints])
 
   const ground = groundFigure(plan.figures)
@@ -829,8 +881,9 @@ export function StepSite({
 
   const ready = ring.length >= 3 && moves.length >= 3
   const [note, setNote] = useState<string | null>(null)
+  /** 地図 で 押した 先 を 入れる 行 */
+  const [activeRow, setActiveRow] = useState(0)
 
-  /** 出た 配置 を 書き戻す */
   const apply = (pl: { offsetE: number; offsetN: number; rotationDeg: number } | null, msg: string) => {
     if (!pl) {
       setNote('計算できませんでした。選んだ辺と境界線を見直してください。')
@@ -842,9 +895,9 @@ export function StepSite({
 
   const runThreePoint = () => {
     const start =
-      site.offsetE === 0 && site.offsetN === 0
-        ? centerOn(moves, ring, site.rotationDeg)
-        : { offsetE: site.offsetE, offsetN: site.offsetN, rotationDeg: site.rotationDeg }
+      site.placed
+        ? { offsetE: site.offsetE, offsetN: site.offsetN, rotationDeg: site.rotationDeg }
+        : centerOn(moves, ring, site.rotationDeg)
     const r = solveByPoints(moves, ring, site.constraints, start)
     if (!r) {
       setNote('計算できませんでした。3 行とも入れてください。')
@@ -863,27 +916,66 @@ export function StepSite({
     apply(solveByParallel(moves, ring, spec), '配置しました。')
   }
 
+  // 地図 で 強調 する もの
+  const parallelSpec = site.parallel
+  const highlightEdge =
+    site.method === 'three_point'
+      ? site.constraints.map((c) => c.edgeIndex)
+      : site.method === 'parallel' && parallelSpec
+      ? [parallelSpec.siteEdge]
+      : []
+  const highlightVertex =
+    site.method === 'three_point' ? site.constraints.map((c) => c.vertexIndex) : []
+
+  /** 地図 の 境界線 を 押した ら、今 の 行 に 入れる */
+  const pickEdge = (edgeIndex: number) => {
+    if (site.method === 'parallel') {
+      setSite({ parallel: { ...(parallelSpec ?? { buildingEdge: 0, offset: 0, along: 0, flip: false }), siteEdge: edgeIndex } })
+      return
+    }
+    if (site.method !== 'three_point') return
+    const cs = [...site.constraints]
+    if (cs.length === 0) {
+      cs.push({ id: newId(), vertexIndex: 0, edgeIndex, distance: 0 })
+    } else {
+      const i = Math.min(activeRow, cs.length - 1)
+      cs[i] = { ...cs[i], edgeIndex }
+    }
+    setSite({ constraints: cs })
+  }
+
+  /** 地図 の 建物 の 角 を 押した ら、今 の 行 に 入れる */
+  const pickVertex = (vertexIndex: number) => {
+    if (site.method !== 'three_point' || site.constraints.length === 0) return
+    const i = Math.min(activeRow, site.constraints.length - 1)
+    setSite({
+      constraints: site.constraints.map((c, j) => (j === i ? { ...c, vertexIndex } : c)),
+    })
+  }
+
+  const rowCls = (i: number) =>
+    i === activeRow ? 'bg-orange-50 ring-1 ring-orange-300' : ''
+
   return (
     <div className="flex gap-4 h-full min-h-0">
-      <div className="w-[22rem] shrink-0 overflow-auto">
-        <Field label="敷地の地番">
-          <ParcelSelect plan={plan} parcels={parcels} onSelectParcel={onSelectParcel} />
+      <div className="w-[23rem] shrink-0 overflow-auto">
+        <Field label="敷地の地番" hint="複数の土地にまたがる建物は、まとめて選びます。">
+          <ParcelPicker plan={plan} parcels={parcels} onToggleParcel={onToggleParcel} />
         </Field>
 
-        {ready && !site.placed && (
-          <div className="my-2 px-2 py-1.5 rounded bg-blue-50 border border-blue-200 text-[11px] text-blue-800">
-            まだ建物を据えていないので、図には敷地だけを出しています。下の方法で配置すると建物が現れます。
-          </div>
-        )}
-
-        {parcel && sitePoints.length === 0 && (
+        {chosen.length > 0 && sitePoints.length === 0 && (
           <div className="my-2 px-2 py-1.5 rounded bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
-            この地番にはまだ構成点がありません。地番管理で構成点を登録してください。
+            選んだ地番にまだ構成点がありません。地番管理で構成点を登録してください。
           </div>
         )}
         {!ground && (
           <div className="my-2 px-2 py-1.5 rounded bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
             「2 階層・形状寸法」で 主である建物1階 の形状を入れてください。
+          </div>
+        )}
+        {ready && !site.placed && (
+          <div className="my-2 px-2 py-1.5 rounded bg-blue-50 border border-blue-200 text-[11px] text-blue-800">
+            まだ建物を据えていないので、地図には敷地だけを出しています。下の方法で配置すると建物が現れます。
           </div>
         )}
 
@@ -905,6 +997,7 @@ export function StepSite({
           <div className="pt-2 mt-2 border-t">
             <div className="text-[11px] text-slate-500 mb-1">
               建物の角を 3 つ選び、それぞれが境界線から内側へ何 m 離れているかを入れます。
+              行をクリックしてから地図の境界線や角を押すと、その行に入ります。
             </div>
             <table className="w-full text-xs">
               <thead className="text-slate-500">
@@ -917,7 +1010,7 @@ export function StepSite({
               </thead>
               <tbody>
                 {site.constraints.map((c, i) => (
-                  <tr key={c.id}>
+                  <tr key={c.id} className={rowCls(i)} onClick={() => setActiveRow(i)}>
                     <td className="py-0.5 pr-1">
                       <select
                         className="w-full px-1 py-1 text-xs border rounded"
@@ -951,7 +1044,7 @@ export function StepSite({
                       >
                         {sitePoints.map((_, k) => (
                           <option key={k} value={k}>
-                            {edgeLabel(sitePoints, k)}
+                            境界線 {k + 1}
                           </option>
                         ))}
                       </select>
@@ -972,6 +1065,7 @@ export function StepSite({
                     <td>
                       <button
                         type="button"
+                        tabIndex={-1}
                         onClick={() =>
                           setSite({ constraints: site.constraints.filter((_, j) => j !== i) })
                         }
@@ -987,14 +1081,15 @@ export function StepSite({
             <div className="mt-1 flex items-center gap-2">
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
                   setSite({
                     constraints: [
                       ...site.constraints,
                       { id: newId(), vertexIndex: 0, edgeIndex: 0, distance: 0 },
                     ],
                   })
-                }
+                  setActiveRow(site.constraints.length)
+                }}
                 className="px-2 py-0.5 text-xs border rounded hover:bg-slate-50 flex items-center gap-1"
               >
                 <Plus className="h-3 w-3" />
@@ -1021,7 +1116,7 @@ export function StepSite({
           <ParallelFields
             site={site}
             moves={moves}
-            sitePoints={sitePoints}
+            siteEdgeCount={sitePoints.length}
             ready={ready}
             onChange={(p) => setSite({ parallel: p })}
             onRun={runParallel}
@@ -1165,18 +1260,25 @@ export function StepSite({
         />
       </div>
 
-      <div className="flex-1 min-w-0 border rounded bg-white p-2">
-        <SitePlanPreview
-          sitePoints={sitePoints}
+      <div className="flex-1 min-w-0 border rounded overflow-hidden">
+        <FloorPlanSiteMap
+          farmId={farmId}
+          conv={conv}
+          rings={chosen.map((c) => ({
+            parcelId: c.parcelId!,
+            label: c.label,
+            points: c.points,
+          }))}
+          ring={ring}
           outline={outline}
+          placed={site.placed}
           offsetE={site.offsetE}
           offsetN={site.offsetN}
           rotationDeg={site.rotationDeg}
-          notes={site.notes}
-          northAngleDeg={site.northAngleDeg}
-          showBuilding={site.placed}
-          interactive
-          className="w-full h-full"
+          highlightEdge={highlightEdge}
+          highlightVertex={highlightVertex}
+          onEdgePick={pickEdge}
+          onVertexPick={pickVertex}
         />
       </div>
     </div>
@@ -1187,14 +1289,14 @@ export function StepSite({
 function ParallelFields({
   site,
   moves,
-  sitePoints,
+  siteEdgeCount,
   ready,
   onChange,
   onRun,
 }: {
   site: SitePlan
   moves: Move[]
-  sitePoints: { pointNumber: string }[]
+  siteEdgeCount: number
   ready: boolean
   onChange: (p: NonNullable<SitePlan['parallel']>) => void
   onRun: () => void
@@ -1230,9 +1332,9 @@ function ParallelFields({
           value={p.siteEdge}
           onChange={(e) => onChange({ ...p, siteEdge: Number(e.target.value) })}
         >
-          {sitePoints.map((_, k) => (
+          {Array.from({ length: siteEdgeCount }, (_, k) => (
             <option key={k} value={k}>
-              {edgeLabel(sitePoints, k)}
+              境界線 {k + 1}
             </option>
           ))}
         </select>
@@ -1615,8 +1717,10 @@ export function SheetPreview({
   const figures = sortFigures(plan.figures)
   const ground = groundFigure(plan.figures)
 
-  const parcel = parcels.find((p) => p.parcelId != null && p.parcelId === plan.parcel_id) ?? null
-  const sitePoints = parcel?.points ?? []
+  // 複数筆 に またがる こと が ある ので 選んだ 地番 を 順 に 繋ぐ
+  const sitePoints = plan.site.parcelIds.flatMap(
+    (id) => parcels.find((p) => p.parcelId === id)?.points ?? [],
+  )
 
   // 図形 を 置く 領域 (左半分)
   const planArea = {
