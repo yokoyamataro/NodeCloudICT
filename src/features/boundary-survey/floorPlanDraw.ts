@@ -442,7 +442,13 @@ function drawAreaTable(out: DrawItem[], f: FloorFigure, bx: number, by: number, 
   const hasLabel = rows.some((r) => r.label)
   rows.forEach((term, j) => {
     const y = by + 5 + j * 3.8
-    if (term.label) t(bx + 1.6, y, term.label, 2.4, 'start')
+    if (term.label) {
+      // 記号 は 丸 で 囲む (図 の 中 の 印 と 揃える)
+      const cx = bx + 2.9
+      const cy = y - 0.85
+      out.push({ kind: 'circle', cx, cy, r: 1.6, w: LW, layer: L.title })
+      t(cx, cy + 0.8, term.label, 2.2, 'middle')
+    }
     t(bx + (hasLabel ? 6.5 : 4), y, termFormula(term), 2.8, 'start')
     t(bx + bw - 2, y, `= ${termValueText(termValue(term))}`, 2.8, 'end')
   })

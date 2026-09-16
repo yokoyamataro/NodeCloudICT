@@ -676,7 +676,17 @@ function ShapeEditor({
   const moves = figure.moves
   const bodyRef = useRef<HTMLTableSectionElement | null>(null)
 
-  const setMoves = (next: Move[]) => onChange({ moves: next })
+  /**
+   * 形 を 変えた ら 求積 も 引き直す。
+   * 手 で 打った 求積表 (区分 を 持たない) は 触らない。 区切り線 が あれば
+   * それ で、 無ければ 自動 で 分ける。
+   */
+  const setMoves = (next: Move[]) => {
+    const patch: Partial<FloorFigure> = { moves: next }
+    const terms = recomputeTerms({ ...figure, moves: next })
+    if (terms) patch.terms = terms
+    onChange(patch)
+  }
   /** i 行目 を 直す。 空行 (i === moves.length) に 打たれたら 1 辺 増やす */
   const patch = (i: number, p: Partial<Move>) => {
     if (i >= moves.length) {
@@ -796,6 +806,22 @@ function ShapeEditor({
       )}
     </div>
   )
+}
+
+/**
+ * 形 から 求積表 を 作り直す。 作り直さない ほう が よい ときは null。
+ *
+ * 手 で 打った 行 (区分 を 持たない) が ある ときは そのまま に する。
+ * せっかく 書いた 式 を 形 を 直す たび に 消す わけ に は いかない。
+ */
+function recomputeTerms(fig: FloorFigure): AreaTerm[] | null {
+  const pts = figureOutline(fig)
+  if (pts.length < 3) return null
+  const handTyped = fig.terms.length > 0 && fig.terms.every((t) => !t.region)
+  if (handTyped) return null
+  const cuts = fig.cuts ?? []
+  const regions = cuts.length > 0 ? splitByCuts(pts, cuts) : autoSlabs(pts)
+  return regions.length > 0 ? termsFromRegions(regions) : null
 }
 
 /** 求積表 */
@@ -1066,8 +1092,12 @@ function AreaTable({
           <div className="font-sans font-semibold text-slate-600 mb-1">求積表</div>
           {terms.map((t) => (
             <div key={t.id} className="flex justify-between">
-              <span>
-                {t.label && <span className="mr-1 text-slate-500">{t.label}</span>}
+              <span className="flex items-center gap-1">
+                {t.label && (
+                  <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-slate-600 text-[9px] leading-none">
+                    {t.label}
+                  </span>
+                )}
                 {termFormula(t)}
               </span>
               <span>= {termValueText(termValue(t))}</span>
