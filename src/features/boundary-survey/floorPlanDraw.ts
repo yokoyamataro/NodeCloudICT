@@ -75,7 +75,9 @@ export const SHEET = {
   centerX: 182.0,
   centerTick: 8.1,
   midX: 191.0,
-  hnLabelRight: 232.6,
+  /** 「家屋番号」「建物の所在」 の 見出し と 値 を 分ける 縦罫。
+   *  見出し は 4〜5 文字 収まれば よい ので 詰め、値 の 側 を 広く 取る */
+  hnLabelRight: 215.0,
   hnTop: 9.8,
   hnRight: 266.1,
   hnBottom: 24.9,
@@ -159,10 +161,14 @@ export function buildSheet(plan: FloorPlan, sitePoints: SitePointForDraw[]): Dra
   // ---- 見出し ----
   text(80.4, 17.2, '各階平面図', 5.4, 'start', { pitch: 11.0 })
   text(280.7, 21.5, '建物図面', 5.4, 'start', { pitch: 13.1 })
-  text(195.1, 19.4, '家屋番号', 2.8, 'start', { pitch: 11.0 })
-  text(234.6, 19.4, plan.house_number ?? '', 3.0)
-  text(195.1, 30.7, '建物の所在', 2.8, 'start', { pitch: 8.5 })
-  text(234.6, 30.7, plan.location ?? '', 3.0)
+  // 見出し は 罫線 の 手前 まで 字間 を 広げる
+  const hnLabelX = S.midX + 2.5
+  const hnLabelW = S.hnLabelRight - 1.5 - hnLabelX
+  const hnValueX = S.hnLabelRight + 2.0
+  text(hnLabelX, 19.4, '家屋番号', 2.8, 'start', { pitch: (hnLabelW - 2.8) / 3 })
+  text(hnValueX, 19.4, plan.house_number ?? '', 3.0)
+  text(hnLabelX, 30.7, '建物の所在', 2.8, 'start', { pitch: (hnLabelW - 2.8) / 4 })
+  text(hnValueX, 30.7, plan.location ?? '', 3.0)
 
   // ---- 左: 各階平面図 ----
   const figures = sortFigures(plan.figures)
