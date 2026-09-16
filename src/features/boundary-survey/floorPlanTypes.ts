@@ -255,16 +255,6 @@ export function outlineSummary(pts: Pt[]): string {
   return `${(ext.maxX - ext.minX).toFixed(3)} × ${(ext.maxY - ext.minY).toFixed(3)} m`
 }
 
-/** 矩形 から 始める ため の 4 辺 (反時計回り) */
-export function rectMoves(w: number, h: number): Move[] {
-  return [
-    { v: 0, h: w },
-    { v: h, h: 0 },
-    { v: 0, h: -w },
-    { v: -h, h: 0 },
-  ]
-}
-
 /** 延べ床面積 (主である建物 の 各階 の 合計) */
 export function totalMainArea(figures: FloorFigure[]): number {
   return figures.filter((f) => f.kind === 'main').reduce((s, f) => s + figureFloorArea(f), 0)

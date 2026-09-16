@@ -7,7 +7,7 @@
 //
 // どの 段 も 「左 に 表題 / 右 に 入力欄」 に 揃える。
 
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
 import {
   PLACEMENT_METHOD_LABEL,
@@ -25,7 +25,6 @@ import {
   moveLength,
   outlineSummary,
   polygonArea,
-  rectMoves,
   sortFigures,
   termFormula,
   termValue,
@@ -88,13 +87,18 @@ function NumField({
   placeholder,
   title,
   disabled,
+  dataCell,
+  onKeyDown,
 }: {
-  value: number
+  /** null なら 空欄 (まだ 入れて いない 行) */
+  value: number | null
   onChange: (v: number) => void
   className?: string
   placeholder?: string
   title?: string
   disabled?: boolean
+  dataCell?: string
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
 }) {
   const [text, setText] = useState<string | null>(null)
   return (
@@ -105,7 +109,9 @@ function NumField({
       placeholder={placeholder}
       title={title}
       disabled={disabled}
-      value={text ?? String(value)}
+      data-cell={dataCell}
+      onKeyDown={onKeyDown}
+      value={text ?? (value == null ? '' : String(value))}
       onChange={(e) => {
         const t = e.target.value
         setText(t)
@@ -491,6 +497,9 @@ function FigureEditor({
 /**
  * 形状: 辺 を 「縦・横 の 相対距離」 で 並べる。
  * 「2, 0」 なら 前 の 点 から 縦 に 2 進む。 図面 の 寸法 が そのまま 入る。
+ *
+ * 表計算 の ように 一番下 は いつも 空行 に して おき、そこ に 打つ と 1 辺
+ * 増える。 Tab は 縦 → 横 → 次 の 行 の 縦 と 流れる (ごみ箱 は 飛ばす)。
  */
 function ShapeEditor({
   figure,
@@ -500,37 +509,37 @@ function ShapeEditor({
   onChange: (p: Partial<FloorFigure>) => void
 }) {
   const moves = figure.moves
-  const [seedW, setSeedW] = useState(0)
-  const [seedH, setSeedH] = useState(0)
+  const bodyRef = useRef<HTMLTableSectionElement | null>(null)
 
   const setMoves = (next: Move[]) => onChange({ moves: next })
-  const patch = (i: number, p: Partial<Move>) =>
+  /** i 行目 を 直す。 空行 (i === moves.length) に 打たれたら 1 辺 増やす */
+  const patch = (i: number, p: Partial<Move>) => {
+    if (i >= moves.length) {
+      setMoves([...moves, { v: 0, h: 0, ...p }])
+      return
+    }
     setMoves(moves.map((m, j) => (j === i ? { ...m, ...p } : m)))
+  }
+
+  /** Enter で 次 の 欄 へ。 一番下 の 横 なら 行 を 足して その 縦 へ */
+  const focusCell = (row: number, col: 'v' | 'h') => {
+    window.setTimeout(() => {
+      const el = bodyRef.current?.querySelector<HTMLInputElement>(
+        `input[data-cell="${row}-${col}"]`,
+      )
+      el?.focus()
+      el?.select()
+    }, 0)
+  }
 
   const closure = closureOf(moves)
   const open = moves.length >= 3 && (Math.abs(closure.v) > 0.0005 || Math.abs(closure.h) > 0.0005)
 
+  // 一番下 は いつも 空行
+  const rows: (Move | null)[] = [...moves, null]
+
   return (
     <div className="flex flex-col min-h-0">
-      {moves.length === 0 && (
-        <div className="mb-2 p-2 border rounded bg-slate-50">
-          <div className="text-xs font-semibold text-slate-600 mb-1">矩形から始める</div>
-          <div className="flex items-center gap-1 text-sm">
-            <span className="text-xs text-slate-500">縦</span>
-            <NumField value={seedH} onChange={setSeedH} />
-            <span className="text-xs text-slate-500">横</span>
-            <NumField value={seedW} onChange={setSeedW} />
-            <button
-              type="button"
-              onClick={() => seedW > 0 && seedH > 0 && setMoves(rectMoves(seedW, seedH))}
-              className="px-2 py-1 text-xs border rounded hover:bg-white"
-            >
-              作成
-            </button>
-          </div>
-        </div>
-      )}
-
       <div className="border rounded overflow-auto flex-1 min-h-0">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs text-slate-600 sticky top-0">
@@ -542,34 +551,51 @@ function ShapeEditor({
               <th className="w-8" />
             </tr>
           </thead>
-          <tbody className="divide-y">
-            {moves.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-2 py-6 text-center text-xs text-slate-400">
-                  「辺を追加」で 1 辺ずつ入れます。
-                </td>
-              </tr>
-            )}
-            {moves.map((m, i) => (
-              <tr key={i}>
-                <td className="px-2 py-1 text-xs text-slate-400">{i + 1}</td>
+          <tbody className="divide-y" ref={bodyRef}>
+            {rows.map((m, i) => (
+              <tr key={i} className={m ? '' : 'bg-slate-50/60'}>
+                <td className="px-2 py-1 text-xs text-slate-400">{m ? i + 1 : ''}</td>
                 <td className="px-2 py-1 text-right">
-                  <NumField value={m.v} onChange={(v) => patch(i, { v })} />
+                  <NumField
+                    value={m ? m.v : null}
+                    onChange={(v) => patch(i, { v })}
+                    dataCell={`${i}-v`}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        focusCell(i, 'h')
+                      }
+                    }}
+                  />
                 </td>
                 <td className="px-2 py-1 text-right">
-                  <NumField value={m.h} onChange={(h) => patch(i, { h })} />
+                  <NumField
+                    value={m ? m.h : null}
+                    onChange={(h) => patch(i, { h })}
+                    dataCell={`${i}-h`}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        focusCell(i + 1, 'v')
+                      }
+                    }}
+                  />
                 </td>
                 <td className="px-2 py-1 text-right font-mono text-xs text-slate-600">
-                  {moveLength(m).toFixed(3)}
+                  {m ? moveLength(m).toFixed(3) : ''}
                 </td>
                 <td className="px-1">
-                  <button
-                    type="button"
-                    onClick={() => setMoves(moves.filter((_, j) => j !== i))}
-                    className="p-0.5 text-slate-400 hover:text-red-600"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {m && (
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={() => setMoves(moves.filter((_, j) => j !== i))}
+                      className="p-0.5 text-slate-400 hover:text-red-600"
+                      title="この辺を削除"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -577,18 +603,8 @@ function ShapeEditor({
         </table>
       </div>
 
-      <div className="mt-1 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setMoves([...moves, { v: 0, h: 0 }])}
-          className="px-2 py-0.5 text-xs border rounded hover:bg-slate-50 flex items-center gap-1"
-        >
-          <Plus className="h-3 w-3" />
-          辺を追加
-        </button>
-        <span className="text-[11px] text-slate-400">
-          前の点からの距離。上・右が正、下・左は負の数で入れます。
-        </span>
+      <div className="mt-1 text-[11px] text-slate-400">
+        前の点からの距離。上・右が正、下・左は負の数で入れます。一番下の空行に打つと辺が増えます。
       </div>
 
       {open && (
@@ -1116,6 +1132,7 @@ export function StepSite({
           rotationDeg={site.rotationDeg}
           notes={site.notes}
           northAngleDeg={site.northAngleDeg}
+          interactive
           className="w-full h-full"
         />
       </div>

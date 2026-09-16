@@ -3,7 +3,7 @@
 // 画面 の 中 だけ の 確認用。 最終成果 (p21 / tif / pdf) は 別 の 出力 に する。
 // 座標 は x=東 / y=北 の メートル な ので、SVG に 出す ときに y を 反転 する。
 
-import { useMemo } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   figureOutline,
   moveLength,
@@ -172,6 +172,7 @@ export function SitePlanPreview({
   rotationDeg,
   notes,
   northAngleDeg,
+  interactive = false,
   className,
 }: {
   sitePoints: SitePoint[]
@@ -181,6 +182,8 @@ export function SitePlanPreview({
   rotationDeg: number
   notes: { id: string; label: string; x: number; y: number }[]
   northAngleDeg: number
+  /** 画面 で 確かめる とき は 拡大 と 移動 を 効かせる */
+  interactive?: boolean
   className?: string
 }) {
   // 敷地: X=北 な ので 画面 の 東 は y、北 は x
@@ -201,7 +204,47 @@ export function SitePlanPreview({
     return b
   }, [site, building, notes])
 
-  const sw = strokeOf(box)
+  const [view, setView] = useState({ k: 1, tx: 0, ty: 0 })
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  const dragRef = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
+  // 見た目 の 手 の 形 は 描画中 に ref を 読めない ので 状態 で 持つ
+  const [dragging, setDragging] = useState(false)
+
+  /** 画面 の 座標 を viewBox の 単位 に 直す */
+  const toUser = useCallback((clientX: number, clientY: number) => {
+    const el = svgRef.current
+    if (!el) return { x: 0, y: 0 }
+    const r = el.getBoundingClientRect()
+    const vb = el.viewBox.baseVal
+    // preserveAspectRatio="xMidYMid meet" の 分 を 戻す
+    const s = Math.min(r.width / vb.width, r.height / vb.height)
+    const ox = (r.width - vb.width * s) / 2
+    const oy = (r.height - vb.height * s) / 2
+    return {
+      x: vb.x + (clientX - r.left - ox) / s,
+      y: vb.y + (clientY - r.top - oy) / s,
+    }
+  }, [])
+
+  const onWheel = useCallback(
+    (ev: React.WheelEvent<SVGSVGElement>) => {
+      if (!interactive) return
+      ev.preventDefault()
+      const p = toUser(ev.clientX, ev.clientY)
+      setView((v) => {
+        const k = Math.min(200, Math.max(0.2, v.k * (ev.deltaY < 0 ? 1.15 : 1 / 1.15)))
+        // 指した 場所 を 動かさない ように 平行移動 を 直す
+        return {
+          k,
+          tx: p.x - ((p.x - v.tx) / v.k) * k,
+          ty: p.y - ((p.y - v.ty) / v.k) * k,
+        }
+      })
+    },
+    [interactive, toUser],
+  )
+
+  const sw = strokeOf(box) / (interactive ? view.k : 1)
   const fs = sw * 10
 
   if (!box) {
@@ -212,8 +255,8 @@ export function SitePlanPreview({
     )
   }
 
-  return (
-    <svg className={className} viewBox={viewBoxOf(box, 0.14)} preserveAspectRatio="xMidYMid meet">
+  const content = (
+    <>
       {site.length >= 3 && (
         <polygon
           points={site.map((p) => `${p.e},${-p.n}`).join(' ')}
@@ -245,6 +288,75 @@ export function SitePlanPreview({
           N
         </text>
       </g>
-    </svg>
+    </>
+  )
+
+  if (!interactive) {
+    return (
+      <svg className={className} viewBox={viewBoxOf(box, 0.14)} preserveAspectRatio="xMidYMid meet">
+        {content}
+      </svg>
+    )
+  }
+
+  return (
+    <div className={`relative ${className ?? ''}`}>
+      <svg
+        ref={svgRef}
+        className="w-full h-full touch-none"
+        style={{ cursor: dragging ? 'grabbing' : 'grab' }}
+        viewBox={viewBoxOf(box, 0.14)}
+        preserveAspectRatio="xMidYMid meet"
+        onWheel={onWheel}
+        onPointerDown={(ev) => {
+          const p = toUser(ev.clientX, ev.clientY)
+          dragRef.current = { x: p.x, y: p.y, tx: view.tx, ty: view.ty }
+          setDragging(true)
+          ev.currentTarget.setPointerCapture(ev.pointerId)
+        }}
+        onPointerMove={(ev) => {
+          const d = dragRef.current
+          if (!d) return
+          const p = toUser(ev.clientX, ev.clientY)
+          setView((v) => ({ ...v, tx: d.tx + (p.x - d.x), ty: d.ty + (p.y - d.y) }))
+        }}
+        onPointerUp={(ev) => {
+          dragRef.current = null
+          setDragging(false)
+          ev.currentTarget.releasePointerCapture(ev.pointerId)
+        }}
+      >
+        <g transform={`translate(${view.tx} ${view.ty}) scale(${view.k})`}>{content}</g>
+      </svg>
+      <div className="absolute top-1 right-1 flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => setView((v) => ({ ...v, k: Math.min(200, v.k * 1.4) }))}
+          className="w-6 h-6 rounded border bg-white/90 text-slate-600 text-sm leading-none hover:bg-white"
+          title="拡大"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={() => setView((v) => ({ ...v, k: Math.max(0.2, v.k / 1.4) }))}
+          className="w-6 h-6 rounded border bg-white/90 text-slate-600 text-sm leading-none hover:bg-white"
+          title="縮小"
+        >
+          −
+        </button>
+        <button
+          type="button"
+          onClick={() => setView({ k: 1, tx: 0, ty: 0 })}
+          className="px-1.5 h-6 rounded border bg-white/90 text-slate-600 text-[11px] hover:bg-white"
+          title="全体を表示"
+        >
+          全体
+        </button>
+      </div>
+      <div className="absolute bottom-1 left-1 text-[10px] text-slate-400 bg-white/80 px-1 rounded">
+        ホイールで拡大 / ドラッグで移動（{(view.k * 100).toFixed(0)}%）
+      </div>
+    </div>
   )
 }
