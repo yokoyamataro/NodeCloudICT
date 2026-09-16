@@ -1386,6 +1386,11 @@ export function StepSite({
           highlightBuildingEdge={
             site.method === 'parallel' ? parallelSpec.buildingEdge : null
           }
+          onBuildingEdgePick={
+            site.method === 'parallel'
+              ? (i) => setSite({ parallel: { ...parallelSpec, buildingEdge: i } })
+              : undefined
+          }
           onEdgePick={pickEdge}
           onVertexPick={pickVertex}
         />
@@ -1423,18 +1428,12 @@ function ParallelFields({
       <div className="text-[11px] text-slate-500 mb-1">
         建物の 1 辺を境界線に平行にして据えます。打っている間、地図に仮の配置を破線で出します。
       </div>
-      <Field label="建物の辺">
-        <select
-          className={inputCls}
-          value={p.buildingEdge}
-          onChange={(e) => onChange({ ...p, buildingEdge: Number(e.target.value) })}
-        >
-          {moves.map((m, i) => (
-            <option key={i} value={i}>
-              辺 {i + 1}（{moveLength(m).toFixed(3)} m）
-            </option>
-          ))}
-        </select>
+      <Field label="建物の辺" hint="地図の建物の辺を押して選びます。">
+        <div className="px-2 py-1 text-sm rounded bg-orange-50 border border-orange-200 text-orange-900">
+          {moves[p.buildingEdge]
+            ? `辺 ${p.buildingEdge + 1}（${moveLength(moves[p.buildingEdge]).toFixed(3)} m）`
+            : '未選択'}
+        </div>
       </Field>
       <Field label="平行にする境界線">
         <select

@@ -99,6 +99,7 @@ export function FloorPlanSiteMap({
   preview = false,
   onEdgePick,
   onVertexPick,
+  onBuildingEdgePick,
 }: {
   farmId: string | null
   /** 平面直角 の 系番号。 地番 の 取込 に 使う */
@@ -135,6 +136,8 @@ export function FloorPlanSiteMap({
   onEdgePick?: (edgeIndex: number) => void
   /** 地図 上 の 建物 の 角 を 押した */
   onVertexPick?: (vertexIndex: number) => void
+  /** 地図 上 の 建物 の 辺 を 押した */
+  onBuildingEdgePick?: (edgeIndex: number) => void
 }) {
   const ll = useMemo(() => (e: number, n: number) => conv.toLatLng(n, e), [conv])
 
@@ -277,8 +280,27 @@ export function FloorPlanSiteMap({
         />
       )}
 
-      {/* 選んで いる 建物 の 辺 */}
-      {highlightBuildingEdge != null && building.length >= 2 && (
+      {/* 建物 の 辺。 押して 選べる ように する */}
+      {onBuildingEdgePick != null &&
+        building.length >= 2 &&
+        building.map((_, i) => {
+          const on = highlightBuildingEdge === i
+          return (
+            <Polyline
+              key={`be-${i}`}
+              positions={[building[i], building[(i + 1) % building.length]]}
+              pathOptions={{
+                color: on ? '#f97316' : '#2563eb',
+                weight: on ? 6 : 8,
+                opacity: on ? 0.95 : 0.001, // 押せる 幅 だけ 残して 透明 に
+              }}
+              eventHandlers={{ click: () => onBuildingEdgePick(i) }}
+            >
+              <Tooltip sticky>建物の辺 {i + 1}</Tooltip>
+            </Polyline>
+          )
+        })}
+      {onBuildingEdgePick == null && highlightBuildingEdge != null && building.length >= 2 && (
         <Polyline
           positions={[
             building[highlightBuildingEdge % building.length],
