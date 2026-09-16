@@ -290,9 +290,49 @@ export function sortFigures(figures: FloorFigure[]): FloorFigure[] {
   })
 }
 
-/** 1 階 (下敷き に 使う)。 主である建物 の 1 階 */
+/** 主である建物 の 1 階 */
 export function groundFigure(figures: FloorFigure[]): FloorFigure | null {
   return figures.find((f) => f.kind === 'main' && f.floorNo === 1) ?? null
+}
+
+/**
+ * 下敷き に する 図形。 2 階 以降 を 描く ときに 1 階 を 点線 で 添える。
+ *
+ * 附属建物 は 主である建物 とは 別棟 な ので、下敷き も 配置 も 別 に する。
+ * 附属建物 の 2 階 は その 附属建物 の 1 階 を 下敷き に する。
+ */
+export function underlayOf(figures: FloorFigure[], f: FloorFigure): FloorFigure | null {
+  if (f.floorNo === 1) return null
+  return (
+    figures.find(
+      (x) => x.kind === f.kind && x.floorNo === 1 && (f.kind === 'main' || x.annexNo === f.annexNo),
+    ) ?? null
+  )
+}
+
+/** 棟 ごと の 区切り。 主である建物 は 'main'、附属建物 は 符号 ごと */
+export function buildingKey(f: FloorFigure): string {
+  return f.kind === 'annex' ? `annex:${f.annexNo ?? 1}` : 'main'
+}
+
+/** その 棟 の 1 階 */
+export function groundOfBuilding(figures: FloorFigure[], key: string): FloorFigure | null {
+  return figures.find((f) => buildingKey(f) === key && f.floorNo === 1) ?? null
+}
+
+/** 図面 に 出す 棟 の 一覧 (主である建物 → 附属建物 の 順) */
+export function buildingKeys(figures: FloorFigure[]): string[] {
+  const seen: string[] = []
+  for (const f of sortFigures(figures)) {
+    const k = buildingKey(f)
+    if (!seen.includes(k)) seen.push(k)
+  }
+  return seen
+}
+
+/** 棟 の 見出し */
+export function buildingLabel(key: string): string {
+  return key === 'main' ? '主である建物' : `附属建物（符号${key.slice(6)}）`
 }
 
 // ========================================================================
@@ -368,11 +408,16 @@ export interface SitePlan {
     fromEnd: boolean
     flip: boolean
   } | null
-  /** 建物 の 基点 を 現地 の どこ に 置く か。 E=東 / N=北 */
+  /** 主である建物 の 基点 を 現地 の どこ に 置く か。 E=東 / N=北 */
   offsetE: number
   offsetN: number
-  /** 建物 の 向き (度、反時計回り) */
+  /** 主である建物 の 向き (度、反時計回り) */
   rotationDeg: number
+  /**
+   * 附属建物 の 据え付け。 棟 の 区切り ('annex:1' など) を 鍵 に する。
+   * 別棟 な ので 主である建物 とは 別 に 置く。
+   */
+  annexPlacements?: Record<string, { offsetE: number; offsetN: number; rotationDeg: number; placed: boolean }>
   /** 図面 の 上 を 真北 から 何度 振る か */
   northAngleDeg: number
   /** 隣地 の 地番 など の 注記 */
@@ -436,6 +481,43 @@ export function warekiCreatedText(iso: string | null): string {
 }
 
 // ========================================================================
+
+/** 1 棟 の 据え付け */
+export interface BuildingPlacement {
+  offsetE: number
+  offsetN: number
+  rotationDeg: number
+  placed: boolean
+}
+
+/** 棟 の 据え付け を 取り出す */
+export function placementOf(site: SitePlan, key: string): BuildingPlacement {
+  if (key === 'main') {
+    return {
+      offsetE: site.offsetE,
+      offsetN: site.offsetN,
+      rotationDeg: site.rotationDeg,
+      placed: site.placed,
+    }
+  }
+  return (
+    site.annexPlacements?.[key] ?? { offsetE: 0, offsetN: 0, rotationDeg: 0, placed: false }
+  )
+}
+
+/** 棟 の 据え付け を 書き戻す */
+export function withPlacement(
+  site: SitePlan,
+  key: string,
+  p: Partial<BuildingPlacement>,
+): SitePlan {
+  if (key === 'main') return { ...site, ...p }
+  const cur = placementOf(site, key)
+  return {
+    ...site,
+    annexPlacements: { ...(site.annexPlacements ?? {}), [key]: { ...cur, ...p } },
+  }
+}
 
 export interface FloorPlan {
   id: string

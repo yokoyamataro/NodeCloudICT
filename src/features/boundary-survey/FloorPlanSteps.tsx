@@ -18,17 +18,23 @@ import {
   figureLabel,
   figureSum,
   floorAreaText,
-  groundFigure,
+  buildingKeys,
+  buildingLabel,
+  groundOfBuilding,
   newFigure,
+  placementOf,
+  withPlacement,
   newId,
   newTerm,
   moveLength,
   outlineSummary,
+  placeOutline,
   polygonArea,
   termFormula,
   termValue,
   termValueText,
   totalMainArea,
+  underlayOf,
   type AreaTerm,
   type FloorFigure,
   type FloorPlan,
@@ -375,8 +381,6 @@ export function StepFigures({
 }) {
   const figures = plan.figures
   const active = figures.find((f) => f.id === activeFigureId) ?? figures[0] ?? null
-  const ground = groundFigure(figures)
-
   const setFigures = (next: FloorFigure[]) => onPatch({ figures: next })
   const patchFigure = (id: string, p: Partial<FloorFigure>) =>
     setFigures(figures.map((f) => (f.id === id ? { ...f, ...p } : f)))
@@ -494,7 +498,7 @@ export function StepFigures({
         ) : (
           <FigureEditor
             figure={active}
-            underlay={active.id === ground?.id ? null : ground}
+            underlay={underlayOf(figures, active)}
             onChange={(p) => patchFigure(active.id, p)}
           />
         )}
@@ -567,7 +571,7 @@ function FigureEditor({
       <div className="flex gap-3 flex-1 min-h-0">
         <div className="w-[26rem] shrink-0 flex flex-col min-h-0">
           {tab === 'shape' ? (
-            <ShapeEditor figure={figure} onChange={onChange} />
+            <ShapeEditor figure={figure} hasUnderlay={underlay != null} onChange={onChange} />
           ) : (
             <AreaTable
               figure={figure}
@@ -657,9 +661,12 @@ function FigureEditor({
  */
 function ShapeEditor({
   figure,
+  hasUnderlay,
   onChange,
 }: {
   figure: FloorFigure
+  /** 下敷き に する 階 が ある か。 棟 の 1 階 に は ずれ が 要らない */
+  hasUnderlay: boolean
   onChange: (p: Partial<FloorFigure>) => void
 }) {
   const moves = figure.moves
@@ -768,19 +775,21 @@ function ShapeEditor({
         </div>
       )}
 
-      <div className="mt-2 flex items-center gap-2 text-xs">
-        <span className="text-slate-500">1階からのずれ</span>
-        <span className="text-slate-400">縦</span>
-        <NumField
-          value={figure.offset.y}
-          onChange={(v) => onChange({ offset: { ...figure.offset, y: v } })}
-        />
-        <span className="text-slate-400">横</span>
-        <NumField
-          value={figure.offset.x}
-          onChange={(v) => onChange({ offset: { ...figure.offset, x: v } })}
-        />
-      </div>
+      {hasUnderlay && (
+        <div className="mt-2 flex items-center gap-2 text-xs">
+          <span className="text-slate-500">1階からのずれ</span>
+          <span className="text-slate-400">縦</span>
+          <NumField
+            value={figure.offset.y}
+            onChange={(v) => onChange({ offset: { ...figure.offset, y: v } })}
+          />
+          <span className="text-slate-400">横</span>
+          <NumField
+            value={figure.offset.x}
+            onChange={(v) => onChange({ offset: { ...figure.offset, x: v } })}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -1150,7 +1159,14 @@ export function StepSite({
   const sitePoints = useMemo(() => chosen.flatMap((c) => c.points), [chosen])
   const ring = useMemo(() => siteRing(sitePoints), [sitePoints])
 
-  const ground = groundFigure(plan.figures)
+  // 附属建物 は 別棟 な ので、棟 ごと に 据える
+  const keys = useMemo(() => buildingKeys(plan.figures), [plan.figures])
+  const [target, setTarget] = useState('main')
+  const key = keys.includes(target) ? target : (keys[0] ?? 'main')
+  const ground = groundOfBuilding(plan.figures, key)
+  const place = placementOf(site, key)
+  const setPlace = (p: Partial<typeof place>) => onPatch({ site: withPlacement(site, key, p) })
+
   // 毎回 新しい 配列 に なる と useMemo が 効かない ので 一度 で 束ねる
   const moves = useMemo(() => ground?.moves ?? [], [ground])
   const outline = useMemo(() => (ground ? figureOutline(ground) : []), [ground])
@@ -1176,15 +1192,14 @@ export function StepSite({
       setNote('計算できませんでした。選んだ辺と境界線を見直してください。')
       return
     }
-    setSite({ ...pl, placed: true })
+    setPlace({ ...pl, placed: true })
     setNote(msg)
   }
 
   const runThreePoint = () => {
-    const start =
-      site.placed
-        ? { offsetE: site.offsetE, offsetN: site.offsetN, rotationDeg: site.rotationDeg }
-        : centerOn(moves, ring, site.rotationDeg)
+    const start = place.placed
+      ? { offsetE: place.offsetE, offsetN: place.offsetN, rotationDeg: place.rotationDeg }
+      : centerOn(moves, ring, place.rotationDeg)
     const r = solveByPoints(moves, ring, site.constraints, start)
     if (!r) {
       setNote('計算できませんでした。3 行とも入れてください。')
@@ -1243,19 +1258,31 @@ export function StepSite({
    * 地番 を 選んだ 直後 に 建物 が どこ にも 見えない のを 避ける ため。
    */
   const shown = useMemo(() => {
-    if (site.placed) {
-      return {
-        offsetE: site.offsetE,
-        offsetN: site.offsetN,
-        rotationDeg: site.rotationDeg,
-        preview: false,
-        show: true,
-      }
+    if (place.placed) {
+      return { ...place, preview: false, show: true }
     }
     if (!ready) return { offsetE: 0, offsetN: 0, rotationDeg: 0, preview: true, show: false }
-    const pl = parallelPreview ?? centerOn(moves, ring, site.rotationDeg)
+    const pl = parallelPreview ?? centerOn(moves, ring, place.rotationDeg)
     return { ...pl, preview: true, show: true }
-  }, [site.placed, site.offsetE, site.offsetN, site.rotationDeg, ready, parallelPreview, moves, ring])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(place), ready, parallelPreview, moves, ring])
+
+  // 今 据えて いる 棟 の ほか に、既 に 据えた 棟 も 薄く 描く
+  const others = useMemo(
+    () =>
+      keys
+        .filter((k) => k !== key)
+        .map((k) => {
+          const g = groundOfBuilding(plan.figures, k)
+          const pl = placementOf(site, k)
+          if (!g || !pl.placed) return null
+          const pts = placeOutline(figureOutline(g), pl.offsetE, pl.offsetN, pl.rotationDeg)
+          return pts.length >= 3 ? { id: k, label: buildingLabel(k), pts } : null
+        })
+        .filter((x): x is { id: string; label: string; pts: { e: number; n: number }[] } => x != null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [keys, key, plan.figures, JSON.stringify(site.annexPlacements), site.offsetE, site.offsetN, site.rotationDeg, site.placed],
+  )
 
   // 地図 で 強調 する もの
   const highlightEdge =
@@ -1321,10 +1348,31 @@ export function StepSite({
             「2 階層・形状寸法」で 主である建物1階 の形状を入れてください。
           </div>
         )}
-        {ready && !site.placed && (
+        {ready && !place.placed && (
           <div className="my-2 px-2 py-1.5 rounded bg-blue-50 border border-blue-200 text-[11px] text-blue-800">
             建物は仮の位置（破線）です。下の方法で配置すると確定します。
           </div>
+        )}
+
+        {keys.length > 1 && (
+          <Field label="据える建物" hint="附属建物は別棟なので、1 棟ずつ据えます。">
+            <select
+              className={inputCls}
+              value={key}
+              onChange={(e) => {
+                setTarget(e.target.value)
+                setPick(null)
+                setNote(null)
+              }}
+            >
+              {keys.map((k) => (
+                <option key={k} value={k}>
+                  {buildingLabel(k)}
+                  {placementOf(site, k).placed ? '（配置済）' : ''}
+                </option>
+              ))}
+            </select>
+          </Field>
         )}
 
         <Field label="配置方法">
@@ -1452,21 +1500,21 @@ export function StepSite({
           <div className="pt-2 mt-2 border-t">
             <Field label="東方向 (Y)">
               <NumField
-                value={site.offsetE}
-                onChange={(v) => setSite({ offsetE: v, placed: true })}
+                value={place.offsetE}
+                onChange={(v) => setPlace({ offsetE: v, placed: true })}
               />
             </Field>
             <Field label="北方向 (X)">
               <NumField
-                value={site.offsetN}
-                onChange={(v) => setSite({ offsetN: v, placed: true })}
+                value={place.offsetN}
+                onChange={(v) => setPlace({ offsetN: v, placed: true })}
               />
             </Field>
             <Field label="建物の向き">
               <div className="flex items-center gap-1">
                 <NumField
-                  value={site.rotationDeg}
-                  onChange={(v) => setSite({ rotationDeg: v, placed: true })}
+                  value={place.rotationDeg}
+                  onChange={(v) => setPlace({ rotationDeg: v, placed: true })}
                 />
                 <span className="text-xs text-slate-500">度</span>
               </div>
@@ -1474,7 +1522,7 @@ export function StepSite({
             {ready && (
               <button
                 type="button"
-                onClick={() => setSite({ ...centerOn(moves, ring, site.rotationDeg), placed: true })}
+                onClick={() => setPlace({ ...centerOn(moves, ring, place.rotationDeg), placed: true })}
                 className="px-2 py-1 text-xs border rounded hover:bg-slate-50"
               >
                 敷地の中心に寄せる
@@ -1489,11 +1537,11 @@ export function StepSite({
           </div>
         )}
 
-        {site.placed && (
+        {place.placed && (
           <button
             type="button"
             onClick={() => {
-              setSite({ placed: false, offsetE: 0, offsetN: 0, rotationDeg: 0 })
+              setPlace({ placed: false, offsetE: 0, offsetN: 0, rotationDeg: 0 })
               setNote(null)
             }}
             className="mt-2 px-2 py-1 text-xs border rounded hover:bg-slate-50 text-slate-600"
@@ -1611,6 +1659,7 @@ export function StepSite({
           rotationDeg={shown.rotationDeg}
           preview={shown.preview}
           guides={parallelGuideLines}
+          others={others}
           highlightEdge={highlightEdge}
           highlightVertex={highlightVertex}
           highlightBuildingEdge={

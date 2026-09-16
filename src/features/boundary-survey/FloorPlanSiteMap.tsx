@@ -92,6 +92,7 @@ export function FloorPlanSiteMap({
   offsetE,
   offsetN,
   rotationDeg,
+  others,
   highlightEdge,
   highlightVertex,
   highlightBuildingEdge,
@@ -113,11 +114,14 @@ export function FloorPlanSiteMap({
   onToggleParcelId?: (parcelId: string) => void
   /** 配置 の 計算 に 使う 一続き の 敷地 (複数筆 を 繋いだ もの) */
   ring: EN[]
+  /** 今 据えて いる 棟 の 外形 */
   outline: Pt[]
   placed: boolean
   offsetE: number
   offsetN: number
   rotationDeg: number
+  /** 他 の 棟 (附属建物 など)。 据え済み の もの を 薄く 描く */
+  others?: { id: string; label: string; pts: { e: number; n: number }[] }[]
   /** 今 選んで いる 境界線 (ring の 辺 番号)。 複数 可 */
   highlightEdge: number[]
   /** 今 選んで いる 建物 の 角 (outline の 番号)。 複数 可 */
@@ -279,6 +283,30 @@ export function FloorPlanSiteMap({
           interactive={false}
         />
       )}
+
+      {/* 他 の 棟 */}
+      {(others ?? []).map((o) => {
+        const poly = o.pts.map((p) => {
+          const c = ll(p.e, p.n)
+          return [c.lat, c.lng] as [number, number]
+        })
+        if (poly.length < 3) return null
+        return (
+          <Polygon
+            key={o.id}
+            positions={poly}
+            pathOptions={{
+              color: '#64748b',
+              weight: 1.5,
+              fillColor: '#94a3b8',
+              fillOpacity: 0.18,
+            }}
+            interactive={false}
+          >
+            <Tooltip direction="center">{o.label}</Tooltip>
+          </Polygon>
+        )
+      })}
 
       {/* 建物 の 辺。 押して 選べる ように する */}
       {onBuildingEdgePick != null &&

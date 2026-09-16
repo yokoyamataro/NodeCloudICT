@@ -11,12 +11,15 @@
 
 import { polyArea, polyCentroid } from './floorPlanRegion'
 import {
+  buildingKeys,
+  groundOfBuilding,
+  placementOf,
+  underlayOf,
   figureFloorArea,
   figureLabel,
   figureOutline,
   figureSum,
   floorAreaText,
-  groundFigure,
   moveLength,
   outlineExtent,
   placeOutline,
@@ -186,7 +189,6 @@ export function buildSheet(plan: FloorPlan, sitePoints: SitePointForDraw[]): Dra
 
   // ---- 左: 各階平面図 ----
   const figures = sortFigures(plan.figures)
-  const ground = groundFigure(plan.figures)
   const mmPerM = 1000 / Math.max(plan.plan_scale, 1)
 
   const cols = 2
@@ -201,12 +203,12 @@ export function buildSheet(plan: FloorPlan, sitePoints: SitePointForDraw[]): Dra
     const iw = cw - 6
     const ih = ch * 0.5
     text(cx, cy + 3, figureLabel(f), 3.0, 'start', { bold: true })
-    drawFigure(out, f, f.id === ground?.id ? null : ground, cx, cy + 5, iw, ih, mmPerM)
+    drawFigure(out, f, underlayOf(plan.figures, f), cx, cy + 5, iw, ih, mmPerM)
     drawAreaTable(out, f, cx, cy + ih + 10, iw)
   })
 
   // ---- 右: 建物図面 ----
-  drawSite(out, plan, sitePoints, ground)
+  drawSite(out, plan, sitePoints)
 
   // ---- 表題欄 の 中身 ----
   const [tlA, tlB, tlC, tlD, tlE] = S.tlLeft
@@ -445,12 +447,7 @@ function drawAreaTable(out: DrawItem[], f: FloorFigure, bx: number, by: number, 
 }
 
 /** 用紙 右半分 の 建物図面 */
-function drawSite(
-  out: DrawItem[],
-  plan: FloorPlan,
-  sitePoints: SitePointForDraw[],
-  ground: FloorFigure | null,
-) {
+function drawSite(out: DrawItem[], plan: FloorPlan, sitePoints: SitePointForDraw[]) {
   const S = SHEET
   const bx = S.centerX + 4
   const by = S.locBottom + 4
@@ -460,13 +457,22 @@ function drawSite(
 
   // 敷地 (X=北 / Y=東) と 建物 を E/N に 揃える
   const site = sitePoints.map((p) => ({ e: p.y, n: p.x, label: p.pointNumber }))
-  const outline = ground ? figureOutline(ground) : []
-  const building =
-    plan.site.placed && outline.length >= 3
-      ? placeOutline(outline, plan.site.offsetE, plan.site.offsetN, plan.site.rotationDeg)
-      : []
 
-  const all = [...site, ...building, ...plan.site.notes.map((n) => ({ e: n.x, n: n.y }))]
+  // 附属建物 は 別棟 な ので 棟 ごと に 据えた もの を 全部 描く
+  const buildings: { key: string; pts: { e: number; n: number }[] }[] = []
+  for (const key of buildingKeys(plan.figures)) {
+    const g = groundOfBuilding(plan.figures, key)
+    const pl = placementOf(plan.site, key)
+    if (!g || !pl.placed) continue
+    const pts = placeOutline(figureOutline(g), pl.offsetE, pl.offsetN, pl.rotationDeg)
+    if (pts.length >= 3) buildings.push({ key, pts })
+  }
+
+  const all = [
+    ...site,
+    ...buildings.flatMap((b) => b.pts),
+    ...plan.site.notes.map((n) => ({ e: n.x, n: n.y })),
+  ]
   if (all.length === 0) return
   const ce = all.reduce((s, p) => s + p.e, 0) / all.length
   const cn = all.reduce((s, p) => s + p.n, 0) / all.length
@@ -484,14 +490,32 @@ function drawSite(
       layer: L.site,
     })
   }
-  if (building.length >= 3) {
+  for (const b of buildings) {
     out.push({
       kind: 'poly',
-      pts: building.map((p) => toSheet(p.e, p.n)),
+      pts: b.pts.map((p) => toSheet(p.e, p.n)),
       closed: true,
       w: LW_FIG * 1.6,
       layer: L.figure,
     })
+    // 附属建物 は 符号 を 添える
+    if (b.key !== 'main') {
+      const c = {
+        e: b.pts.reduce((s2, p) => s2 + p.e, 0) / b.pts.length,
+        n: b.pts.reduce((s2, p) => s2 + p.n, 0) / b.pts.length,
+      }
+      const p = toSheet(c.e, c.n)
+      out.push({
+        kind: 'text',
+        x: p.x,
+        y: p.y,
+        text: b.key.slice(6),
+        h: 2.4,
+        anchor: 'middle',
+        rot: 0,
+        layer: L.title,
+      })
+    }
   }
   for (const n of plan.site.notes) {
     if (!n.label) continue
