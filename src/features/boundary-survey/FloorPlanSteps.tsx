@@ -47,10 +47,13 @@ import { FloorPlanSiteMap } from './FloorPlanSiteMap'
 import type { CoordinateConverter } from '@/lib/coordinates'
 import {
   centerOn,
+  parallelGuides,
   ringCentroid,
   siteRing,
   solveByParallel,
   solveByPoints,
+  type EN,
+  type ParallelSpec,
 } from './floorPlanPlace'
 
 const round3 = (v: number) => Math.round(v * 1000) / 1000
@@ -284,7 +287,7 @@ function ParcelPicker({
           onClick={() => setOpen((v) => !v)}
           className="px-2 py-0.5 text-xs border rounded hover:bg-slate-50"
         >
-          {open ? '閉じる' : '地番を選ぶ'}
+          {open ? '確定' : '地番を選ぶ'}
         </button>
       </div>
       {open && (
@@ -913,17 +916,49 @@ export function StepSite({
     )
   }
 
+  // 1 辺平行 は 打って いる 間 ずっと 仮 の 配置 を 見せる
+  const parallelSpec: ParallelSpec = site.parallel ?? {
+    buildingEdge: 0,
+    siteEdge: 0,
+    offset: 0,
+    along: 0,
+    fromEnd: false,
+    flip: false,
+  }
+  const parallelPreview = useMemo(
+    () => (ready && site.method === 'parallel' ? solveByParallel(moves, ring, parallelSpec) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ready, site.method, moves, ring, JSON.stringify(parallelSpec)],
+  )
+  const parallelGuideLines = useMemo(() => {
+    if (site.method !== 'parallel' || ring.length < 3) return []
+    const g = parallelGuides(ring, parallelSpec)
+    if (!g) return []
+    const out: { id: string; from: EN; to: EN; label: string }[] = []
+    if (Math.abs(parallelSpec.along) > 0.0005) {
+      out.push({ id: 'along', from: g.base, to: g.alongEnd, label: `延長 ${parallelSpec.along.toFixed(3)}` })
+    }
+    if (Math.abs(parallelSpec.offset) > 0.0005) {
+      out.push({
+        id: 'offset',
+        from: g.alongEnd,
+        to: g.target,
+        label: `オフセット ${parallelSpec.offset.toFixed(3)}`,
+      })
+    }
+    return out
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [site.method, ring, JSON.stringify(parallelSpec)])
+
   const runParallel = () => {
-    const spec = site.parallel ?? { buildingEdge: 0, siteEdge: 0, offset: 0, along: 0, flip: false }
-    apply(solveByParallel(moves, ring, spec), '配置しました。')
+    apply(solveByParallel(moves, ring, parallelSpec), '配置しました。')
   }
 
   // 地図 で 強調 する もの
-  const parallelSpec = site.parallel
   const highlightEdge =
     site.method === 'three_point'
       ? site.constraints.map((c) => c.edgeIndex)
-      : site.method === 'parallel' && parallelSpec
+      : site.method === 'parallel'
       ? [parallelSpec.siteEdge]
       : []
   const highlightVertex =
@@ -932,7 +967,7 @@ export function StepSite({
   /** 地図 の 境界線 を 押した ら、今 の 行 に 入れる */
   const pickEdge = (edgeIndex: number) => {
     if (site.method === 'parallel') {
-      setSite({ parallel: { ...(parallelSpec ?? { buildingEdge: 0, offset: 0, along: 0, flip: false }), siteEdge: edgeIndex } })
+      setSite({ parallel: { ...parallelSpec, siteEdge: edgeIndex } })
       return
     }
     if (site.method !== 'three_point') return
@@ -1280,10 +1315,14 @@ export function StepSite({
           }}
           ring={ring}
           outline={outline}
-          placed={site.placed}
-          offsetE={site.offsetE}
-          offsetN={site.offsetN}
-          rotationDeg={site.rotationDeg}
+          placed={site.placed || parallelPreview != null}
+          offsetE={parallelPreview && !site.placed ? parallelPreview.offsetE : site.offsetE}
+          offsetN={parallelPreview && !site.placed ? parallelPreview.offsetN : site.offsetN}
+          rotationDeg={
+            parallelPreview && !site.placed ? parallelPreview.rotationDeg : site.rotationDeg
+          }
+          preview={!site.placed && parallelPreview != null}
+          guides={parallelGuideLines}
           highlightEdge={highlightEdge}
           highlightVertex={highlightVertex}
           onEdgePick={pickEdge}
@@ -1315,12 +1354,13 @@ function ParallelFields({
     siteEdge: 0,
     offset: 0,
     along: 0,
+    fromEnd: false,
     flip: false,
   }
   return (
     <div className="pt-2 mt-2 border-t">
       <div className="text-[11px] text-slate-500 mb-1">
-        建物の 1 辺を境界線に平行にして据えます。離れと沿いの距離で位置が決まります。
+        建物の 1 辺を境界線に平行にして据えます。打っている間、地図に仮の配置を破線で出します。
       </div>
       <Field label="建物の辺">
         <select
@@ -1348,10 +1388,20 @@ function ParallelFields({
           ))}
         </select>
       </Field>
-      <Field label="離れ" hint="境界線から内側へ何 m 離すか。">
+      <Field label="基点" hint="延長をどちらの端から測るか。">
+        <select
+          className={inputCls}
+          value={p.fromEnd ? 'end' : 'start'}
+          onChange={(e) => onChange({ ...p, fromEnd: e.target.value === 'end' })}
+        >
+          <option value="start">境界線の始点から</option>
+          <option value="end">境界線の終点から</option>
+        </select>
+      </Field>
+      <Field label="オフセット" hint="境界線から内側へ何 m 離すか。">
         <NumField value={p.offset} onChange={(v) => onChange({ ...p, offset: v })} />
       </Field>
-      <Field label="沿い" hint="境界線の始点から、線に沿って何 m の位置に辺の始点を置くか。">
+      <Field label="延長" hint="基点から境界線に沿って何 m の位置に辺の始点を置くか。">
         <NumField value={p.along} onChange={(v) => onChange({ ...p, along: v })} />
       </Field>
       <Field label="向き">
@@ -1370,7 +1420,7 @@ function ParallelFields({
         disabled={!ready}
         className="mt-1 px-3 py-1 text-xs border rounded bg-blue-600 text-white border-blue-600 disabled:opacity-40 hover:bg-blue-700"
       >
-        配置を計算
+        この配置で確定
       </button>
     </div>
   )

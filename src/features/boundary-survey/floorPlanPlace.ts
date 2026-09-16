@@ -234,10 +234,44 @@ export interface ParallelSpec {
   siteEdge: number
   /** 境界線 から 内側 へ の 距離 (m) */
   offset: number
-  /** 境界線 の 始点 から 沿って 進む 距離 (m) */
+  /** 基点 から 境界線 に 沿って 進む 距離 (m) */
   along: number
+  /** 基点 を 境界線 の 終点 側 に する */
+  fromEnd: boolean
   /** 建物 の 向き を 180 度 返す */
   flip: boolean
+}
+
+/**
+ * 1 辺平行 の 下書き。 基点 / 延長 の 先 / 建物 を 置く 位置 を 返す。
+ * 図 に 寸法 を 描く ため に 使う。
+ */
+export function parallelGuides(
+  ring: EN[],
+  spec: ParallelSpec,
+): { base: EN; alongEnd: EN; target: EN } | null {
+  const se = siteEdge(ring, spec.siteEdge)
+  if (!se) return null
+  const dx = se.b.e - se.a.e
+  const dy = se.b.n - se.a.n
+  const len = Math.hypot(dx, dy)
+  if (len < 1e-9) return null
+
+  const sign = spec.fromEnd ? -1 : 1
+  const ux = (dx / len) * sign
+  const uy = (dy / len) * sign
+  const base = spec.fromEnd ? se.b : se.a
+  const inward = isCcw(ring) ? { e: -dy / len, n: dx / len } : { e: dy / len, n: -dx / len }
+
+  const alongEnd = { e: base.e + ux * spec.along, n: base.n + uy * spec.along }
+  return {
+    base,
+    alongEnd,
+    target: {
+      e: alongEnd.e + inward.e * spec.offset,
+      n: alongEnd.n + inward.n * spec.offset,
+    },
+  }
 }
 
 /**
@@ -260,20 +294,14 @@ export function solveByParallel(
   const sLen = Math.hypot(sdx, sdy)
   if (bLen < 1e-9 || sLen < 1e-9) return null
 
-  // 建物 の 辺 を 境界線 の 向き に 合わせる
-  let theta = Math.atan2(sdy, sdx) - Math.atan2(bm.v, bm.h)
+  // 基点 を 終点 側 に した ら 進む 向き も 逆 に する
+  const sign = spec.fromEnd ? -1 : 1
+  let theta = Math.atan2(sdy * sign, sdx * sign) - Math.atan2(bm.v, bm.h)
   if (spec.flip) theta += Math.PI
 
-  // 境界線 の 単位 ベクトル と 内側 向き の 法線
-  const ux = sdx / sLen
-  const uy = sdy / sLen
-  const inward = isCcw(ring) ? { e: -uy, n: ux } : { e: uy, n: -ux }
-
-  // 辺 の 始点 を 置きたい 場所
-  const target: EN = {
-    e: se.a.e + ux * spec.along + inward.e * spec.offset,
-    n: se.a.n + uy * spec.along + inward.n * spec.offset,
-  }
+  const g = parallelGuides(ring, spec)
+  if (!g) return null
+  const target = g.target
 
   const p0 = pts[spec.buildingEdge] ?? { x: 0, y: 0 }
   const cos = Math.cos(theta)

@@ -345,6 +345,8 @@ export interface SitePlan {
     siteEdge: number
     offset: number
     along: number
+    /** 基点 を 境界線 の 終点 側 に する */
+    fromEnd: boolean
     flip: boolean
   } | null
   /** 建物 の 基点 を 現地 の どこ に 置く か。 E=東 / N=北 */

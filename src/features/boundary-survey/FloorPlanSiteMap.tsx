@@ -46,6 +46,8 @@ export function FloorPlanSiteMap({
   rotationDeg,
   highlightEdge,
   highlightVertex,
+  guides,
+  preview = false,
   onEdgePick,
   onVertexPick,
 }: {
@@ -70,6 +72,10 @@ export function FloorPlanSiteMap({
   highlightEdge: number[]
   /** 今 選んで いる 建物 の 角 (outline の 番号)。 複数 可 */
   highlightVertex: number[]
+  /** 入力中 の 寸法 を 図 に 出す ため の 線 */
+  guides?: { id: string; from: EN; to: EN; label: string }[]
+  /** 確定 前 の 仮 の 配置。 破線 で 描く */
+  preview?: boolean
   /** 地図 上 の 境界線 を 押した */
   onEdgePick?: (edgeIndex: number) => void
   /** 地図 上 の 建物 の 角 を 押した */
@@ -201,14 +207,41 @@ export function FloorPlanSiteMap({
         </Polyline>
       ))}
 
-      {/* 据えた 建物 */}
+      {/* 据えた 建物。 確定 前 は 破線 */}
       {building.length >= 3 && (
         <Polygon
           positions={building}
-          pathOptions={{ color: '#1e293b', weight: 2, fillColor: '#334155', fillOpacity: 0.25 }}
+          pathOptions={{
+            color: preview ? '#2563eb' : '#1e293b',
+            weight: 2,
+            dashArray: preview ? '6 4' : undefined,
+            fillColor: preview ? '#3b82f6' : '#334155',
+            fillOpacity: preview ? 0.15 : 0.25,
+          }}
           interactive={false}
         />
       )}
+
+      {/* 入力中 の 寸法 */}
+      {(guides ?? []).map((g) => {
+        const a = ll(g.from.e, g.from.n)
+        const b = ll(g.to.e, g.to.n)
+        return (
+          <Polyline
+            key={g.id}
+            positions={[
+              [a.lat, a.lng],
+              [b.lat, b.lng],
+            ]}
+            pathOptions={{ color: '#7c3aed', weight: 2, dashArray: '4 3' }}
+            interactive={false}
+          >
+            <Tooltip permanent direction="center" className="fp-guide-label">
+              {g.label}
+            </Tooltip>
+          </Polyline>
+        )
+      })}
 
       {/* 建物 の 角。 配置前 は 位置 が 決まって いない ので 出さない */}
       {placed &&
