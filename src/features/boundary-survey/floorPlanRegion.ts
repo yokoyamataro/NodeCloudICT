@@ -12,11 +12,25 @@
 
 import { newId, type AreaTerm, type Pt, type TermKind } from './floorPlanTypes'
 
-/** 区切り線。 外形 の 頂点 番号 を 2 つ 結ぶ */
+/** 区切り線 の 向き */
+export type CutDir = 'E' | 'W' | 'N' | 'S'
+
+export const CUT_DIR_LABEL: Record<CutDir, string> = {
+  E: '右へ',
+  W: '左へ',
+  N: '上へ',
+  S: '下へ',
+}
+
+/**
+ * 区切り線。 外形 の 折点 から 水平 / 垂直 に 線 を 伸ばし、
+ * 最初 に 当たった 辺 まで で 切る。 CAD で 引く のと 同じ 要領。
+ */
 export interface AreaCut {
   id: string
-  a: number
-  b: number
+  /** 外形 の 折点 番号 */
+  v: number
+  dir: CutDir
 }
 
 /** 分けた 1 区画 */
@@ -33,6 +47,8 @@ const KANA = [
 export const regionLabel = (i: number): string => KANA[i] ?? String(i + 1)
 
 const EPS = 1e-7
+
+const dist = (a: Pt, b: Pt) => Math.hypot(b.x - a.x, b.y - a.y)
 
 export function polyArea(pts: Pt[]): number {
   if (pts.length < 3) return 0
@@ -83,41 +99,134 @@ function inside(pts: Pt[], p: Pt): boolean {
 // 区切り線 で 分ける
 // ========================================================================
 
+const DIRV: Record<CutDir, Pt> = {
+  E: { x: 1, y: 0 },
+  W: { x: -1, y: 0 },
+  N: { x: 0, y: 1 },
+  S: { x: 0, y: -1 },
+}
+
+const samePt = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y) < 1e-7
+
 /**
- * 頂点 と 頂点 を 結ぶ 線 で 順 に 切る。
- * 切る 線 が 外 を 通って いる とき は 無視 する (形 が 壊れない ように)。
+ * 重なった 点 と、一直線 に 並んだ 途中 の 点 を 落とす。
+ *
+ * 切った 先 が 辺 の 途中 だと、相手側 の 区画 に 余計 な 折点 が 残る。
+ * その まま だと 四角形 が 5 点 に 見えて 「長方形」 と 判ら なく なる。
+ */
+function cleanRing(pts: Pt[]): Pt[] {
+  const uniq: Pt[] = []
+  for (const p of pts) {
+    if (uniq.length === 0 || !samePt(uniq[uniq.length - 1], p)) uniq.push(p)
+  }
+  if (uniq.length > 1 && samePt(uniq[0], uniq[uniq.length - 1])) uniq.pop()
+  if (uniq.length < 3) return uniq
+
+  const out: Pt[] = []
+  for (let i = 0; i < uniq.length; i += 1) {
+    const a = uniq[(i - 1 + uniq.length) % uniq.length]
+    const b = uniq[i]
+    const c = uniq[(i + 1) % uniq.length]
+    const cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)
+    const scale = dist(a, b) * dist(b, c)
+    if (scale > EPS && Math.abs(cross) / scale < 1e-6) continue
+    out.push(b)
+  }
+  return out.length >= 3 ? out : uniq
+}
+
+/** 環 を i から j まで 順 に 辿る (端 を 含む) */
+function arc(ring: Pt[], i: number, j: number): Pt[] {
+  const out: Pt[] = []
+  let k = i
+  for (;;) {
+    out.push(ring[k])
+    if (k === j) break
+    k = (k + 1) % ring.length
+    if (out.length > ring.length) break
+  }
+  return out
+}
+
+/**
+ * 1 つ の 環 を、折点 vi から dir 方向 の 線 で 2 つ に 割る。
+ * 線 が 外 へ 出る 向き だったり、当たる 辺 が 無い ときは null。
+ */
+function cutRing(ring: Pt[], vi: number, dir: CutDir): [Pt[], Pt[]] | null {
+  const P = ring[vi]
+  const d = DIRV[dir]
+  const horizontal = d.y === 0
+
+  let best: { t: number; q: Pt; edge: number } | null = null
+  for (let k = 0; k < ring.length; k += 1) {
+    const a = ring[k]
+    const b = ring[(k + 1) % ring.length]
+    // 折点 に 接する 2 辺 は 相手 に しない
+    if (k === vi || (k + 1) % ring.length === vi) continue
+
+    let q: Pt | null = null
+    if (horizontal) {
+      if (Math.abs(a.y - b.y) < EPS) continue
+      const u = (P.y - a.y) / (b.y - a.y)
+      if (u < -1e-9 || u > 1 + 1e-9) continue
+      q = { x: a.x + (b.x - a.x) * u, y: P.y }
+    } else {
+      if (Math.abs(a.x - b.x) < EPS) continue
+      const u = (P.x - a.x) / (b.x - a.x)
+      if (u < -1e-9 || u > 1 + 1e-9) continue
+      q = { x: P.x, y: a.y + (b.y - a.y) * u }
+    }
+    const t = horizontal ? (q.x - P.x) * d.x : (q.y - P.y) * d.y
+    if (t < 1e-7) continue
+    if (!best || t < best.t) best = { t, q, edge: k }
+  }
+  if (!best) return null
+
+  // 線 が 区画 の 中 を 通って いる か
+  const mid = { x: (P.x + best.q.x) / 2, y: (P.y + best.q.y) / 2 }
+  if (!inside(ring, mid)) return null
+
+  const k = best.edge
+  const kn = (k + 1) % ring.length
+  const q = best.q
+
+  // vi → … → k → q
+  const a1 = arc(ring, vi, k)
+  if (!samePt(a1[a1.length - 1], q)) a1.push(q)
+  // q → kn → … → vi
+  const a2 = arc(ring, kn, vi)
+  if (!samePt(a2[0], q)) a2.unshift(q)
+
+  if (a1.length < 3 || a2.length < 3) return null
+  if (polyArea(a1) < 1e-6 || polyArea(a2) < 1e-6) return null
+  return [a1, a2]
+}
+
+/**
+ * 折点 から 水平 / 垂直 に 伸ばした 線 で 順 に 切る。
+ * 切れない 指定 は 飛ばす ので、形 が 壊れる こと は ない。
  */
 export function splitByCuts(outline: Pt[], cuts: AreaCut[]): AreaRegion[] {
   if (outline.length < 3) return []
-  let rings: number[][] = [outline.map((_, i) => i)]
+  let rings: Pt[][] = [outline]
 
   for (const cut of cuts) {
-    if (cut.a === cut.b) continue
-    const idx = rings.findIndex((r) => r.includes(cut.a) && r.includes(cut.b))
+    const P = outline[cut.v]
+    if (!P) continue
+    const idx = rings.findIndex((r) => r.some((p) => samePt(p, P)))
     if (idx < 0) continue
     const r = rings[idx]
-    const ia = r.indexOf(cut.a)
-    const ib = r.indexOf(cut.b)
-    const [lo, hi] = ia < ib ? [ia, ib] : [ib, ia]
-    if (hi - lo < 2 && r.length - (hi - lo) < 2) continue
-    const p1 = r.slice(lo, hi + 1)
-    const p2 = [...r.slice(hi), ...r.slice(0, lo + 1)]
-    if (p1.length < 3 || p2.length < 3) continue
-    // 切る 線 が 区画 の 中 を 通って いる か
-    const mid = {
-      x: (outline[cut.a].x + outline[cut.b].x) / 2,
-      y: (outline[cut.a].y + outline[cut.b].y) / 2,
-    }
-    if (!inside(r.map((i) => outline[i]), mid)) continue
-    rings = [...rings.slice(0, idx), p1, p2, ...rings.slice(idx + 1)]
+    const vi = r.findIndex((p) => samePt(p, P))
+    const res = cutRing(r, vi, cut.dir)
+    if (!res) continue
+    rings = [...rings.slice(0, idx), res[0], res[1], ...rings.slice(idx + 1)]
   }
 
-  return rings.map((r) => ({ id: newId(), pts: r.map((i) => outline[i]) }))
+  return rings
+    .map((r) => cleanRing(r))
+    .filter((r) => r.length >= 3 && polyArea(r) > 1e-6)
+    .map((r) => ({ id: newId(), pts: r }))
 }
-
-// ========================================================================
-// 自動 (横 に 切って 台形 の 足し算 に する)
-// ========================================================================
 
 /**
  * 頂点 の 高さ ごと に 横 に 切る。
@@ -175,8 +284,9 @@ export function autoSlabs(outline: Pt[]): AreaRegion[] {
         Math.hypot(uniq[0].x - uniq[uniq.length - 1].x, uniq[0].y - uniq[uniq.length - 1].y) < 1e-9
           ? uniq.slice(0, -1)
           : uniq
-      if (ring.length < 3 || polyArea(ring) < 1e-6) continue
-      out.push({ id: newId(), pts: ring })
+      const clean = cleanRing(ring)
+      if (clean.length < 3 || polyArea(clean) < 1e-6) continue
+      out.push({ id: newId(), pts: clean })
     }
   }
   return out
@@ -185,8 +295,6 @@ export function autoSlabs(outline: Pt[]): AreaRegion[] {
 // ========================================================================
 // 区画 を 求積 の 式 に する
 // ========================================================================
-
-const dist = (a: Pt, b: Pt) => Math.hypot(b.x - a.x, b.y - a.y)
 
 /** 点 p から 直線 ab まで の 距離 */
 function lineDist(a: Pt, b: Pt, p: Pt): number {

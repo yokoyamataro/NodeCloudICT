@@ -41,7 +41,14 @@ import {
 } from './floorPlanTypes'
 import { FigureOutlinePreview } from './FloorPlanPreview'
 import { SHEET, buildSheet, type LineStyle } from './floorPlanDraw'
-import { autoSlabs, splitByCuts, termsFromRegions } from './floorPlanRegion'
+import {
+  CUT_DIR_LABEL,
+  autoSlabs,
+  splitByCuts,
+  termsFromRegions,
+  type AreaCut,
+  type CutDir,
+} from './floorPlanRegion'
 import {
   buildP21,
   canvasToPdf,
@@ -745,7 +752,7 @@ function AreaTable({
   const hasRegions = terms.some((t) => t.region && t.region.length >= 3)
 
   /** 区分 を 作り直し、求積表 を 置き換える */
-  const rebuild = (nextCuts: { id: string; a: number; b: number }[] | null) => {
+  const rebuild = (nextCuts: AreaCut[] | null) => {
     const regions =
       nextCuts == null ? autoSlabs(pts) : splitByCuts(pts, nextCuts)
     if (regions.length === 0) return
@@ -795,7 +802,7 @@ function AreaTable({
           <span className="text-[11px] text-slate-500">区切り線</span>
           {cuts.length === 0 && (
             <span className="text-[11px] text-slate-400">
-              頂点どうしを結んで切ります。未指定なら「自動で区分」をどうぞ。
+              折点から水平・垂直に線を伸ばし、当たった辺までで切ります。
             </span>
           )}
           {cuts.map((c, i) => (
@@ -803,14 +810,13 @@ function AreaTable({
               key={c.id}
               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-white text-[11px]"
             >
+              <span className="text-slate-400">折点</span>
               <select
                 className="text-[11px] bg-transparent"
-                value={c.a}
+                value={c.v}
                 onChange={(e) =>
                   onChange({
-                    cuts: cuts.map((x, j) =>
-                      j === i ? { ...x, a: Number(e.target.value) } : x,
-                    ),
+                    cuts: cuts.map((x, j) => (j === i ? { ...x, v: Number(e.target.value) } : x)),
                   })
                 }
               >
@@ -820,21 +826,20 @@ function AreaTable({
                   </option>
                 ))}
               </select>
-              <span className="text-slate-400">→</span>
               <select
                 className="text-[11px] bg-transparent"
-                value={c.b}
+                value={c.dir}
                 onChange={(e) =>
                   onChange({
                     cuts: cuts.map((x, j) =>
-                      j === i ? { ...x, b: Number(e.target.value) } : x,
+                      j === i ? { ...x, dir: e.target.value as CutDir } : x,
                     ),
                   })
                 }
               >
-                {pts.map((_, k) => (
-                  <option key={k} value={k}>
-                    {k + 1}
+                {(Object.keys(CUT_DIR_LABEL) as CutDir[]).map((d) => (
+                  <option key={d} value={d}>
+                    {CUT_DIR_LABEL[d]}
                   </option>
                 ))}
               </select>
@@ -849,9 +854,7 @@ function AreaTable({
           ))}
           <button
             type="button"
-            onClick={() =>
-              onChange({ cuts: [...cuts, { id: newId(), a: 0, b: Math.min(2, pts.length - 1) }] })
-            }
+            onClick={() => onChange({ cuts: [...cuts, { id: newId(), v: 0, dir: 'E' }] })}
             disabled={pts.length < 4}
             className="px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-100 disabled:opacity-40"
           >

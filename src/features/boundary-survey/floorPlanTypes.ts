@@ -120,8 +120,8 @@ export interface FloorFigure {
   offset: Pt
   /** 求積表 */
   terms: AreaTerm[]
-  /** 求積 の 区切り線 (外形 の 頂点 を 結ぶ)。 手 で 分ける ときに 使う */
-  cuts?: { id: string; a: number; b: number }[]
+  /** 求積 の 区切り線 (折点 から 水平 / 垂直)。 手 で 分ける ときに 使う */
+  cuts?: { id: string; v: number; dir: 'E' | 'W' | 'N' | 'S' }[]
 }
 
 export function newFigure(kind: FigureKind, floorNo: number, annexNo: number | null): FloorFigure {
@@ -161,7 +161,10 @@ export function normalizeFigure(raw: unknown): FloorFigure {
     moves: moves.map((m) => ({ v: Number(m?.v ?? 0), h: Number(m?.h ?? 0) })),
     offset: { x: Number(off.x ?? 0), y: Number(off.y ?? 0) },
     terms: Array.isArray(r.terms) ? (r.terms as AreaTerm[]) : [],
-    cuts: Array.isArray(r.cuts) ? (r.cuts as FloorFigure['cuts']) : [],
+    // 初期 の 版 は 頂点 を 2 つ 結ぶ 形 だった ので 落とす
+    cuts: Array.isArray(r.cuts)
+      ? (r.cuts as FloorFigure['cuts'])!.filter((c) => c && 'dir' in c)
+      : [],
   }
 }
 
