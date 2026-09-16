@@ -22,7 +22,11 @@ import {
   buildingLabel,
   groundOfBuilding,
   newFigure,
+  constraintsOf,
+  parallelOf,
   placementOf,
+  withConstraints,
+  withParallel,
   withPlacement,
   newId,
   newTerm,
@@ -1200,7 +1204,7 @@ export function StepSite({
     const start = place.placed
       ? { offsetE: place.offsetE, offsetN: place.offsetN, rotationDeg: place.rotationDeg }
       : centerOn(moves, ring, place.rotationDeg)
-    const r = solveByPoints(moves, ring, site.constraints, start)
+    const r = solveByPoints(moves, ring, constraints, start)
     if (!r) {
       setNote('計算できませんでした。3 行とも入れてください。')
       return
@@ -1213,15 +1217,26 @@ export function StepSite({
     )
   }
 
-  // 1 辺平行 は 打って いる 間 ずっと 仮 の 配置 を 見せる
-  const parallelSpec: ParallelSpec = site.parallel ?? {
+  // 1 辺平行 は 打って いる 間 ずっと 仮 の 配置 を 見せる。
+  // 棟 が 変われば 辺 の 番号 も 変わる ので、範囲 の 外 は 0 に 丸める
+  const rawParallel = parallelOf(site, key)
+  const parallelSpec: ParallelSpec = {
     buildingEdge: 0,
     siteEdge: 0,
     offset: 0,
     along: 0,
     fromEnd: false,
     flip: false,
+    ...(rawParallel ?? {}),
   }
+  if (parallelSpec.buildingEdge >= moves.length) parallelSpec.buildingEdge = 0
+  if (parallelSpec.siteEdge >= Math.max(sitePoints.length, 1)) parallelSpec.siteEdge = 0
+  const setParallel = (p: NonNullable<SitePlan['parallel']>) =>
+    onPatch({ site: withParallel(site, key, p) })
+
+  const constraints = constraintsOf(site, key)
+  const setConstraints = (cs: SitePlan['constraints']) =>
+    onPatch({ site: withConstraints(site, key, cs) })
   const parallelPreview = useMemo(
     () => (ready && site.method === 'parallel' ? solveByParallel(moves, ring, parallelSpec) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1287,22 +1302,20 @@ export function StepSite({
   // 地図 で 強調 する もの
   const highlightEdge =
     site.method === 'three_point'
-      ? site.constraints.map((c) => c.edgeIndex)
+      ? constraints.map((c) => c.edgeIndex)
       : site.method === 'parallel'
       ? [parallelSpec.siteEdge]
       : []
   const highlightVertex =
-    site.method === 'three_point' ? site.constraints.map((c) => c.vertexIndex) : []
+    site.method === 'three_point' ? constraints.map((c) => c.vertexIndex) : []
 
   /** 地図 の 境界線 を 押した */
   const pickEdge = (edgeIndex: number) => {
     if (!pick) return
     if (pick.kind === 'siteEdge') {
-      setSite({ parallel: { ...parallelSpec, siteEdge: edgeIndex } })
+      setParallel({ ...parallelSpec, siteEdge: edgeIndex })
     } else if (pick.kind === 'edge') {
-      setSite({
-        constraints: site.constraints.map((c, j) => (j === pick.row ? { ...c, edgeIndex } : c)),
-      })
+      setConstraints(constraints.map((c, j) => (j === pick.row ? { ...c, edgeIndex } : c)))
     }
     setPick(null)
   }
@@ -1310,18 +1323,14 @@ export function StepSite({
   /** 地図 の 建物 の 角 を 押した */
   const pickVertex = (vertexIndex: number) => {
     if (pick?.kind !== 'vertex') return
-    setSite({
-      constraints: site.constraints.map((c, j) =>
-        j === pick.row ? { ...c, vertexIndex } : c,
-      ),
-    })
+    setConstraints(constraints.map((c, j) => (j === pick.row ? { ...c, vertexIndex } : c)))
     setPick(null)
   }
 
   /** 地図 の 建物 の 辺 を 押した */
   const pickBuildingEdge = (i: number) => {
     if (pick?.kind !== 'buildingEdge') return
-    setSite({ parallel: { ...parallelSpec, buildingEdge: i } })
+    setParallel({ ...parallelSpec, buildingEdge: i })
     setPick(null)
   }
 
@@ -1405,7 +1414,7 @@ export function StepSite({
                 </tr>
               </thead>
               <tbody>
-                {site.constraints.map((c, i) => (
+                {constraints.map((c, i) => (
                   <tr key={c.id}>
                     <td className="py-0.5 pr-1">
                       <PickButton
@@ -1425,11 +1434,9 @@ export function StepSite({
                       <NumField
                         value={c.distance}
                         onChange={(v) =>
-                          setSite({
-                            constraints: site.constraints.map((x, j) =>
-                              j === i ? { ...x, distance: v } : x,
-                            ),
-                          })
+                          setConstraints(
+                            constraints.map((x, j) => (j === i ? { ...x, distance: v } : x)),
+                          )
                         }
                         className="w-16 px-1 py-1 text-xs border rounded text-right font-mono"
                       />
@@ -1440,7 +1447,7 @@ export function StepSite({
                         tabIndex={-1}
                         onClick={() => {
                           setPick(null)
-                          setSite({ constraints: site.constraints.filter((_, j) => j !== i) })
+                          setConstraints(constraints.filter((_, j) => j !== i))
                         }}
                         className="p-0.5 text-slate-400 hover:text-red-600"
                       >
@@ -1455,12 +1462,10 @@ export function StepSite({
               <button
                 type="button"
                 onClick={() =>
-                  setSite({
-                    constraints: [
-                      ...site.constraints,
-                      { id: newId(), vertexIndex: 0, edgeIndex: 0, distance: 0 },
-                    ],
-                  })
+                  setConstraints([
+                    ...constraints,
+                    { id: newId(), vertexIndex: 0, edgeIndex: 0, distance: 0 },
+                  ])
                 }
                 className="px-2 py-0.5 text-xs border rounded hover:bg-slate-50 flex items-center gap-1"
               >
@@ -1470,13 +1475,13 @@ export function StepSite({
               <button
                 type="button"
                 onClick={runThreePoint}
-                disabled={!ready || site.constraints.length < 3}
+                disabled={!ready || constraints.length < 3}
                 className="px-3 py-0.5 text-xs border rounded bg-blue-600 text-white border-blue-600 disabled:opacity-40 hover:bg-blue-700"
               >
                 配置を計算
               </button>
             </div>
-            {site.constraints.length > 0 && site.constraints.length < 3 && (
+            {constraints.length > 0 && constraints.length < 3 && (
               <div className="mt-1 text-[11px] text-slate-400">
                 3 行そろうと向きまで決まります。
               </div>
@@ -1486,12 +1491,12 @@ export function StepSite({
 
         {site.method === 'parallel' && (
           <ParallelFields
-            site={site}
+            spec={parallelSpec}
             moves={moves}
             pick={pick}
             onStartPick={startPick}
             ready={ready}
-            onChange={(p) => setSite({ parallel: p })}
+            onChange={setParallel}
             onRun={runParallel}
           />
         )}
@@ -1676,7 +1681,7 @@ export function StepSite({
 
 /** 1 辺平行 の 入力 */
 function ParallelFields({
-  site,
+  spec,
   moves,
   pick,
   onStartPick,
@@ -1684,7 +1689,7 @@ function ParallelFields({
   onChange,
   onRun,
 }: {
-  site: SitePlan
+  spec: NonNullable<SitePlan['parallel']>
   moves: Move[]
   pick: PickTarget | null
   onStartPick: (t: PickTarget) => void
@@ -1692,14 +1697,7 @@ function ParallelFields({
   onChange: (p: NonNullable<SitePlan['parallel']>) => void
   onRun: () => void
 }) {
-  const p = site.parallel ?? {
-    buildingEdge: 0,
-    siteEdge: 0,
-    offset: 0,
-    along: 0,
-    fromEnd: false,
-    flip: false,
-  }
+  const p = spec
   return (
     <div className="pt-2 mt-2 border-t">
       <div className="text-[11px] text-slate-500 mb-1">

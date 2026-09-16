@@ -418,6 +418,15 @@ export interface SitePlan {
    * 別棟 な ので 主である建物 とは 別 に 置く。
    */
   annexPlacements?: Record<string, { offsetE: number; offsetN: number; rotationDeg: number; placed: boolean }>
+  /**
+   * 棟 ごと の 据え方 の 指定。 'main' は 従来 の constraints / parallel を 使う。
+   * 棟 が 変われば 辺 の 番号 も 変わる ので、共有 して は いけない。
+   */
+  constraintsBy?: Record<string, { id: string; vertexIndex: number; edgeIndex: number; distance: number }[]>
+  parallelBy?: Record<
+    string,
+    { buildingEdge: number; siteEdge: number; offset: number; along: number; fromEnd: boolean; flip: boolean }
+  >
   /** 図面 の 上 を 真北 から 何度 振る か */
   northAngleDeg: number
   /** 隣地 の 地番 など の 注記 */
@@ -517,6 +526,32 @@ export function withPlacement(
     ...site,
     annexPlacements: { ...(site.annexPlacements ?? {}), [key]: { ...cur, ...p } },
   }
+}
+
+/** 棟 の 3点指定 */
+export function constraintsOf(site: SitePlan, key: string) {
+  return (key === 'main' ? site.constraints : site.constraintsBy?.[key]) ?? []
+}
+export function withConstraints(
+  site: SitePlan,
+  key: string,
+  cs: SitePlan['constraints'],
+): SitePlan {
+  if (key === 'main') return { ...site, constraints: cs }
+  return { ...site, constraintsBy: { ...(site.constraintsBy ?? {}), [key]: cs } }
+}
+
+/** 棟 の 1辺平行 */
+export function parallelOf(site: SitePlan, key: string) {
+  return (key === 'main' ? site.parallel : site.parallelBy?.[key]) ?? null
+}
+export function withParallel(
+  site: SitePlan,
+  key: string,
+  p: NonNullable<SitePlan['parallel']>,
+): SitePlan {
+  if (key === 'main') return { ...site, parallel: p }
+  return { ...site, parallelBy: { ...(site.parallelBy ?? {}), [key]: p } }
 }
 
 export interface FloorPlan {
