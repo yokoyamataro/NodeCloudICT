@@ -516,6 +516,8 @@ function FigureEditor({
   const [tab, setTab] = useState<'shape' | 'area'>('shape')
   /** 区切り線 の 起点 を 図 から 拾う。 'new' は これから 足す 1 本 */
   const [cutPick, setCutPick] = useState<string | null>(null)
+  /** 起点 を 決めた 後、向き を 選んで もらう 折点 */
+  const [dirAt, setDirAt] = useState<number | null>(null)
   const sum = figureSum(figure)
   const pts = figureOutline(figure)
   const poly = polygonArea(pts)
@@ -573,6 +575,7 @@ function FigureEditor({
               cutPick={cutPick}
               onStartCutPick={(id) => {
                 setTab('area')
+                setDirAt(null)
                 setCutPick((cur) => (cur === id ? null : id))
               }}
             />
@@ -584,26 +587,45 @@ function FigureEditor({
             <FigureOutlinePreview
               figure={figure}
               underlay={underlay}
-              onVertexPick={
-                cutPick == null
-                  ? undefined
-                  : (i) => {
-                      const cuts = figure.cuts ?? []
-                      onChange({
-                        cuts:
-                          cutPick === 'new'
-                            ? [...cuts, { id: newId(), v: i, dir: 'E' as const }]
-                            : cuts.map((c) => (c.id === cutPick ? { ...c, v: i } : c)),
-                      })
-                      setCutPick(null)
-                    }
-              }
+              onVertexPick={cutPick == null || dirAt != null ? undefined : setDirAt}
+              dirPickAt={cutPick == null ? null : dirAt}
+              onDirPick={(dir) => {
+                if (cutPick == null || dirAt == null) return
+                const cuts = figure.cuts ?? []
+                const next =
+                  cutPick === 'new'
+                    ? [...cuts, { id: newId(), v: dirAt, dir }]
+                    : cuts.map((c) => (c.id === cutPick ? { ...c, v: dirAt, dir } : c))
+                // 線 を 決めた ら その場 で 区分 し直す
+                const pts = figureOutline(figure)
+                const regions = splitByCuts(pts, next)
+                onChange({
+                  cuts: next,
+                  ...(regions.length > 0 ? { terms: termsFromRegions(regions) } : {}),
+                })
+                setCutPick(null)
+                setDirAt(null)
+              }}
               className="w-full h-full"
             />
             {cutPick != null && (
               <div className="absolute top-1 left-1 px-2 py-1 rounded bg-blue-600 text-white text-[11px] shadow">
-                区切り線の起点にする折点を押してください
+                {dirAt == null
+                  ? '区切り線の起点にする折点を押してください'
+                  : '伸ばす向き（上右下左）を押してください'}
               </div>
+            )}
+            {cutPick != null && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCutPick(null)
+                  setDirAt(null)
+                }}
+                className="absolute top-1 right-1 px-2 py-1 rounded border bg-white text-[11px] text-slate-600 shadow"
+              >
+                やめる
+              </button>
             )}
           </div>
           <div className="mt-1 flex items-center gap-3 text-xs">
@@ -837,7 +859,7 @@ function AreaTable({
           <span className="text-[11px] text-slate-500">区切り線</span>
           {cuts.length === 0 && (
             <span className="text-[11px] text-slate-400">
-              「+ 図から追加」を押し、右の図で折点を選びます。そこから水平・垂直に線を伸ばし、当たった辺までで切ります。
+              「+ 図から追加」→ 図で折点 → その場で向き（上右下左）を押すと、当たった辺までで切ります。
             </span>
           )}
           {cuts.map((c, i) => (
@@ -855,7 +877,7 @@ function AreaTable({
                 }`}
                 title="図で折点を選び直す"
               >
-                {cutPick === c.id ? '図で選択…' : `折点 ${c.v + 1}`}
+                {cutPick === c.id ? '図で選択中…' : `折点 ${c.v + 1}`}
               </button>
               <select
                 className="text-[11px] bg-transparent"
@@ -893,7 +915,7 @@ function AreaTable({
                 : 'bg-white hover:bg-slate-100'
             }`}
           >
-            {cutPick === 'new' ? '図で折点を選択…' : '+ 図から追加'}
+            {cutPick === 'new' ? '図で選択中…' : '+ 図から追加'}
           </button>
         </div>
         {hasRegions && (

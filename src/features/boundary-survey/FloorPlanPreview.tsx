@@ -86,6 +86,8 @@ export function FigureOutlinePreview({
   underlay,
   showEdgeLabels = true,
   onVertexPick,
+  dirPickAt,
+  onDirPick,
   className,
 }: {
   figure: FloorFigure
@@ -93,6 +95,9 @@ export function FigureOutlinePreview({
   showEdgeLabels?: boolean
   /** 渡す と 折点 を 押して 選べる (区切り線 の 起点 に 使う) */
   onVertexPick?: (index: number) => void
+  /** 折点 を 選んだ 後。 その 点 の まわり に 向き の 矢印 を 出す */
+  dirPickAt?: number | null
+  onDirPick?: (dir: 'E' | 'W' | 'N' | 'S') => void
   className?: string
 }) {
   const pts = useMemo(() => figureOutline(figure), [figure])
@@ -202,6 +207,49 @@ export function FigureOutlinePreview({
               </text>
             </g>
           ))}
+        </g>
+      )}
+
+      {/* 選んだ 折点 の まわり に 向き の 矢印 */}
+      {dirPickAt != null && pts[dirPickAt] && onDirPick && (
+        <g transform={`translate(${figure.offset.x} ${-figure.offset.y})`}>
+          {(
+            [
+              ['N', 0, -1],
+              ['E', 1, 0],
+              ['S', 0, 1],
+              ['W', -1, 0],
+            ] as const
+          ).map(([dir, dx, dy]) => {
+            const p = pts[dirPickAt]
+            const d = sw * 16
+            const cx = p.x + dx * d
+            const cy = -p.y + dy * d
+            return (
+              <g
+                key={dir}
+                onClick={() => onDirPick(dir)}
+                style={{ cursor: 'pointer' }}
+              >
+                <circle cx={cx} cy={cy} r={sw * 7} fill="#2563eb" opacity={0.92} />
+                <path
+                  d={`M ${cx - dx * sw * 3 - dy * sw * 2.4} ${cy - dy * sw * 3 + dx * sw * 2.4} ` +
+                    `L ${cx + dx * sw * 3.4} ${cy + dy * sw * 3.4} ` +
+                    `L ${cx - dx * sw * 3 + dy * sw * 2.4} ${cy - dy * sw * 3 - dx * sw * 2.4} Z`}
+                  fill="#fff"
+                  pointerEvents="none"
+                />
+              </g>
+            )
+          })}
+          <circle
+            cx={pts[dirPickAt].x}
+            cy={-pts[dirPickAt].y}
+            r={sw * 5}
+            fill="#f97316"
+            stroke="#fff"
+            strokeWidth={sw}
+          />
         </g>
       )}
 
