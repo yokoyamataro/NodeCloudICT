@@ -107,6 +107,11 @@ const navigation: NavGroup[] = [
     ],
   },
   {
+    name: '法務局備付地図作成作業',
+    href: '/boundary-survey/registry-map',
+    icon: Map,
+  },
+  {
     name: '暗渠工事',
     href: '/underdrain',
     icon: GitBranch,

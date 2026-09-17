@@ -42,6 +42,7 @@ import { LandReportPage } from '@/features/boundary-survey/LandReportPage'
 import { LandSurveyDrawingPage } from '@/features/boundary-survey/LandSurveyDrawingPage'
 import { FloorPlanPage } from '@/features/boundary-survey/FloorPlanPage'
 import { BuildingReportPage } from '@/features/boundary-survey/BuildingReportPage'
+import { RegistryMapWorkPage } from '@/features/boundary-survey/RegistryMapWorkPage'
 // オルソ画像
 import { OrthophotoPage } from '@/features/orthophoto/OrthophotoPage'
 // 新規工種
@@ -338,6 +339,7 @@ function AppRoutes() {
           <Route path="land-survey-drawing" element={<LandSurveyDrawingPage />} />
           <Route path="floor-plan" element={<FloorPlanPage />} />
           <Route path="building-report" element={<BuildingReportPage />} />
+          <Route path="registry-map" element={<RegistryMapWorkPage />} />
         </Route>
         {/* オルソ画像 */}
         <Route path="orthophoto" element={<OrthophotoPage />} />
