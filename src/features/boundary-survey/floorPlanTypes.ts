@@ -503,26 +503,47 @@ export interface FloorPlanFrame {
   remarks: string
 }
 
-/** 申請人 欄 に 出す 行。 h は 文字 の 高さ (mm) */
-export function applicantLines(f: FloorPlanFrame): { text: string; h: number }[] {
+/**
+ * 申請人 欄 に 出す 行。
+ *
+ *   center … 欄 の 真ん中 に 置く (個人 / 共有)
+ *   left   … 左端 を 揃えて 置く (法人 の 名称)
+ *   titled … 左端 に 肩書、その 右 に 氏名 (法人 の 代表者)
+ *
+ * 大きさ は 代表者名 > 法人名 > 肩書 の 順。
+ */
+export type ApplicantLine =
+  | { kind: 'center'; text: string; h: number }
+  | { kind: 'left'; text: string; h: number }
+  | { kind: 'titled'; title: string; titleH: number; name: string; nameH: number }
+
+/** 行 の 高さ (縦 の 送り を 決める ため) */
+export function applicantLineHeight(l: ApplicantLine): number {
+  return l.kind === 'titled' ? l.nameH : l.h
+}
+
+export function applicantLines(f: FloorPlanFrame): ApplicantLine[] {
   const kind = f.applicantKind ?? 'individual'
   if (kind === 'corporate') {
     const head = (f.applicantCorporation ?? '').trim()
-    const tail = [(f.applicantTitle ?? '').trim(), f.applicantName.trim()]
-      .filter(Boolean)
-      .join('　')
-    return [
-      ...(head ? [{ text: head, h: 3.0 }] : []),
-      ...(tail ? [{ text: tail, h: 3.8 }] : []),
-    ]
+    const title = (f.applicantTitle ?? '').trim()
+    const name = f.applicantName.trim()
+    const out: ApplicantLine[] = []
+    if (head) out.push({ kind: 'left', text: head, h: 3.4 })
+    if (title || name) {
+      out.push({ kind: 'titled', title, titleH: 2.6, name, nameH: 4.2 })
+    }
+    return out
   }
   if (kind === 'joint') {
     const names = (f.applicantNames ?? []).map((n) => n.trim()).filter(Boolean)
     // 人数 が 増える ほど 小さく する (欄 の 高さ は 20mm しか ない)
     const h = names.length <= 2 ? 3.6 : names.length <= 3 ? 3.0 : names.length <= 5 ? 2.6 : 2.2
-    return names.map((text) => ({ text, h }))
+    return names.map((text) => ({ kind: 'center' as const, text, h }))
   }
-  return f.applicantName.trim() ? [{ text: f.applicantName.trim(), h: 4.5 }] : []
+  return f.applicantName.trim()
+    ? [{ kind: 'center' as const, text: f.applicantName.trim(), h: 4.5 }]
+    : []
 }
 
 /** 資格 は この 様式 では 固定 (個人 の 事務所 の 場合) */
