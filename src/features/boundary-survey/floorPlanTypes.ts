@@ -490,6 +490,8 @@ export interface FloorPlanFrame {
   makerRole?: 'member' | 'representative'
   makerName: string
   applicantName: string
+  /** 図枠 を 組んだ 後 の 手直し (要素 の 移動 / 大きさ / 角度、足した 線 と 文字) */
+  overlay?: import('./floorPlanDraw').SheetOverlay
   /** 申請人 の 立て方。 個人 / 共有 (複数名) / 法人 */
   applicantKind?: 'individual' | 'joint' | 'corporate'
   /** 共有 の ときの 氏名。 individual / corporate では 使わない */

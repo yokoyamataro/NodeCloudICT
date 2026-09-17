@@ -52,7 +52,8 @@ import {
 } from './floorPlanTypes'
 import { FigureOutlinePreview } from './FloorPlanPreview'
 import { useOrganizationSurveyors } from './useOrganizationSurveyors'
-import { SHEET, buildSheet, type LineStyle } from './floorPlanDraw'
+import { applyOverlay, buildSheet } from './floorPlanDraw'
+import { FloorPlanSheetEditor } from './FloorPlanSheetEditor'
 import {
   CUT_DIR_LABEL,
   autoSlabs,
@@ -2338,8 +2339,8 @@ export function StepFrame({
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 mt-2 border rounded bg-slate-100 p-3 overflow-auto">
-        <SheetPreview plan={plan} parcels={parcels} />
+      <div className="flex-1 min-h-0 mt-2">
+        <SheetEditorPane plan={plan} parcels={parcels} onPatch={onPatch} />
       </div>
       <div className="mt-1 text-[11px] text-slate-400">
         作製者・申請人・備考は「1 建物情報」で入れます。
@@ -2348,6 +2349,50 @@ export function StepFrame({
       </div>
     </div>
   )
+}
+
+/** 用紙 を 触れる ように した もの。 手直し は frame.overlay に 溜まる */
+function SheetEditorPane({
+  plan,
+  parcels,
+  onPatch,
+}: {
+  plan: FloorPlan
+  parcels: ParcelOption[]
+  onPatch: Patch
+}) {
+  const { siteParcels, neighborParcels } = useSheetParcels(plan, parcels)
+  const items = useMemo(
+    () => buildSheet(plan, siteParcels, neighborParcels),
+    [plan, siteParcels, neighborParcels],
+  )
+  return (
+    <FloorPlanSheetEditor
+      items={items}
+      overlay={plan.frame.overlay}
+      onChange={(overlay) => onPatch({ frame: { ...plan.frame, overlay } })}
+    />
+  )
+}
+
+/** 敷地 と 隣接地 を 筆 ごと に 束ねる */
+function useSheetParcels(plan: FloorPlan, parcels: ParcelOption[]) {
+  const siteParcels = useMemo(
+    () =>
+      plan.site.parcelIds
+        .map((id) => parcels.find((p) => p.parcelId === id))
+        .filter((p): p is ParcelOption => p != null)
+        .map((p) => ({ label: p.label, points: p.points })),
+    [plan.site.parcelIds, parcels],
+  )
+  const neighborParcels = useMemo(
+    () =>
+      parcels
+        .filter((p) => p.parcelId != null && !plan.site.parcelIds.includes(p.parcelId))
+        .map((p) => ({ label: p.label, points: p.points })),
+    [parcels, plan.site.parcelIds],
+  )
+  return { siteParcels, neighborParcels }
 }
 
 /** 成果 の 書き出し */
@@ -2372,7 +2417,7 @@ function ExportBar({ plan, parcels }: { plan: FloorPlan; parcels: ParcelOption[]
     setBusy(kind)
     setNote(null)
     try {
-      const items = buildSheet(plan, siteParcels, neighborParcels)
+      const items = applyOverlay(buildSheet(plan, siteParcels, neighborParcels), plan.frame.overlay)
       if (kind === 'p21') {
         saveBlob(
           new Blob([buildP21(items, base)], { type: 'application/octet-stream' }),
@@ -2419,142 +2464,5 @@ function ExportBar({ plan, parcels }: { plan: FloorPlan; parcels: ParcelOption[]
         </div>
       )}
     </div>
-  )
-}
-
-// ========================================================================
-// B4 の 用紙
-// ========================================================================
-
-/** 線種 を SVG の 刻み に */
-function svgDash(style: LineStyle | undefined): string | undefined {
-  if (style === 'dash') return '1.2 0.8'
-  if (style === 'dashdot') return '4 1 0.8 1'
-  return undefined
-}
-
-/**
- * 用紙 の 下絵。 出力 と 同じ 「描く もの の 並び」 を そのまま SVG に する ので、
- * 見えて いる もの と 出る もの が ずれない。
- */
-export function SheetPreview({
-  plan,
-  parcels,
-}: {
-  plan: FloorPlan
-  parcels: ParcelOption[]
-}) {
-  // 筆 ごと に 渡す。 図面 に 地番名 を 入れる ため
-  const siteParcels = useMemo(
-    () =>
-      plan.site.parcelIds
-        .map((id) => parcels.find((p) => p.parcelId === id))
-        .filter((p): p is ParcelOption => p != null)
-        .map((p) => ({ label: p.label, points: p.points })),
-    [plan.site.parcelIds, parcels],
-  )
-  // 敷地 以外 の 地番。 接して いる もの から ヒゲ線 を 作る
-  const neighborParcels = useMemo(
-    () =>
-      parcels
-        .filter((p) => p.parcelId != null && !plan.site.parcelIds.includes(p.parcelId))
-        .map((p) => ({ label: p.label, points: p.points })),
-    [parcels, plan.site.parcelIds],
-  )
-  const items = useMemo(
-    () => buildSheet(plan, siteParcels, neighborParcels),
-    [plan, siteParcels, neighborParcels],
-  )
-
-  return (
-    <svg
-      viewBox={`0 0 ${SHEET.w} ${SHEET.h}`}
-      className="w-full h-auto bg-white shadow"
-      preserveAspectRatio="xMidYMid meet"
-    >
-      <rect x={0} y={0} width={SHEET.w} height={SHEET.h} fill="#fff" />
-      {items.map((it, i) => {
-        if (it.kind === 'line') {
-          return (
-            <line
-              key={i}
-              x1={it.x1}
-              y1={it.y1}
-              x2={it.x2}
-              y2={it.y2}
-              stroke="#0f172a"
-              strokeWidth={Math.max(it.w, 0.18)}
-              strokeDasharray={svgDash(it.style)}
-            />
-          )
-        }
-        if (it.kind === 'poly') {
-          const d =
-            it.pts.map((p, k) => `${k === 0 ? 'M' : 'L'}${p.x} ${p.y}`).join(' ') +
-            (it.closed ? ' Z' : '')
-          return (
-            <path
-              key={i}
-              d={d}
-              fill="none"
-              stroke="#0f172a"
-              strokeWidth={Math.max(it.w, 0.18)}
-              strokeDasharray={svgDash(it.style)}
-            />
-          )
-        }
-        if (it.kind === 'circle') {
-          return (
-            <circle
-              key={i}
-              cx={it.cx}
-              cy={it.cy}
-              r={it.r}
-              fill="none"
-              stroke="#0f172a"
-              strokeWidth={Math.max(it.w, 0.18)}
-            />
-          )
-        }
-        const anchor = it.anchor === 'middle' ? 'middle' : it.anchor === 'end' ? 'end' : 'start'
-        const transform = it.rot ? `rotate(${-it.rot} ${it.x} ${it.y})` : undefined
-        if (it.pitch && it.pitch > 0) {
-          const chars = Array.from(it.text)
-          const total = it.pitch * (chars.length - 1)
-          const start =
-            it.anchor === 'middle' ? it.x - total / 2 : it.anchor === 'end' ? it.x - total : it.x
-          return (
-            <g key={i} transform={transform}>
-              {chars.map((c, k) => (
-                <text
-                  key={k}
-                  x={start + it.pitch! * k}
-                  y={it.y}
-                  fontSize={it.h}
-                  fontWeight={it.bold ? 'bold' : undefined}
-                  fill="#0f172a"
-                >
-                  {c}
-                </text>
-              ))}
-            </g>
-          )
-        }
-        return (
-          <text
-            key={i}
-            x={it.x}
-            y={it.y}
-            fontSize={it.h}
-            textAnchor={anchor}
-            fontWeight={it.bold ? 'bold' : undefined}
-            fill="#0f172a"
-            transform={transform}
-          >
-            {it.text}
-          </text>
-        )
-      })}
-    </svg>
   )
 }

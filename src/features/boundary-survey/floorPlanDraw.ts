@@ -40,7 +40,12 @@ import {
 /** 線 の 種類。 一点鎖線 は 求積 の 区切り に 使う */
 export type LineStyle = 'solid' | 'dash' | 'dashdot'
 
-export interface DrawLine {
+/** 手直し を 当てる ため の 識別子 (付いて いる 要素 だけ 動かせる) */
+export interface DrawBase {
+  id?: string
+}
+
+export interface DrawLine extends DrawBase {
   kind: 'line'
   x1: number
   y1: number
@@ -50,7 +55,7 @@ export interface DrawLine {
   layer: string
   style?: LineStyle
 }
-export interface DrawPoly {
+export interface DrawPoly extends DrawBase {
   kind: 'poly'
   pts: Pt[]
   closed: boolean
@@ -59,7 +64,7 @@ export interface DrawPoly {
   style?: LineStyle
 }
 
-export interface DrawCircle {
+export interface DrawCircle extends DrawBase {
   kind: 'circle'
   cx: number
   cy: number
@@ -67,7 +72,7 @@ export interface DrawCircle {
   w: number
   layer: string
 }
-export interface DrawText {
+export interface DrawText extends DrawBase {
   kind: 'text'
   x: number
   y: number
@@ -83,6 +88,50 @@ export interface DrawText {
   bold?: boolean
 }
 export type DrawItem = DrawLine | DrawPoly | DrawCircle | DrawText
+
+/**
+ * 図枠 を 組んだ 後 の 手直し。
+ *
+ * 自動 で 並べた 要素 は たいてい 良い 所 に 来る が、図面 に よって は
+ * 重なったり 窮屈 だったり する。 その 分 だけ ここ に 溜めて、描く 直前 に
+ * 当てる。 元 の 並べ方 は 触らない ので、中身 を 直せば また 追従 する。
+ */
+export interface SheetOverlay {
+  /** 要素 の 識別子 → ずらし 量 と、文字 なら 大きさ / 角度 */
+  moves?: Record<string, { dx?: number; dy?: number; h?: number; rot?: number }>
+  /** 後から 足した 線 と 文字 */
+  extras?: DrawItem[]
+  /** 消した 要素 の 識別子 */
+  hidden?: string[]
+}
+
+/** 手直し を 当てる */
+export function applyOverlay(items: DrawItem[], overlay: SheetOverlay | undefined): DrawItem[] {
+  if (!overlay) return items
+  const moves = overlay.moves ?? {}
+  const hidden = new Set(overlay.hidden ?? [])
+  const out: DrawItem[] = []
+  for (const it of items) {
+    if (it.id && hidden.has(it.id)) continue
+    const m = it.id ? moves[it.id] : undefined
+    if (!m) {
+      out.push(it)
+      continue
+    }
+    const dx = m.dx ?? 0
+    const dy = m.dy ?? 0
+    if (it.kind === 'text') {
+      out.push({ ...it, x: it.x + dx, y: it.y + dy, h: m.h ?? it.h, rot: m.rot ?? it.rot })
+    } else if (it.kind === 'line') {
+      out.push({ ...it, x1: it.x1 + dx, y1: it.y1 + dy, x2: it.x2 + dx, y2: it.y2 + dy })
+    } else if (it.kind === 'circle') {
+      out.push({ ...it, cx: it.cx + dx, cy: it.cy + dy })
+    } else {
+      out.push({ ...it, pts: it.pts.map((p) => ({ x: p.x + dx, y: p.y + dy })) })
+    }
+  }
+  return [...out, ...(overlay.extras ?? [])]
+}
 
 /** 用紙 (B4 横) と 罫線 の 位置。 doc/tatemono1.tif の 実測値 */
 export const SHEET = {
@@ -153,11 +202,12 @@ export function buildSheet(
     t: string,
     h: number,
     anchor: DrawText['anchor'] = 'start',
-    opts: { rot?: number; pitch?: number; bold?: boolean; layer?: string } = {},
+    opts: { rot?: number; pitch?: number; bold?: boolean; layer?: string; id?: string } = {},
   ) => {
     if (!t) return
     out.push({
       kind: 'text',
+      id: opts.id,
       x,
       y,
       text: t,
@@ -192,16 +242,16 @@ export function buildSheet(
   }
 
   // ---- 見出し ----
-  text(80.4, 17.2, '各階平面図', 5.4, 'start', { pitch: 11.0 })
-  text(280.7, 21.5, '建物図面', 5.4, 'start', { pitch: 13.1 })
+  text(80.4, 17.2, '各階平面図', 5.4, 'start', { pitch: 11.0, id: 'title:plan' })
+  text(280.7, 21.5, '建物図面', 5.4, 'start', { pitch: 13.1, id: 'title:site' })
   // 見出し は 罫線 の 手前 まで 字間 を 広げる
   const hnLabelX = S.midX + 2.5
   const hnLabelW = S.hnLabelRight - 1.5 - hnLabelX
   const hnValueX = S.hnLabelRight + 2.0
-  text(hnLabelX, 19.4, '家屋番号', 2.8, 'start', { pitch: (hnLabelW - 2.8) / 3 })
-  text(hnValueX, 19.4, plan.house_number ?? '', 3.0)
-  text(hnLabelX, 30.7, '建物の所在', 2.8, 'start', { pitch: (hnLabelW - 2.8) / 4 })
-  text(hnValueX, 30.7, plan.location ?? '', 3.0)
+  text(hnLabelX, 19.4, '家屋番号', 2.8, 'start', { pitch: (hnLabelW - 2.8) / 3, id: 'hn:label' })
+  text(hnValueX, 19.4, plan.house_number ?? '', 3.0, 'start', { id: 'hn:value' })
+  text(hnLabelX, 30.7, '建物の所在', 2.8, 'start', { pitch: (hnLabelW - 2.8) / 4, id: 'loc:label' })
+  text(hnValueX, 30.7, plan.location ?? '', 3.0, 'start', { id: 'loc:value' })
 
   // ---- 左: 各階平面図 ----
   const figures = sortFigures(plan.figures)
@@ -218,7 +268,7 @@ export function buildSheet(
     const cy = S.topLeft + ch * Math.floor(i / cols) + 3
     const iw = cw - 6
     const ih = ch * 0.5
-    text(cx, cy + 3, figureLabel(f), 3.0, 'start', { bold: true })
+    text(cx, cy + 3, figureLabel(f), 3.0, 'start', { bold: true, id: `fig:${f.id}:label` })
     drawFigure(out, f, underlayOf(plan.figures, f), cx, cy + 5, iw, ih, mmPerM)
     drawAreaTable(out, f, cx, cy + ih + 10, iw)
   })
@@ -230,20 +280,20 @@ export function buildSheet(
   const [tlA, tlB, tlC, tlD, tlE] = S.tlLeft
   const [trA, trB, trC, trD, trE] = S.tlRight
   vertical(out, '作製者', (tlA + tlB) / 2, S.bodyBottom + 2.8, S.titleBottom - 3.3, 3.1)
-  text(38.7, 224.8, warekiCreatedText(plan.frame.createdOn), 2.8)
+  text(38.7, 224.8, warekiCreatedText(plan.frame.createdOn), 2.8, 'start', { id: 'maker:date' })
 
   // 住所 /（法人 の 名称）/ 肩書 氏名 の 順。 肩書 は 折らず 1 行 に する
   const corp = plan.frame.makerCorporation.trim()
   const yAddress = corp ? 229.0 : 230.2
   const yName = corp ? 238.4 : 238.0
-  text((tlB + tlC) / 2, yAddress, plan.frame.makerAddress, 2.6, 'middle')
-  if (corp) text((tlB + tlC) / 2, 233.0, corp, 2.8, 'middle')
+  text((tlB + tlC) / 2, yAddress, plan.frame.makerAddress, 2.6, 'middle', { id: 'maker:address' })
+  if (corp) text((tlB + tlC) / 2, 233.0, corp, 2.8, 'middle', { id: 'maker:corp' })
 
   // 法人 の 場合 は 資格 では なく 立場 (社員 / 代表社員)
   const title = makerTitle(plan.frame)
   const titleH = 2.4
   const titleX = tlB + 2.0
-  text(titleX, yName, title, titleH)
+  text(titleX, yName, title, titleH, 'start', { id: 'maker:title' })
   // 氏名 は 肩書 の 右 に 字間 を 空けて 置く
   const nameH = 4.4
   const nameLeft = titleX + title.length * titleH + 3.0
@@ -254,7 +304,10 @@ export function buildSheet(
     Math.max(0, (nameRight - nameLeft - nameH) / Math.max(nameChars - 1, 1)),
   )
   const nameStart = (nameLeft + nameRight) / 2 - (pitch * (nameChars - 1)) / 2 - nameH / 2
-  text(Math.max(nameLeft, nameStart), yName, plan.frame.makerName, nameH, 'start', { pitch })
+  text(Math.max(nameLeft, nameStart), yName, plan.frame.makerName, nameH, 'start', {
+    pitch,
+    id: 'maker:name',
+  })
   vertical(out, '縮尺', (tlC + tlD) / 2, S.bodyBottom + 3.4, S.titleBottom - 4.0, 2.8)
   scaleCell(out, tlD, tlE, plan.plan_scale)
 
@@ -266,7 +319,10 @@ export function buildSheet(
     const total = appLines.reduce((acc, l) => acc + l.h + gap, -gap)
     let y = (S.bodyBottom + S.titleBottom) / 2 - total / 2 + appLines[0].h
     for (const l of appLines) {
-      text((trB + trC) / 2, y, l.text, l.h, 'middle', { pitch: l.h > 4 ? 6.1 : undefined })
+      text((trB + trC) / 2, y, l.text, l.h, 'middle', {
+        pitch: l.h > 4 ? 6.1 : undefined,
+        id: `applicant:${appLines.indexOf(l)}`,
+      })
       y += l.h + gap
     }
   }
@@ -566,6 +622,7 @@ function drawSite(
     const p = toSheet(c.e, c.n)
     out.push({
       kind: 'text',
+      id: `siteParcel:${r.label}`,
       x: p.x,
       y: p.y,
       text: r.label,
@@ -592,9 +649,18 @@ function drawSite(
         n: b.pts.reduce((s2, p) => s2 + p.n, 0) / b.pts.length,
       }
       const p = toSheet(c.e, c.n)
-      out.push({ kind: 'circle', cx: p.x, cy: p.y, r: 1.9, w: LW, layer: L.title })
+      out.push({
+        kind: 'circle',
+        id: `mark:${b.key}:circle`,
+        cx: p.x,
+        cy: p.y,
+        r: 1.9,
+        w: LW,
+        layer: L.title,
+      })
       out.push({
         kind: 'text',
+        id: `mark:${b.key}`,
         x: p.x,
         y: p.y + 0.95,
         text: mark,
@@ -631,6 +697,7 @@ function drawSite(
     const rad = (-deg * Math.PI) / 180
     out.push({
       kind: 'text',
+      id: `ref:${d.id}`,
       x: (p1.x + p2.x) / 2 + Math.sin(rad) * 0.9,
       y: (p1.y + p2.y) / 2 - Math.cos(rad) * 0.9,
       text: d.label ? `${d.label} ${d.value.toFixed(2)}` : d.value.toFixed(2),
@@ -651,6 +718,7 @@ function drawSite(
     const p = toSheet(lb.at.e, lb.at.n)
     out.push({
       kind: 'text',
+      id: `whisker:${lb.text}`,
       x: p.x,
       y: p.y,
       text: lb.text,
