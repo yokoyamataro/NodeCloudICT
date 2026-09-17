@@ -483,13 +483,7 @@ function MakerFields({ plan, onPatch }: { plan: FloorPlan; onPatch: Patch }) {
       </div>
 
       <div className="pt-2 mt-2 border-t text-xs font-semibold text-slate-500">申請人</div>
-      <Field label="氏名">
-        <input
-          className={inputCls}
-          value={frame.applicantName}
-          onChange={(e) => setFrame({ applicantName: e.target.value })}
-        />
-      </Field>
+      <ApplicantFields frame={frame} setFrame={setFrame} />
 
       <div className="pt-2 mt-2 border-t" />
       <Field label="備考">
@@ -499,6 +493,113 @@ function MakerFields({ plan, onPatch }: { plan: FloorPlan; onPatch: Patch }) {
           onChange={(e) => setFrame({ remarks: e.target.value })}
         />
       </Field>
+    </>
+  )
+}
+
+/**
+ * 申請人。 個人 の ほか、共有 (複数名) と 法人 (名称 + 代表者) に 対応 する。
+ * 表題欄 に は それぞれ 別 の 並べ方 で 出る。
+ */
+function ApplicantFields({
+  frame,
+  setFrame,
+}: {
+  frame: FloorPlanFrame
+  setFrame: (p: Partial<FloorPlanFrame>) => void
+}) {
+  const kind = frame.applicantKind ?? 'individual'
+  const names = frame.applicantNames ?? []
+
+  return (
+    <>
+      <Field label="種別">
+        <select
+          className={inputCls}
+          value={kind}
+          onChange={(e) =>
+            setFrame({ applicantKind: e.target.value as FloorPlanFrame['applicantKind'] })
+          }
+        >
+          <option value="individual">個人</option>
+          <option value="joint">共有（複数名）</option>
+          <option value="corporate">法人</option>
+        </select>
+      </Field>
+
+      {kind === 'individual' && (
+        <Field label="氏名">
+          <input
+            className={inputCls}
+            value={frame.applicantName}
+            onChange={(e) => setFrame({ applicantName: e.target.value })}
+          />
+        </Field>
+      )}
+
+      {kind === 'joint' && (
+        <Field label="氏名" hint="人数が増えると、表題欄では自動で小さく組みます。">
+          <ul className="space-y-1">
+            {names.map((n, i) => (
+              <li key={i} className="flex items-center gap-1">
+                <input
+                  className="flex-1 min-w-0 px-2 py-1 text-sm border rounded"
+                  value={n}
+                  onChange={(e) =>
+                    setFrame({
+                      applicantNames: names.map((x, j) => (j === i ? e.target.value : x)),
+                    })
+                  }
+                />
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => setFrame({ applicantNames: names.filter((_, j) => j !== i) })}
+                  className="p-1 text-slate-400 hover:text-red-600"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            onClick={() => setFrame({ applicantNames: [...names, ''] })}
+            className="mt-1 px-2 py-0.5 text-xs border rounded hover:bg-slate-50 flex items-center gap-1"
+          >
+            <Plus className="h-3 w-3" />
+            氏名を追加
+          </button>
+        </Field>
+      )}
+
+      {kind === 'corporate' && (
+        <>
+          <Field label="法人名">
+            <input
+              className={inputCls}
+              value={frame.applicantCorporation ?? ''}
+              onChange={(e) => setFrame({ applicantCorporation: e.target.value })}
+              placeholder="例: 株式会社〇〇"
+            />
+          </Field>
+          <Field label="代表者の肩書">
+            <input
+              className={inputCls}
+              value={frame.applicantTitle ?? ''}
+              onChange={(e) => setFrame({ applicantTitle: e.target.value })}
+              placeholder="例: 代表取締役"
+            />
+          </Field>
+          <Field label="代表者氏名">
+            <input
+              className={inputCls}
+              value={frame.applicantName}
+              onChange={(e) => setFrame({ applicantName: e.target.value })}
+            />
+          </Field>
+        </>
+      )}
     </>
   )
 }

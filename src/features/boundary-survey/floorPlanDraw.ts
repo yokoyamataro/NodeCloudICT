@@ -29,6 +29,7 @@ import {
   termValue,
   termValueText,
   warekiCreatedText,
+  applicantLines,
   makerTitle,
   type FloorFigure,
   type FloorPlan,
@@ -228,31 +229,46 @@ export function buildSheet(
   const [tlA, tlB, tlC, tlD, tlE] = S.tlLeft
   const [trA, trB, trC, trD, trE] = S.tlRight
   vertical(out, '作製者', (tlA + tlB) / 2, S.bodyBottom + 2.8, S.titleBottom - 3.3, 3.1)
-  text(38.7, 225.1, warekiCreatedText(plan.frame.createdOn), 2.3)
+  text(38.7, 224.8, warekiCreatedText(plan.frame.createdOn), 2.8)
 
   // 住所 /（法人 の 名称）/ 肩書 氏名 の 順。 肩書 は 折らず 1 行 に する
   const corp = plan.frame.makerCorporation.trim()
-  const yAddress = corp ? 228.8 : 229.7
-  const yName = corp ? 237.6 : 236.5
-  text((tlB + tlC) / 2, yAddress, plan.frame.makerAddress, 2.1, 'middle')
-  if (corp) text((tlB + tlC) / 2, 232.6, corp, 2.6, 'middle')
+  const yAddress = corp ? 229.0 : 230.2
+  const yName = corp ? 238.4 : 238.0
+  text((tlB + tlC) / 2, yAddress, plan.frame.makerAddress, 2.6, 'middle')
+  if (corp) text((tlB + tlC) / 2, 233.0, corp, 2.8, 'middle')
 
   // 法人 の 場合 は 資格 では なく 立場 (社員 / 代表社員)
   const title = makerTitle(plan.frame)
-  const titleX = tlB + 2.5
-  text(titleX, yName, title, 2.0)
+  const titleH = 2.4
+  const titleX = tlB + 2.0
+  text(titleX, yName, title, titleH)
   // 氏名 は 肩書 の 右 に 字間 を 空けて 置く
-  const nameLeft = titleX + title.length * 2.0 + 3.0
+  const nameH = 4.4
+  const nameLeft = titleX + title.length * titleH + 3.0
   const nameRight = tlC - 4
   const nameChars = Math.max(Array.from(plan.frame.makerName).length, 1)
-  const pitch = Math.min(12.0, Math.max(0, (nameRight - nameLeft - 3.8) / Math.max(nameChars - 1, 1)))
-  const nameStart = (nameLeft + nameRight) / 2 - (pitch * (nameChars - 1)) / 2 - 1.9
-  text(Math.max(nameLeft, nameStart), yName, plan.frame.makerName, 3.8, 'start', { pitch })
+  const pitch = Math.min(
+    12.0,
+    Math.max(0, (nameRight - nameLeft - nameH) / Math.max(nameChars - 1, 1)),
+  )
+  const nameStart = (nameLeft + nameRight) / 2 - (pitch * (nameChars - 1)) / 2 - nameH / 2
+  text(Math.max(nameLeft, nameStart), yName, plan.frame.makerName, nameH, 'start', { pitch })
   vertical(out, '縮尺', (tlC + tlD) / 2, S.bodyBottom + 3.4, S.titleBottom - 4.0, 2.8)
   scaleCell(out, tlD, tlE, plan.plan_scale)
 
   vertical(out, '申請人', (trA + trB) / 2, S.bodyBottom + 2.8, S.titleBottom - 3.3, 3.1)
-  text((trB + trC) / 2, 232.2, plan.frame.applicantName, 4.5, 'middle', { pitch: 6.1 })
+  // 個人 / 共有 (複数名) / 法人 (名称 の 下 に 肩書 と 代表者)
+  const appLines = applicantLines(plan.frame)
+  if (appLines.length > 0) {
+    const gap = 1.2
+    const total = appLines.reduce((acc, l) => acc + l.h + gap, -gap)
+    let y = (S.bodyBottom + S.titleBottom) / 2 - total / 2 + appLines[0].h
+    for (const l of appLines) {
+      text((trB + trC) / 2, y, l.text, l.h, 'middle', { pitch: l.h > 4 ? 6.1 : undefined })
+      y += l.h + gap
+    }
+  }
   vertical(out, '縮尺', (trC + trD) / 2, S.bodyBottom + 3.4, S.titleBottom - 4.0, 2.8)
   scaleCell(out, trD, trE, plan.site_scale)
 

@@ -470,7 +470,37 @@ export interface FloorPlanFrame {
   makerRole?: 'member' | 'representative'
   makerName: string
   applicantName: string
+  /** 申請人 の 立て方。 個人 / 共有 (複数名) / 法人 */
+  applicantKind?: 'individual' | 'joint' | 'corporate'
+  /** 共有 の ときの 氏名。 individual / corporate では 使わない */
+  applicantNames?: string[]
+  /** 法人 の 名称 */
+  applicantCorporation?: string
+  /** 法人 の 代表者 の 肩書 (代表取締役 など) */
+  applicantTitle?: string
   remarks: string
+}
+
+/** 申請人 欄 に 出す 行。 h は 文字 の 高さ (mm) */
+export function applicantLines(f: FloorPlanFrame): { text: string; h: number }[] {
+  const kind = f.applicantKind ?? 'individual'
+  if (kind === 'corporate') {
+    const head = (f.applicantCorporation ?? '').trim()
+    const tail = [(f.applicantTitle ?? '').trim(), f.applicantName.trim()]
+      .filter(Boolean)
+      .join('　')
+    return [
+      ...(head ? [{ text: head, h: 3.0 }] : []),
+      ...(tail ? [{ text: tail, h: 3.8 }] : []),
+    ]
+  }
+  if (kind === 'joint') {
+    const names = (f.applicantNames ?? []).map((n) => n.trim()).filter(Boolean)
+    // 人数 が 増える ほど 小さく する (欄 の 高さ は 20mm しか ない)
+    const h = names.length <= 2 ? 3.6 : names.length <= 3 ? 3.0 : names.length <= 5 ? 2.6 : 2.2
+    return names.map((text) => ({ text, h }))
+  }
+  return f.applicantName.trim() ? [{ text: f.applicantName.trim(), h: 4.5 }] : []
 }
 
 /** 資格 は この 様式 では 固定 (個人 の 事務所 の 場合) */
