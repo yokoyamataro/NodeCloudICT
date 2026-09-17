@@ -8,16 +8,15 @@
 // 作製者 / 申請人 の 入力 と 図枠 の 手直し は 建物図面 の 部品 を そのまま 使う。
 
 import { useMemo, useState } from 'react'
-import { Download, Loader2, Trash2 } from 'lucide-react'
+import { Download, Loader2 } from 'lucide-react'
 import type { ParcelOption } from './floorPlanTypes'
 import type { LandDrawPatch } from '@/stores/landDrawStore'
 import {
   LAND_SCALES,
   MARKER_PRESETS,
-  calcParcelArea,
-  n2,
-  n6,
+  markersFromPoints,
   type LandSurveyDrawing,
+  type MarkerColumn,
 } from './landDrawTypes'
 import { buildLandSheet, type ControlPointForDraw, type LandParcelForDraw } from './landDrawSheet'
 import { applyOverlay } from './floorPlanDraw'
@@ -30,6 +29,8 @@ import {
   saveBlob,
 } from './floorPlanExport'
 import { FloorPlanSheetEditor } from './FloorPlanSheetEditor'
+import { FloorPlanSiteMap } from './FloorPlanSiteMap'
+import type { CoordinateConverter } from '@/lib/coordinates'
 import { MakerFields } from './FloorPlanSteps'
 
 type Patch = (patch: LandDrawPatch) => void
@@ -115,96 +116,9 @@ export function LandStepInfo({
         </div>
       </Field>
 
-      <div className="pt-2 mt-2 border-t flex items-center gap-2">
-        <span className="text-xs font-semibold text-slate-500">
-          境界標の種類及び筆界点の記号または点名
-        </span>
-        <button
-          type="button"
-          onClick={() =>
-            setSpec({
-              markerColumns: [
-                ...spec.markerColumns,
-                { id: `m${Date.now().toString(36)}`, kind: '', existing: '', created: '' },
-              ],
-            })
-          }
-          className="px-2 py-0.5 text-xs border rounded hover:bg-slate-50"
-        >
-          + 種類を追加
-        </button>
+      <div className="pt-2 mt-2 px-2 py-1.5 rounded bg-slate-50 border text-[11px] text-slate-500">
+        境界標の種類・筆界点の記号は「2 対象地番」で、選んだ地番の杭種から自動で作ります。
       </div>
-      <div className="overflow-x-auto">
-        <table className="text-xs border-collapse">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="px-2 py-1 border w-14" />
-              {spec.markerColumns.map((c) => (
-                <th key={c.id} className="px-1 py-1 border font-medium min-w-[9rem]">
-                  <div className="flex items-center gap-1">
-                    <input
-                      className="w-full px-1.5 py-1 text-xs border rounded"
-                      list="marker-presets"
-                      value={c.kind}
-                      onChange={(e) =>
-                        setSpec({
-                          markerColumns: spec.markerColumns.map((x) =>
-                            x.id === c.id ? { ...x, kind: e.target.value } : x,
-                          ),
-                        })
-                      }
-                      placeholder="種類を選ぶか入力"
-                    />
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      onClick={() =>
-                        setSpec({
-                          markerColumns: spec.markerColumns.filter((x) => x.id !== c.id),
-                        })
-                      }
-                      className="p-0.5 text-slate-400 hover:text-red-600"
-                      title="この種類を削除"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {(['existing', 'created'] as const).map((row) => (
-              <tr key={row}>
-                <td className="px-2 py-1 border bg-slate-50 text-center">
-                  {row === 'existing' ? '既設' : '新設'}
-                </td>
-                {spec.markerColumns.map((c) => (
-                  <td key={c.id} className="px-1 py-0.5 border">
-                    <input
-                      className="w-full px-1.5 py-1 text-xs border rounded"
-                      value={c[row]}
-                      onChange={(e) =>
-                        setSpec({
-                          markerColumns: spec.markerColumns.map((x) =>
-                            x.id === c.id ? { ...x, [row]: e.target.value } : x,
-                          ),
-                        })
-                      }
-                      placeholder="例: K1,K2"
-                    />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <datalist id="marker-presets">
-        {MARKER_PRESETS.map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
 
       <div className="pt-3 mt-2 border-t text-xs font-semibold text-slate-500">
         座標変換のパラメータ（省略可）
@@ -249,35 +163,65 @@ export function LandStepInfo({
 export function LandStepParcels({
   plan,
   parcels,
+  stakeById,
+  farmId,
+  zone,
+  conv,
   onPatch,
 }: {
   plan: LandSurveyDrawing
   parcels: ParcelOption[]
+  /** 筆界点 の 杭種 と 設置状態 (境界標 の 表 を 作る ため) */
+  stakeById: Map<string, { stakeType: string | null; stakeStatus: string }>
+  farmId: string | null
+  zone: number
+  conv: CoordinateConverter
   onPatch: Patch
 }) {
   const spec = plan.spec
   const chosen = spec.parcelIds
-  const toggle = (parcelId: string) =>
+
+  /** 選んだ 地番 の 筆界点 から 境界標 の 表 を 作る */
+  const markersOf = (ids: string[]): MarkerColumn[] => {
+    const pts = ids.flatMap((id) => parcels.find((p) => p.parcelId === id)?.points ?? [])
+    return markersFromPoints(
+      pts.map((q) => ({
+        pointNumber: q.pointNumber,
+        stakeType: stakeById.get(q.id)?.stakeType ?? null,
+        stakeStatus: stakeById.get(q.id)?.stakeStatus ?? '',
+      })),
+    )
+  }
+
+  const setParcels = (ids: string[]) => {
+    const auto = markersOf(ids)
     onPatch({
       spec: {
         ...spec,
-        parcelIds: chosen.includes(parcelId)
-          ? chosen.filter((x) => x !== parcelId)
-          : [...chosen, parcelId],
+        parcelIds: ids,
+        // 地番 を 変えたら 境界標 も 取り直す (手 で 直して いた 場合 は そのまま)
+        markerColumns: spec.markerAuto === false ? spec.markerColumns : auto,
       },
     })
+  }
+  const toggle = (parcelId: string) =>
+    setParcels(
+      chosen.includes(parcelId) ? chosen.filter((x) => x !== parcelId) : [...chosen, parcelId],
+    )
 
-  const picked = chosen
-    .map((id) => parcels.find((p) => p.parcelId === id))
-    .filter((p): p is ParcelOption => p != null)
+  const setMarkers = (cols: MarkerColumn[]) =>
+    onPatch({ spec: { ...spec, markerColumns: cols, markerAuto: false } })
 
   return (
     <div className="flex gap-4 h-full min-h-0">
-      <div className="w-80 shrink-0 flex flex-col min-h-0">
+      <div className="w-[21rem] shrink-0 flex flex-col min-h-0 overflow-auto">
         <div className="text-xs font-semibold text-slate-500 mb-1">
           対象の地番（1 筆でも数筆でも）
         </div>
-        <ul className="border rounded divide-y overflow-auto flex-1 min-h-0">
+        <div className="text-[11px] text-slate-400 mb-1">
+          一覧のほか、右の地図の地番を押しても選べます。
+        </div>
+        <ul className="border rounded divide-y max-h-56 overflow-auto">
           {parcels.length === 0 && (
             <li className="p-3 text-xs text-slate-400">
               地番がありません。地番管理で取り込んでください。
@@ -297,76 +241,111 @@ export function LandStepParcels({
             </li>
           ))}
         </ul>
-      </div>
 
-      <div className="flex-1 min-w-0 overflow-auto">
-        <div className="text-xs font-semibold text-slate-500 mb-1">求積（倍横距法）</div>
-        {picked.length === 0 ? (
-          <div className="text-xs text-slate-400">地番を選ぶと求積表が出ます。</div>
-        ) : (
-          <div className="space-y-3">
-            {picked.map((p, i) => {
-              const calc = calcParcelArea(p.label, p.points)
-              return (
-                <div key={p.parcelId} className="border rounded bg-white">
-                  <div className="px-2 py-1 border-b bg-slate-50 text-xs font-semibold">
-                    地番 {i + 1} {p.label}
-                  </div>
-                  <table className="w-full text-[11px] font-mono">
-                    <thead className="text-slate-500">
-                      <tr>
-                        <th className="px-2 py-0.5 text-left">NO</th>
-                        <th className="px-2 py-0.5 text-right">Xn</th>
-                        <th className="px-2 py-0.5 text-right">Yn</th>
-                        <th className="px-2 py-0.5 text-right">Yn+1 − Yn−1</th>
-                        <th className="px-2 py-0.5 text-right">Xn・(Yn+1 − Yn−1)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {calc.rows.map((r) => (
-                        <tr key={r.name} className="border-t">
-                          <td className="px-2 py-0.5">{r.name}</td>
-                          <td className="px-2 py-0.5 text-right">{r.x.toFixed(3)}</td>
-                          <td className="px-2 py-0.5 text-right">{r.y.toFixed(3)}</td>
-                          <td className="px-2 py-0.5 text-right">{r.dy.toFixed(3)}</td>
-                          <td className="px-2 py-0.5 text-right">{n6(r.product)}</td>
-                        </tr>
-                      ))}
-                      <tr className="border-t bg-slate-50">
-                        <td className="px-2 py-0.5" colSpan={4}>
-                          合 計
-                        </td>
-                        <td className="px-2 py-0.5 text-right">{n6(calc.sum)}</td>
-                      </tr>
-                      <tr className="bg-slate-50">
-                        <td className="px-2 py-0.5" colSpan={4}>
-                          合 計 面 積
-                        </td>
-                        <td className="px-2 py-0.5 text-right">{n6(calc.area)}</td>
-                      </tr>
-                      <tr className="bg-slate-50 font-semibold">
-                        <td className="px-2 py-0.5" colSpan={4}>
-                          地 積
-                        </td>
-                        <td className="px-2 py-0.5 text-right">{n2(calc.registered)} ㎡</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )
-            })}
-            {picked.length > 1 && (
-              <div className="flex justify-between px-2 py-1 border rounded bg-slate-50 text-xs">
-                <span className="font-semibold">総合計面積</span>
-                <span className="font-mono">
-                  {n6(
-                    picked.reduce((s, p) => s + calcParcelArea(p.label, p.points).area, 0),
-                  )}
-                </span>
-              </div>
+        {/* 境界標 の 表。 選んだ 地番 の 杭種 から 作る */}
+        <div className="mt-3 pt-3 border-t">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs font-semibold text-slate-500">
+              境界標の種類及び筆界点の記号
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                onPatch({ spec: { ...spec, markerColumns: markersOf(chosen), markerAuto: true } })
+              }
+              className="px-2 py-0.5 text-[11px] border rounded hover:bg-slate-50"
+              title="選んだ地番の杭種・設置状態から作り直します"
+            >
+              地番から取り直す
+            </button>
+          </div>
+          <div className="text-[11px] text-slate-400 mb-1">
+            杭種が列、設置状態（既設／新設・入替）が行になります。
+            {spec.markerAuto === false && (
+              <span className="ml-1 text-amber-700">手入力に切り替わっています。</span>
             )}
           </div>
-        )}
+          {spec.markerColumns.length === 0 ? (
+            <div className="text-[11px] text-slate-400">
+              杭種・設置状態が入っていません。座標管理で筆界点に設定してください。
+            </div>
+          ) : (
+            <table className="w-full text-[11px] border-collapse">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-1 py-1 border w-10" />
+                  {spec.markerColumns.map((c) => (
+                    <th key={c.id} className="px-1 py-1 border font-medium">
+                      <input
+                        className="w-full px-1 py-0.5 text-[11px] border rounded"
+                        list="marker-presets"
+                        value={c.kind}
+                        onChange={(e) =>
+                          setMarkers(
+                            spec.markerColumns.map((x) =>
+                              x.id === c.id ? { ...x, kind: e.target.value } : x,
+                            ),
+                          )
+                        }
+                      />
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(['existing', 'created'] as const).map((row) => (
+                  <tr key={row}>
+                    <td className="px-1 py-1 border bg-slate-50 text-center">
+                      {row === 'existing' ? '既設' : '新設'}
+                    </td>
+                    {spec.markerColumns.map((c) => (
+                      <td key={c.id} className="px-1 py-0.5 border">
+                        <input
+                          className="w-full px-1 py-0.5 text-[11px] border rounded"
+                          value={c[row]}
+                          onChange={(e) =>
+                            setMarkers(
+                              spec.markerColumns.map((x) =>
+                                x.id === c.id ? { ...x, [row]: e.target.value } : x,
+                              ),
+                            )
+                          }
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <datalist id="marker-presets">
+            {MARKER_PRESETS.map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
+        </div>
+      </div>
+
+      {/* 地図 から も 選べる ように する (建物図面 と 同じ 地図) */}
+      <div className="flex-1 min-w-0 border rounded overflow-hidden">
+        <FloorPlanSiteMap
+          farmId={farmId}
+          zone={zone}
+          conv={conv}
+          rings={parcels
+            .filter((p) => p.parcelId != null)
+            .map((p) => ({ parcelId: p.parcelId!, label: p.label, points: p.points }))}
+          chosenParcelIds={chosen}
+          onToggleParcelId={(parcelId) => toggle(parcelId)}
+          ring={[]}
+          outline={[]}
+          placed={false}
+          offsetE={0}
+          offsetN={0}
+          rotationDeg={0}
+          highlightEdge={[]}
+          highlightVertex={[]}
+        />
       </div>
     </div>
   )

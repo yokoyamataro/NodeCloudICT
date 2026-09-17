@@ -14,6 +14,7 @@ import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
+import { CoordinateConverter } from '@/lib/coordinates'
 import { useLandDrawStore, type LandDrawPatch } from '@/stores/landDrawStore'
 import type { ParcelOption } from './floorPlanTypes'
 import { calcParcelArea, n2, type LandSurveyDrawing } from './landDrawTypes'
@@ -27,7 +28,7 @@ import {
 
 const STEPS = [
   { key: 1, label: '図面情報', hint: '所在・作製者・申請人' },
-  { key: 2, label: '対象地番', hint: '1 筆でも数筆でも' },
+  { key: 2, label: '対象地番', hint: '地番と境界標' },
   { key: 3, label: '基準点', hint: '与点の成果' },
   { key: 4, label: '図枠', hint: '縮尺と出力' },
 ] as const
@@ -64,6 +65,17 @@ export function LandSurveyDrawingPage() {
   const zone = useMemo(
     () => projects.find((p) => p.id === currentFarm?.project_id)?.coordinate_zone ?? 13,
     [projects, currentFarm],
+  )
+  // 地図 に 出す とき に 平面直角 → 緯度経度 へ 直す
+  const conv = useMemo(() => new CoordinateConverter(zone), [zone])
+
+  // 境界標 の 表 を 作る ため の 杭種 と 設置状態
+  const stakeById = useMemo(
+    () =>
+      new Map(
+        coordinates.map((c) => [c.id, { stakeType: c.stakeType, stakeStatus: c.stakeStatus }]),
+      ),
+    [coordinates],
   )
 
   useEffect(() => {
@@ -295,7 +307,15 @@ export function LandSurveyDrawingPage() {
               <div className="flex-1 min-h-0 overflow-auto p-4">
                 {step === 1 && <LandStepInfo plan={selected} onPatch={onPatch} />}
                 {step === 2 && (
-                  <LandStepParcels plan={selected} parcels={parcels} onPatch={onPatch} />
+                  <LandStepParcels
+                    plan={selected}
+                    parcels={parcels}
+                    stakeById={stakeById}
+                    farmId={farmId}
+                    zone={zone}
+                    conv={conv}
+                    onPatch={onPatch}
+                  />
                 )}
                 {step === 3 && (
                   <LandStepControls plan={selected} controls={controls} onPatch={onPatch} />

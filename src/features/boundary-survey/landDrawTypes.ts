@@ -49,6 +49,55 @@ export function defaultMarkerColumns(): MarkerColumn[] {
   }))
 }
 
+/** 境界標 の 表 を 作る ため の 筆界点 */
+export interface MarkerSourcePoint {
+  pointNumber: string
+  /** 杭種 (design_coordinates.stake_type) */
+  stakeType: string | null
+  /** 設置状態 (design_coordinates.stake_status) */
+  stakeStatus: string
+}
+
+/**
+ * 選んだ 地番 の 筆界点 から 境界標 の 表 を 作る。
+ *
+ * 杭種 が 列 に なり、設置状態 が 既設 / 新設 の 行 を 決める。
+ *   既設 … 'existing'
+ *   新設 … 'new' / 'replaced' (入替 も 新たに 入れた もの な ので 新設)
+ * それ以外 (未設置 / 仮杭 / 不設置 / 未指定) は 図面 に 載せない。
+ *
+ * 点名 は 現れた 順 に 並べ、同じ 点 は 1 度 だけ。
+ */
+export function markersFromPoints(points: MarkerSourcePoint[]): MarkerColumn[] {
+  const order: string[] = []
+  const byKind = new Map<string, { existing: string[]; created: string[] }>()
+
+  for (const p of points) {
+    const kind = (p.stakeType ?? '').trim()
+    if (!kind) continue
+    const row =
+      p.stakeStatus === 'existing'
+        ? 'existing'
+        : p.stakeStatus === 'new' || p.stakeStatus === 'replaced'
+        ? 'created'
+        : null
+    if (!row) continue
+    if (!byKind.has(kind)) {
+      byKind.set(kind, { existing: [], created: [] })
+      order.push(kind)
+    }
+    const slot = byKind.get(kind)!
+    if (!slot[row].includes(p.pointNumber)) slot[row].push(p.pointNumber)
+  }
+
+  return order.map((kind, i) => ({
+    id: `auto-${i + 1}`,
+    kind,
+    existing: byKind.get(kind)!.existing.join(','),
+    created: byKind.get(kind)!.created.join(','),
+  }))
+}
+
 /** 与点 の 成果 の 1 行 */
 export interface DatumRow {
   id: string
@@ -69,8 +118,13 @@ export interface LandDrawSpec {
   datums: DatumRow[]
   /** 地図番号 */
   mapNumber: string
-  /** 境界標 の 種類 と 点名。 列 は 足し引き できる */
+  /** 境界標 の 種類 と 点名。 選んだ 地番 の 杭種 から 作る */
   markerColumns: MarkerColumn[]
+  /**
+   * true (既定) の 間 は 地番 を 変える たび に 境界標 を 取り直す。
+   * 手 で 直した ら false に して、以後 は 触らない。
+   */
+  markerAuto?: boolean
   /** 測量年月日 */
   surveyedOn: string | null
   /** 座標系 (平面直角 の 系番号) */
@@ -93,6 +147,7 @@ export const DEFAULT_LAND_SPEC: LandDrawSpec = {
   datums: [],
   mapNumber: '',
   markerColumns: defaultMarkerColumns(),
+  markerAuto: true,
   surveyedOn: null,
   zone: 13,
   datumTitle: '与点の成果　世界測地系　測地成果2024',
