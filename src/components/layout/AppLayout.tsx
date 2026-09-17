@@ -87,10 +87,25 @@ const navigation: NavGroup[] = [
   // 地籍測量: 「地番管理」と「地権者管理」をフラットに並べる
   { name: '地番管理', href: '/boundary-survey/work-area', icon: Compass },
   { name: '地権者管理', href: '/boundary-survey/landowners', icon: Users },
-  { name: '土地調査報告書作成', href: '/boundary-survey/land-report', icon: FileText },
-  { name: '地積測量図作成', href: '/boundary-survey/land-survey-drawing', icon: Ruler },
-  { name: '各階平面図作成', href: '/boundary-survey/floor-plan', icon: LayoutTemplate },
-  { name: '建物調査報告書作成', href: '/boundary-survey/building-report', icon: Building2 },
+  // 地籍測量: 成果物 は 登記 の 種別 ごと に まとめる
+  {
+    name: '土地登記',
+    href: '/boundary-survey/land',
+    icon: LandPlot,
+    children: [
+      { name: '地積測量図作成', href: '/boundary-survey/land-survey-drawing', icon: Ruler },
+      { name: '土地調査報告書', href: '/boundary-survey/land-report', icon: FileText },
+    ],
+  },
+  {
+    name: '建物登記',
+    href: '/boundary-survey/building',
+    icon: Building2,
+    children: [
+      { name: '各階平面図作成', href: '/boundary-survey/floor-plan', icon: LayoutTemplate },
+      { name: '建物調査報告書', href: '/boundary-survey/building-report', icon: FileText },
+    ],
+  },
   {
     name: '暗渠工事',
     href: '/underdrain',
@@ -171,9 +186,16 @@ export function AppLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { user, displayName, organizationName, isOrgAdmin, signOut } = useAuth()
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    new Set(['暗渠工事']) // デフォルトで暗渠工事を展開
-  )
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
+    // 既定 は 暗渠工事。 加えて、今 開いて いる ページ を 含む 束 も 開いて おく
+    // (束 に まとめた 途端 に 行き先 が 見えなく なる のを 避ける)
+    const open = new Set(['暗渠工事'])
+    const path = window.location.pathname
+    for (const g of navigation) {
+      if (g.children?.some((c) => path.startsWith(c.href))) open.add(g.name)
+    }
+    return open
+  })
 
   // 設定ストア
   const { hasUnsavedChanges } = useSettingsStore()
