@@ -48,8 +48,10 @@ import {
   type PlacementMethod,
   type SitePlan,
   type TermKind,
+  makerTitle,
 } from './floorPlanTypes'
 import { FigureOutlinePreview } from './FloorPlanPreview'
+import { useOrganizationSurveyors } from './useOrganizationSurveyors'
 import { SHEET, buildSheet, type LineStyle } from './floorPlanDraw'
 import {
   CUT_DIR_LABEL,
@@ -248,6 +250,8 @@ export function StepBuilding({
         />
       </Field>
 
+      <MakerFields plan={plan} onPatch={onPatch} />
+
       {parcels.length > 0 && (
         <>
           <div className="pt-2 mt-2 border-t text-xs font-semibold text-slate-500">
@@ -356,6 +360,154 @@ function ParcelPicker({
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * 作製者 / 申請人 / 備考。
+ *
+ * 作製者 は 「設定 > 土地家屋調査士設定」 に 登録 した 人 から 選ぶ だけ。
+ * 住所 も 法人名 も 立場 も そちら に 揃って いる ので 打ち直さない。
+ * 登録 が 無い とき や 例外 の ときの ため に 直接入力 も 残す。
+ */
+function MakerFields({ plan, onPatch }: { plan: FloorPlan; onPatch: Patch }) {
+  const frame = plan.frame
+  const setFrame = (p: Partial<FloorPlanFrame>) => onPatch({ frame: { ...frame, ...p } })
+  const { surveyors, loading } = useOrganizationSurveyors()
+  const [manual, setManual] = useState(false)
+
+  // 名前 で 突き合わせる (図面 に 残る のは 名前 な ので)
+  const picked = surveyors.find((s) => s.name === frame.makerName) ?? null
+
+  const applySurveyor = (id: string) => {
+    const s = surveyors.find((x) => x.id === id)
+    if (!s) {
+      setFrame({ makerName: '', makerAddress: '', makerCorporation: '', makerRole: undefined })
+      return
+    }
+    setFrame({
+      makerName: s.name,
+      makerAddress: s.officeAddress ?? '',
+      makerCorporation: s.corporationName ?? '',
+      makerRole: s.corporationRole ?? undefined,
+    })
+  }
+
+  return (
+    <>
+      <div className="pt-2 mt-2 border-t text-xs font-semibold text-slate-500">作製者</div>
+      <Field label="作製年月日" hint="表題欄には「（令和5年11月15日作製）」と出ます。">
+        <input
+          type="date"
+          className={inputCls}
+          value={frame.createdOn ?? ''}
+          onChange={(e) => setFrame({ createdOn: e.target.value || null })}
+        />
+      </Field>
+
+      {!manual && (
+        <Field
+          label="作製者"
+          hint="「設定 > 土地家屋調査士設定」に登録した人から選びます。住所・法人名・立場も一緒に入ります。"
+        >
+          <select
+            className={inputCls}
+            value={picked?.id ?? ''}
+            onChange={(e) => applySurveyor(e.target.value)}
+            disabled={loading}
+          >
+            <option value="">（未選択）</option>
+            {surveyors.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+                {s.corporationName ? `（${s.corporationName}）` : ''}
+              </option>
+            ))}
+          </select>
+          {!loading && surveyors.length === 0 && (
+            <div className="mt-1 text-[11px] text-amber-700">
+              登録がありません。「設定 &gt; 土地家屋調査士設定」で登録してください。
+            </div>
+          )}
+          {frame.makerName && (
+            <div className="mt-1 px-2 py-1 rounded bg-slate-50 border text-[11px] text-slate-600 space-y-0.5">
+              <div>{frame.makerAddress || '（住所未登録）'}</div>
+              <div>
+                <span className="text-slate-400 mr-1">{makerTitle(frame)}</span>
+                {frame.makerName}
+              </div>
+              {frame.makerCorporation && <div>{frame.makerCorporation}</div>}
+            </div>
+          )}
+        </Field>
+      )}
+
+      {manual && (
+        <>
+          <Field label="住所">
+            <input
+              className={inputCls}
+              value={frame.makerAddress}
+              onChange={(e) => setFrame({ makerAddress: e.target.value })}
+              placeholder="例: 斜里郡斜里町青葉町9番地13"
+            />
+          </Field>
+          <Field label="法人名" hint="土地家屋調査士法人のときだけ。個人なら空のまま。">
+            <input
+              className={inputCls}
+              value={frame.makerCorporation}
+              onChange={(e) => setFrame({ makerCorporation: e.target.value })}
+              placeholder="例: 土地家屋調査士法人〇〇"
+            />
+          </Field>
+          {frame.makerCorporation.trim() !== '' && (
+            <Field label="立場" hint="法人の場合、表題欄には資格ではなくこちらを出します。">
+              <select
+                className={inputCls}
+                value={frame.makerRole ?? 'member'}
+                onChange={(e) =>
+                  setFrame({ makerRole: e.target.value as 'member' | 'representative' })
+                }
+              >
+                <option value="representative">代表社員</option>
+                <option value="member">社員</option>
+              </select>
+            </Field>
+          )}
+          <Field label="氏名">
+            <input
+              className={inputCls}
+              value={frame.makerName}
+              onChange={(e) => setFrame({ makerName: e.target.value })}
+            />
+          </Field>
+        </>
+      )}
+      <div className="pl-28">
+        <label className="flex items-center gap-1 text-[11px] text-slate-500">
+          <input type="checkbox" checked={manual} onChange={(e) => setManual(e.target.checked)} />
+          一覧にない場合は直接入力する
+        </label>
+      </div>
+
+      <div className="pt-2 mt-2 border-t text-xs font-semibold text-slate-500">申請人</div>
+      <Field label="氏名">
+        <input
+          className={inputCls}
+          value={frame.applicantName}
+          onChange={(e) => setFrame({ applicantName: e.target.value })}
+        />
+      </Field>
+
+      <div className="pt-2 mt-2 border-t" />
+      <Field label="備考">
+        <textarea
+          className={`${inputCls} h-16`}
+          value={frame.remarks}
+          onChange={(e) => setFrame({ remarks: e.target.value })}
+        />
+      </Field>
+    </>
   )
 }
 
@@ -1889,9 +2041,6 @@ export function StepFrame({
   parcels: ParcelOption[]
   onPatch: Patch
 }) {
-  const frame = plan.frame
-  const setFrame = (p: Partial<FloorPlanFrame>) => onPatch({ frame: { ...frame, ...p } })
-
   return (
     <div className="flex gap-4 h-full min-h-0">
       <div className="w-[24rem] shrink-0 overflow-auto space-y-1">
@@ -1921,73 +2070,9 @@ export function StepFrame({
           </div>
         </Field>
 
-        <div className="pt-2 mt-2 border-t text-xs font-semibold text-slate-500">作製者</div>
-        <Field label="作製年月日" hint="表題欄には「（令和5年11月15日作製）」と出ます。">
-          <input
-            type="date"
-            className={inputCls}
-            value={frame.createdOn ?? ''}
-            onChange={(e) => setFrame({ createdOn: e.target.value || null })}
-          />
-        </Field>
-        <Field label="住所">
-          <input
-            className={inputCls}
-            value={frame.makerAddress}
-            onChange={(e) => setFrame({ makerAddress: e.target.value })}
-            placeholder="例: 斜里郡斜里町青葉町9番地13"
-          />
-        </Field>
-        <Field
-          label="法人名"
-          hint="土地家屋調査士法人のときだけ入れます。氏名の上に出ます。個人なら空のまま。"
-        >
-          <input
-            className={inputCls}
-            value={frame.makerCorporation}
-            onChange={(e) => setFrame({ makerCorporation: e.target.value })}
-            placeholder="例: 土地家屋調査士法人〇〇"
-          />
-        </Field>
-        {frame.makerCorporation.trim() !== '' && (
-          <Field label="立場" hint="法人の場合、表題欄には資格ではなくこちらを出します。">
-            <select
-              className={inputCls}
-              value={frame.makerRole ?? 'member'}
-              onChange={(e) =>
-                setFrame({ makerRole: e.target.value as 'member' | 'representative' })
-              }
-            >
-              <option value="representative">代表社員</option>
-              <option value="member">社員</option>
-            </select>
-          </Field>
-        )}
-        <Field label="氏名" hint="資格「土地家屋調査士」は様式で固定のため入力は不要です。">
-          <input
-            className={inputCls}
-            value={frame.makerName}
-            onChange={(e) => setFrame({ makerName: e.target.value })}
-          />
-        </Field>
-
-        <div className="pt-2 mt-2 border-t text-xs font-semibold text-slate-500">申請人</div>
-        <Field label="氏名">
-          <input
-            className={inputCls}
-            value={frame.applicantName}
-            onChange={(e) => setFrame({ applicantName: e.target.value })}
-          />
-        </Field>
-
-        <div className="pt-2 mt-2 border-t" />
-        <Field label="備考">
-          <textarea
-            className={`${inputCls} h-16`}
-            value={frame.remarks}
-            onChange={(e) => setFrame({ remarks: e.target.value })}
-          />
-        </Field>
+        <div className="mt-3 px-2 py-1.5 rounded bg-slate-50 border text-[11px] text-slate-500">
+          作製者・申請人・備考は「1 建物情報」で入れます。
+        </div>
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col min-h-0">

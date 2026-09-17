@@ -25,10 +25,10 @@ import {
 import { StepBuilding, StepFigures, StepFrame, StepSite } from './FloorPlanSteps'
 
 const STEPS = [
-  { key: 1, label: '建物情報', hint: '所在・地番・家屋番号' },
+  { key: 1, label: '建物情報', hint: '所在・作製者・申請人' },
   { key: 2, label: '階層・形状寸法', hint: '形状と求積表' },
   { key: 3, label: '配置', hint: '建物図面（右半分）' },
-  { key: 4, label: '図枠要素', hint: '表題欄と縮尺' },
+  { key: 4, label: '図枠要素', hint: '縮尺と出力' },
 ] as const
 
 /** 一覧 に 出す 見出し */
