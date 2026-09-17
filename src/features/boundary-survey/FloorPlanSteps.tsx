@@ -225,14 +225,6 @@ export function StepBuilding({
       <div className="pt-2 mt-2 border-t text-xs font-semibold text-slate-500">
         参考情報（申請書と合わせる用。図面には出しません）
       </div>
-      <Field label="地番">
-        <input
-          className={inputCls}
-          value={plan.parcel_number ?? ''}
-          onChange={(e) => onPatch({ parcel_number: e.target.value })}
-          placeholder="例: 54番10"
-        />
-      </Field>
       <Field label="種類">
         <input
           className={inputCls}
@@ -2042,50 +2034,49 @@ export function StepFrame({
   onPatch: Patch
 }) {
   return (
-    <div className="flex gap-4 h-full min-h-0">
-      <div className="w-[24rem] shrink-0 overflow-auto space-y-1">
-        <Field label="用紙">
-          <div className="px-2 py-1 text-sm text-slate-600 bg-slate-100 rounded inline-block">
-            B4 横（364 × 257 mm）
-          </div>
-        </Field>
-        <Field label="縮尺" hint="各階平面図は 1/250、建物図面は 1/500 が原則です。">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 w-16">各階平面図</span>
-            <span className="text-sm text-slate-600">1 /</span>
-            <NumField
-              value={plan.plan_scale}
-              onChange={(v) => onPatch({ plan_scale: Math.max(1, v) })}
-              className="w-20 px-2 py-1 text-sm border rounded text-right font-mono"
-            />
-          </div>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-xs text-slate-500 w-16">建物図面</span>
-            <span className="text-sm text-slate-600">1 /</span>
-            <NumField
-              value={plan.site_scale}
-              onChange={(v) => onPatch({ site_scale: Math.max(1, v) })}
-              className="w-20 px-2 py-1 text-sm border rounded text-right font-mono"
-            />
-          </div>
-        </Field>
-
-        <div className="mt-3 px-2 py-1.5 rounded bg-slate-50 border text-[11px] text-slate-500">
-          作製者・申請人・備考は「1 建物情報」で入れます。
+    <div className="flex flex-col h-full min-h-0">
+      {/* 入力 は 縮尺 だけ に なった ので 図 の 上 に 横一列 で 置き、図 を 広く 取る */}
+      <div className="flex items-center gap-4 flex-wrap pb-2 border-b">
+        <span className="text-xs text-slate-600">
+          用紙 <span className="ml-1 px-2 py-0.5 rounded bg-slate-100">B4 横（364 × 257 mm）</span>
+        </span>
+        <span className="flex items-center gap-1 text-xs text-slate-600">
+          各階平面図
+          <span className="text-slate-500">1 /</span>
+          <NumField
+            value={plan.plan_scale}
+            onChange={(v) => onPatch({ plan_scale: Math.max(1, v) })}
+            className="w-20 px-2 py-1 text-sm border rounded text-right font-mono"
+          />
+        </span>
+        <span className="flex items-center gap-1 text-xs text-slate-600">
+          建物図面
+          <span className="text-slate-500">1 /</span>
+          <NumField
+            value={plan.site_scale}
+            onChange={(v) => onPatch({ site_scale: Math.max(1, v) })}
+            className="w-20 px-2 py-1 text-sm border rounded text-right font-mono"
+          />
+        </span>
+        <span className="text-[11px] text-slate-400">
+          各階平面図は 1/250、建物図面は 1/500 が原則
+        </span>
+        <div className="ml-auto">
+          <ExportBar plan={plan} parcels={parcels} />
         </div>
       </div>
 
-      <div className="flex-1 min-w-0 flex flex-col min-h-0">
-        <div className="text-xs font-semibold text-slate-500 mb-1">用紙の下絵（B4 横）</div>
-        <div className="flex-1 min-h-0 border rounded bg-slate-100 p-3 overflow-auto">
-          <SheetPreview plan={plan} parcels={parcels} />
-        </div>
-        <ExportBar plan={plan} parcels={parcels} />
+      <div className="flex-1 min-h-0 mt-2 border rounded bg-slate-100 p-3 overflow-auto">
+        <SheetPreview plan={plan} parcels={parcels} />
+      </div>
+      <div className="mt-1 text-[11px] text-slate-400">
+        作製者・申請人・備考は「1 建物情報」で入れます。
+        TIF は 400dpi の白黒 2 値（提出用）、PDF は同じ画像を 1 枚に収めたもの、
+        P21 は SXF の線と文字なので CAD で編集できます。
       </div>
     </div>
   )
 }
-
 
 /** 成果 の 書き出し */
 function ExportBar({ plan, parcels }: { plan: FloorPlan; parcels: ParcelOption[] }) {
@@ -2130,7 +2121,7 @@ function ExportBar({ plan, parcels }: { plan: FloorPlan; parcels: ParcelOption[]
   }
 
   return (
-    <div className="mt-2">
+    <div className="relative">
       <div className="flex items-center gap-2">
         <span className="text-xs text-slate-500">成果の出力</span>
         {(['p21', 'tif', 'pdf'] as const).map((k) => (
@@ -2150,11 +2141,11 @@ function ExportBar({ plan, parcels }: { plan: FloorPlan; parcels: ParcelOption[]
           </button>
         ))}
       </div>
-      <div className="mt-1 text-[11px] text-slate-400">
-        TIF は 400dpi の白黒 2 値（提出用）。PDF は同じ画像を 1 枚に収めたもの。
-        P21 は SXF の線と文字で出すので CAD で編集できます。
-      </div>
-      {note && <div className="mt-1 text-[11px] text-slate-600">{note}</div>}
+      {note && (
+        <div className="absolute right-0 top-full mt-1 px-2 py-1 rounded bg-slate-800 text-white text-[11px] whitespace-nowrap shadow">
+          {note}
+        </div>
+      )}
     </div>
   )
 }

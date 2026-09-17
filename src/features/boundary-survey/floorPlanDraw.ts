@@ -557,19 +557,22 @@ function drawSite(
       w: LW_FIG * 1.6,
       layer: L.figure,
     })
-    // 附属建物 は 符号 を 添える
-    if (b.key !== 'main') {
+    // 棟 の 印。 主である建物 は 「主」、附属建物 は 符号。 どちら も 丸 で 囲む。
+    // 附属建物 が 無ければ 区別 する 必要 が 無い ので 主 は 省く。
+    const mark = b.key === 'main' ? (buildings.length > 1 ? '主' : '') : b.key.slice(6)
+    if (mark) {
       const c = {
         e: b.pts.reduce((s2, p) => s2 + p.e, 0) / b.pts.length,
         n: b.pts.reduce((s2, p) => s2 + p.n, 0) / b.pts.length,
       }
       const p = toSheet(c.e, c.n)
+      out.push({ kind: 'circle', cx: p.x, cy: p.y, r: 1.9, w: LW, layer: L.title })
       out.push({
         kind: 'text',
         x: p.x,
-        y: p.y,
-        text: b.key.slice(6),
-        h: 2.4,
+        y: p.y + 0.95,
+        text: mark,
+        h: 2.6,
         anchor: 'middle',
         rot: 0,
         layer: L.title,
