@@ -90,6 +90,7 @@ export function FloorPlanPage() {
       parcelId: p?.id && p.id !== 'pending' ? p.id : null,
       workAreaId: wa.id,
       label: p?.parcel_number || wa.name || wa.zoneNumber || wa.id.slice(0, 8),
+      location: p?.location ?? null,
       points: src.map((q) => ({ id: q.id, pointNumber: q.pointNumber, x: q.x, y: q.y })),
       pointIds: wa.confirmedPoints.length > 0 ? wa.confirmedPointIds : wa.pointIds,
     }

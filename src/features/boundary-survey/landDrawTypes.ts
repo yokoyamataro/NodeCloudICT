@@ -49,6 +49,20 @@ export function defaultMarkerColumns(): MarkerColumn[] {
   }))
 }
 
+/** 選んだ 地番 から 表題 (地番 の 並び と 所在) を 作る */
+export function headerFromParcels(
+  picked: { label: string; location: string | null }[],
+): { title: string; location: string } {
+  const title = picked.map((p) => p.label).filter(Boolean).join(', ')
+  // 所在 は 筆 に よらず 同じ の が 普通。 違う ときは 出て きた 順 に 並べる
+  const locs: string[] = []
+  for (const p of picked) {
+    const l = (p.location ?? '').trim()
+    if (l && !locs.includes(l)) locs.push(l)
+  }
+  return { title, location: locs.join('、') }
+}
+
 /** 境界標 の 表 を 作る ため の 筆界点 */
 export interface MarkerSourcePoint {
   pointNumber: string
@@ -125,6 +139,11 @@ export interface LandDrawSpec {
    * 手 で 直した ら false に して、以後 は 触らない。
    */
   markerAuto?: boolean
+  /**
+   * true (既定) の 間 は 地番 を 変える たび に 表題 (地番 と 所在) を
+   * 取り直す。 手 で 直した ら false。
+   */
+  headerAuto?: boolean
   /** 測量年月日 */
   surveyedOn: string | null
   /** 座標系 (平面直角 の 系番号) */
@@ -148,6 +167,7 @@ export const DEFAULT_LAND_SPEC: LandDrawSpec = {
   mapNumber: '',
   markerColumns: defaultMarkerColumns(),
   markerAuto: true,
+  headerAuto: true,
   surveyedOn: null,
   zone: 13,
   datumTitle: '与点の成果　世界測地系　測地成果2024',

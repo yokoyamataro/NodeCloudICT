@@ -19,18 +19,12 @@ import { useLandDrawStore, type LandDrawPatch } from '@/stores/landDrawStore'
 import type { ParcelOption } from './floorPlanTypes'
 import { calcParcelArea, n2, type LandSurveyDrawing } from './landDrawTypes'
 import type { ControlPointForDraw } from './landDrawSheet'
-import {
-  LandStepControls,
-  LandStepFrame,
-  LandStepInfo,
-  LandStepParcels,
-} from './LandDrawSteps'
+import { LandStepControls, LandStepFrame, LandStepParcels } from './LandDrawSteps'
 
 const STEPS = [
-  { key: 1, label: '図面情報', hint: '所在・作製者・申請人' },
-  { key: 2, label: '対象地番', hint: '地番と境界標' },
-  { key: 3, label: '基準点', hint: '与点の成果' },
-  { key: 4, label: '図枠', hint: '縮尺と出力' },
+  { key: 1, label: '対象地番', hint: '地番・境界標・表題' },
+  { key: 2, label: '基準点', hint: '与点の成果' },
+  { key: 3, label: '図枠', hint: '縮尺と出力' },
 ] as const
 
 function planTitle(p: LandSurveyDrawing): string {
@@ -60,7 +54,7 @@ export function LandSurveyDrawingPage() {
   const { coordinates, fetchCoordinates } = useCoordinateStore()
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1)
+  const [step, setStep] = useState<1 | 2 | 3>(1)
 
   const zone = useMemo(
     () => projects.find((p) => p.id === currentFarm?.project_id)?.coordinate_zone ?? 13,
@@ -100,6 +94,7 @@ export function LandSurveyDrawingPage() {
       parcelId: p?.id && p.id !== 'pending' ? p.id : null,
       workAreaId: wa.id,
       label: p?.parcel_number || wa.name || wa.zoneNumber || wa.id.slice(0, 8),
+      location: p?.location ?? null,
       points: src.map((q) => ({ id: q.id, pointNumber: q.pointNumber, x: q.x, y: q.y })),
       pointIds: wa.confirmedPoints.length > 0 ? wa.confirmedPointIds : wa.pointIds,
     }
@@ -305,8 +300,7 @@ export function LandSurveyDrawingPage() {
               </div>
 
               <div className="flex-1 min-h-0 overflow-auto p-4">
-                {step === 1 && <LandStepInfo plan={selected} onPatch={onPatch} />}
-                {step === 2 && (
+                {step === 1 && (
                   <LandStepParcels
                     plan={selected}
                     parcels={parcels}
@@ -317,10 +311,10 @@ export function LandSurveyDrawingPage() {
                     onPatch={onPatch}
                   />
                 )}
-                {step === 3 && (
+                {step === 2 && (
                   <LandStepControls plan={selected} controls={controls} onPatch={onPatch} />
                 )}
-                {step === 4 && (
+                {step === 3 && (
                   <LandStepFrame
                     plan={selected}
                     parcels={parcels}
@@ -333,7 +327,7 @@ export function LandSurveyDrawingPage() {
               <div className="px-4 py-2 border-t bg-white flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setStep((s) => (s > 1 ? ((s - 1) as 1 | 2 | 3) : s))}
+                  onClick={() => setStep((s) => (s > 1 ? ((s - 1) as 1 | 2) : s))}
                   disabled={step === 1}
                   className="px-3 py-1 text-sm border rounded disabled:opacity-40 hover:bg-slate-50"
                 >
@@ -341,8 +335,8 @@ export function LandSurveyDrawingPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setStep((s) => (s < 4 ? ((s + 1) as 2 | 3 | 4) : s))}
-                  disabled={step === 4}
+                  onClick={() => setStep((s) => (s < 3 ? ((s + 1) as 2 | 3) : s))}
+                  disabled={step === 3}
                   className="px-3 py-1 text-sm border rounded bg-blue-600 text-white border-blue-600 disabled:opacity-40 hover:bg-blue-700"
                 >
                   次へ

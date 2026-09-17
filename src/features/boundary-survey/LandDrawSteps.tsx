@@ -14,6 +14,7 @@ import type { LandDrawPatch } from '@/stores/landDrawStore'
 import {
   LAND_SCALES,
   MARKER_PRESETS,
+  headerFromParcels,
   markersFromPoints,
   type LandSurveyDrawing,
   type MarkerColumn,
@@ -58,26 +59,20 @@ function Field({
   )
 }
 
-// ========================================================================
-// 1. 図面情報
-// ========================================================================
-export function LandStepInfo({
-  plan,
-  onPatch,
-}: {
-  plan: LandSurveyDrawing
-  onPatch: Patch
-}) {
+/** 図面 の 表題 と 注記。 対象地番 の 段 の 中 に 置く */
+function InfoFields({ plan, onPatch }: { plan: LandSurveyDrawing; onPatch: Patch }) {
   const spec = plan.spec
   const setSpec = (p: Partial<typeof spec>) => onPatch({ spec: { ...spec, ...p } })
 
   return (
-    <div className="max-w-2xl space-y-1">
-      <Field label="図面名" hint="用紙上部の「地番」欄にもこの文字が出ます。例: 251-1, 251-2">
+    <div className="space-y-1">
+      <Field label="地番" hint="選んだ地番から入ります。直すと以後は自動で書き換えません。">
         <input
           className={inputCls}
           value={plan.title ?? ''}
-          onChange={(e) => onPatch({ title: e.target.value })}
+          onChange={(e) =>
+            onPatch({ title: e.target.value, spec: { ...spec, headerAuto: false } })
+          }
           placeholder="例: 251-1, 251-2"
         />
       </Field>
@@ -85,7 +80,9 @@ export function LandStepInfo({
         <input
           className={inputCls}
           value={plan.location ?? ''}
-          onChange={(e) => onPatch({ location: e.target.value })}
+          onChange={(e) =>
+            onPatch({ location: e.target.value, spec: { ...spec, headerAuto: false } })
+          }
           placeholder="例: 目梨郡羅臼町知昭町"
         />
       </Field>
@@ -115,10 +112,6 @@ export function LandStepInfo({
           <span className="text-xs text-slate-500">系</span>
         </div>
       </Field>
-
-      <div className="pt-2 mt-2 px-2 py-1.5 rounded bg-slate-50 border text-[11px] text-slate-500">
-        境界標の種類・筆界点の記号は「2 対象地番」で、選んだ地番の杭種から自動で作ります。
-      </div>
 
       <div className="pt-3 mt-2 border-t text-xs font-semibold text-slate-500">
         座標変換のパラメータ（省略可）
@@ -158,7 +151,7 @@ export function LandStepInfo({
 }
 
 // ========================================================================
-// 2. 対象地番
+// 1. 対象地番 と 図面情報
 // ========================================================================
 export function LandStepParcels({
   plan,
@@ -194,13 +187,20 @@ export function LandStepParcels({
   }
 
   const setParcels = (ids: string[]) => {
-    const auto = markersOf(ids)
+    const picked = ids
+      .map((id) => parcels.find((p) => p.parcelId === id))
+      .filter((p): p is ParcelOption => p != null)
+    const head = headerFromParcels(picked)
     onPatch({
+      // 地番 を 変えたら 表題 も 取り直す (手 で 直して いた 場合 は そのまま)
+      ...(spec.headerAuto === false
+        ? {}
+        : { title: head.title, location: head.location || null }),
       spec: {
         ...spec,
         parcelIds: ids,
-        // 地番 を 変えたら 境界標 も 取り直す (手 で 直して いた 場合 は そのまま)
-        markerColumns: spec.markerAuto === false ? spec.markerColumns : auto,
+        // 境界標 も 同じ 扱い
+        markerColumns: spec.markerAuto === false ? spec.markerColumns : markersOf(ids),
       },
     })
   }
@@ -323,6 +323,11 @@ export function LandStepParcels({
               <option key={m} value={m} />
             ))}
           </datalist>
+        </div>
+
+        {/* 図面 の 表題 と 注記、作製者 / 申請人 */}
+        <div className="mt-3 pt-3 border-t">
+          <InfoFields plan={plan} onPatch={onPatch} />
         </div>
       </div>
 

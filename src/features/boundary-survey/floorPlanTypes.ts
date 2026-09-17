@@ -352,6 +352,8 @@ export interface ParcelOption {
   /** design_work_areas.id */
   workAreaId: string
   label: string
+  /** 土地 の 所在 (parcels.location)。 図面 の 表題 に 使う */
+  location: string | null
   /** 敷地 を 描く 構成点 (確定境界 が あれば そちら) */
   points: { id: string; pointNumber: string; x: number; y: number }[]
   pointIds: string[]
