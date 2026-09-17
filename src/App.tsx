@@ -39,8 +39,9 @@ import { FarmMemosPage } from '@/features/memo/FarmMemosPage'
 import { BoundarySurveyWorkAreaPage } from '@/features/boundary-survey/BoundarySurveyWorkAreaPage'
 import { LandownersPage } from '@/features/boundary-survey/LandownersPage'
 import { LandReportPage } from '@/features/boundary-survey/LandReportPage'
-import { LandSurveyDrawingPage } from '@/features/boundary-survey/LandSurveyDrawingPage'
+
 import { FloorPlanPage } from '@/features/boundary-survey/FloorPlanPage'
+import { LandSurveyDrawingPage } from '@/features/boundary-survey/LandSurveyDrawingPage'
 import { BuildingReportPage } from '@/features/boundary-survey/BuildingReportPage'
 import { RegistryMapWorkPage } from '@/features/boundary-survey/RegistryMapWorkPage'
 // オルソ画像

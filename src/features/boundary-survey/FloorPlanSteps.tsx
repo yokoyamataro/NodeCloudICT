@@ -244,7 +244,7 @@ export function StepBuilding({
         />
       </Field>
 
-      <MakerFields plan={plan} onPatch={onPatch} />
+      <MakerFields frame={plan.frame} onFrame={(frame) => onPatch({ frame })} />
 
       {parcels.length > 0 && (
         <>
@@ -364,9 +364,14 @@ function ParcelPicker({
  * 住所 も 法人名 も 立場 も そちら に 揃って いる ので 打ち直さない。
  * 登録 が 無い とき や 例外 の ときの ため に 直接入力 も 残す。
  */
-function MakerFields({ plan, onPatch }: { plan: FloorPlan; onPatch: Patch }) {
-  const frame = plan.frame
-  const setFrame = (p: Partial<FloorPlanFrame>) => onPatch({ frame: { ...frame, ...p } })
+export function MakerFields({
+  frame,
+  onFrame,
+}: {
+  frame: FloorPlanFrame
+  onFrame: (frame: FloorPlanFrame) => void
+}) {
+  const setFrame = (p: Partial<FloorPlanFrame>) => onFrame({ ...frame, ...p })
   const { surveyors, loading } = useOrganizationSurveyors()
   const [manual, setManual] = useState(false)
 
