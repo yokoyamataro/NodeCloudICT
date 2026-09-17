@@ -43,8 +43,6 @@ import { isAdmin } from '@/lib/admin'
 import type { Organization, OrgProduct } from '@/types/database'
 import { SiteUsageView } from './SiteUsageView'
 import { OrgMembersView } from './OrgMembersView'
-import { OrgSurveyorsView } from './OrgSurveyorsView'
-import { OrgReportSnippetsView } from './OrgReportSnippetsView'
 
 // --- 組織情報フォームのドラフト型 ---
 interface OrgDraft {
@@ -415,7 +413,6 @@ function SiteOwnerUnifiedView() {
                   organizationName={selectedOrg.name}
                   userCountLimit={selectedOrg.user_count_limit}
                   expiresAt={selectedOrg.expires_at}
-                  editable={true}
                 />
               </div>
             </>
@@ -512,7 +509,6 @@ function OrgAdminUnifiedView({ adminOrgs }: { adminOrgs: AdminOrgRow[] }) {
                 organizationName={org.name}
                 userCountLimit={org.user_count_limit}
                 expiresAt={org.expires_at}
-                editable={true}
               />
             </div>
           </>
@@ -523,22 +519,23 @@ function OrgAdminUnifiedView({ adminOrgs }: { adminOrgs: AdminOrgRow[] }) {
 }
 
 // ============================================================
-// 組織の下部タブ (メンバー / 調査士セット / 定型文)
+// 組織の下部タブ (メンバー)
+//
+// 土地家屋調査士 と 定型文 は 現場 で 使う もの な ので、
+// 工区 の 「設定 > 土地家屋調査士設定」 に 移した。
 // ============================================================
-type OrgSubTab = 'members' | 'surveyors' | 'snippets'
+type OrgSubTab = 'members'
 
 function OrgSubTabs({
   organizationId,
   organizationName,
   userCountLimit,
   expiresAt,
-  editable,
 }: {
   organizationId: string
   organizationName: string
   userCountLimit?: number | null
   expiresAt?: string | null
-  editable: boolean
 }) {
   const [tab, setTab] = useState<OrgSubTab>('members')
   return (
@@ -547,8 +544,6 @@ function OrgSubTabs({
         {(
           [
             { key: 'members', label: 'メンバー' },
-            { key: 'surveyors', label: '土地家屋調査士' },
-            { key: 'snippets', label: '定型文' },
           ] as const
         ).map((t) => (
           <button
@@ -572,12 +567,6 @@ function OrgSubTabs({
           userCountLimit={userCountLimit}
           expiresAt={expiresAt}
         />
-      )}
-      {tab === 'surveyors' && (
-        <OrgSurveyorsView organizationId={organizationId} editable={editable} />
-      )}
-      {tab === 'snippets' && (
-        <OrgReportSnippetsView organizationId={organizationId} editable={editable} />
       )}
     </>
   )

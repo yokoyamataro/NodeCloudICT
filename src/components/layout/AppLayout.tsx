@@ -155,7 +155,16 @@ const navigation: NavGroup[] = [
     ],
   },
   { name: 'ファイル', href: '/files', icon: FolderOpen },
-  { name: '設定', href: '/settings', icon: Settings },
+  {
+    name: '設定',
+    href: '/settings',
+    icon: Settings,
+    children: [
+      { name: '工区情報', href: '/settings/farm', icon: Square },
+      // 組織 の 共通設定。 直せる のは 組織 の 管理者 だけ
+      { name: '土地家屋調査士設定', href: '/settings/surveyor', icon: ShieldCheck },
+    ],
+  },
 ]
 
 export function AppLayout() {

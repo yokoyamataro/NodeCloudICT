@@ -57,6 +57,7 @@ import { TrashPage } from '@/features/trash/TrashPage'
 import { RegistryCredentialsPage } from '@/features/settings/RegistryCredentialsPage'
 import { PasswordSettingsPage } from '@/features/settings/PasswordSettingsPage'
 import { FarmSettingsPage } from '@/features/settings/FarmSettingsPage'
+import { SurveyorSettingsPage } from '@/features/settings/SurveyorSettingsPage'
 import { FarmFilesPage } from '@/features/files/FarmFilesPage'
 // モビリティ (社員/車両/重機の位置管理) - 現状はサイトオーナーのみプレビュー
 import { MobilityHomePage } from '@/features/mobility/MobilityHomePage'
@@ -376,7 +377,12 @@ function AppRoutes() {
           <Route path="alignment" element={<OpenChannelAlignmentPage />} />
         </Route>
         <Route path="files" element={<FarmFilesPage />} />
-        <Route path="settings" element={<FarmSettingsPage />} />
+        {/* 設定。 工区情報 が これまで の 設定、土地家屋調査士設定 は 組織 の 共通 */}
+        <Route path="settings">
+          <Route index element={<FarmSettingsPage />} />
+          <Route path="farm" element={<FarmSettingsPage />} />
+          <Route path="surveyor" element={<SurveyorSettingsPage />} />
+        </Route>
         <Route path="trash" element={<TrashPage />} />
         {/* モビリティ管理画面: サイトオーナー or 組織 admin のみ。
             非 admin は自動的に /mobility/drive にリダイレクトされる (Site owner 以外の
