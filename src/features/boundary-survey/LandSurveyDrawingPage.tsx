@@ -22,8 +22,8 @@ import type { ControlPointForDraw } from './landDrawSheet'
 import { LandStepControls, LandStepFrame, LandStepParcels } from './LandDrawSteps'
 
 const STEPS = [
-  { key: 1, label: '対象地番', hint: '地番・境界標・表題' },
-  { key: 2, label: '基準点', hint: '与点の成果' },
+  { key: 1, label: '対象地番', hint: '地番と表題' },
+  { key: 2, label: '基準点・境界情報', hint: '与点・変換・境界標' },
   { key: 3, label: '図枠', hint: '縮尺と出力' },
 ] as const
 
@@ -312,7 +312,13 @@ export function LandSurveyDrawingPage() {
                   />
                 )}
                 {step === 2 && (
-                  <LandStepControls plan={selected} controls={controls} onPatch={onPatch} />
+                  <LandStepControls
+                    plan={selected}
+                    parcels={parcels}
+                    stakeById={stakeById}
+                    controls={controls}
+                    onPatch={onPatch}
+                  />
                 )}
                 {step === 3 && (
                   <LandStepFrame

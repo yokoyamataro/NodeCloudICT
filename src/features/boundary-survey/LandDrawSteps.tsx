@@ -1,9 +1,8 @@
 // 地積測量図 の 作成手順 (1〜4) の 中身。
 //
-//   1 図面情報 … 地図番号 / 所在 / 作製者 / 申請人
-//   2 対象地番 … 1 筆 でも 数筆 でも
-//   3 基準点   … 与点 の 成果 に 載せる 点
-//   4 図枠     … 縮尺 と 下絵 と 出力
+//   1 対象地番        … 地番 を 選ぶ と 表題 が 入る。 地図 から も 選べる
+//   2 基準点・境界情報 … 与点 の 成果 / 座標変換 の パラメータ / 境界標 の 表
+//   3 図枠            … 縮尺 と 下絵 と 出力
 //
 // 作製者 / 申請人 の 入力 と 図枠 の 手直し は 建物図面 の 部品 を そのまま 使う。
 
@@ -113,7 +112,25 @@ function InfoFields({ plan, onPatch }: { plan: LandSurveyDrawing; onPatch: Patch
         </div>
       </Field>
 
-      <div className="pt-3 mt-2 border-t text-xs font-semibold text-slate-500">
+      {/* 作製者 / 申請人 は 建物図面 と 同じ 部品 */}
+      <MakerFields
+        frame={plan.frame}
+        onFrame={(frame) => onPatch({ frame })}
+      />
+    </div>
+  )
+}
+
+/**
+ * 座標変換 の パラメータ と 観測 の 注記。
+ * どちら も 基準点 に ついて の 話 な ので 「基準点・境界情報」 の 段 に 置く。
+ */
+function ParamFields({ plan, onPatch }: { plan: LandSurveyDrawing; onPatch: Patch }) {
+  const spec = plan.spec
+  const setSpec = (p: Partial<typeof spec>) => onPatch({ spec: { ...spec, ...p } })
+  return (
+    <div className="space-y-1 max-w-2xl">
+      <div className="text-xs font-semibold text-slate-500 mb-1">
         座標変換のパラメータ（省略可）
       </div>
       <Field label="TKY2JGD">
@@ -141,40 +158,27 @@ function InfoFields({ plan, onPatch }: { plan: LandSurveyDrawing; onPatch: Patch
         />
       </Field>
 
-      {/* 作製者 / 申請人 は 建物図面 と 同じ 部品 */}
-      <MakerFields
-        frame={plan.frame}
-        onFrame={(frame) => onPatch({ frame })}
-      />
     </div>
   )
 }
 
-// ========================================================================
-// 1. 対象地番 と 図面情報
-// ========================================================================
-export function LandStepParcels({
+/**
+ * 境界標 の 表。 選んだ 地番 の 筆界点 が 持つ 杭種 と 設置状態 から 作る。
+ * 境界 に ついて の 話 な ので 「基準点・境界情報」 の 段 に 置く。
+ */
+function MarkerFields({
   plan,
   parcels,
   stakeById,
-  farmId,
-  zone,
-  conv,
   onPatch,
 }: {
   plan: LandSurveyDrawing
   parcels: ParcelOption[]
-  /** 筆界点 の 杭種 と 設置状態 (境界標 の 表 を 作る ため) */
   stakeById: Map<string, { stakeType: string | null; stakeStatus: string }>
-  farmId: string | null
-  zone: number
-  conv: CoordinateConverter
   onPatch: Patch
 }) {
   const spec = plan.spec
   const chosen = spec.parcelIds
-
-  /** 選んだ 地番 の 筆界点 から 境界標 の 表 を 作る */
   const markersOf = (ids: string[]): MarkerColumn[] => {
     const pts = ids.flatMap((id) => parcels.find((p) => p.parcelId === id)?.points ?? [])
     return markersFromPoints(
@@ -185,65 +189,12 @@ export function LandStepParcels({
       })),
     )
   }
-
-  const setParcels = (ids: string[]) => {
-    const picked = ids
-      .map((id) => parcels.find((p) => p.parcelId === id))
-      .filter((p): p is ParcelOption => p != null)
-    const head = headerFromParcels(picked)
-    onPatch({
-      // 地番 を 変えたら 表題 も 取り直す (手 で 直して いた 場合 は そのまま)
-      ...(spec.headerAuto === false
-        ? {}
-        : { title: head.title, location: head.location || null }),
-      spec: {
-        ...spec,
-        parcelIds: ids,
-        // 境界標 も 同じ 扱い
-        markerColumns: spec.markerAuto === false ? spec.markerColumns : markersOf(ids),
-      },
-    })
-  }
-  const toggle = (parcelId: string) =>
-    setParcels(
-      chosen.includes(parcelId) ? chosen.filter((x) => x !== parcelId) : [...chosen, parcelId],
-    )
-
   const setMarkers = (cols: MarkerColumn[]) =>
     onPatch({ spec: { ...spec, markerColumns: cols, markerAuto: false } })
 
   return (
-    <div className="flex gap-4 h-full min-h-0">
-      <div className="w-[21rem] shrink-0 flex flex-col min-h-0 overflow-auto">
-        <div className="text-xs font-semibold text-slate-500 mb-1">
-          対象の地番（1 筆でも数筆でも）
-        </div>
-        <div className="text-[11px] text-slate-400 mb-1">
-          一覧のほか、右の地図の地番を押しても選べます。
-        </div>
-        <ul className="border rounded divide-y max-h-56 overflow-auto">
-          {parcels.length === 0 && (
-            <li className="p-3 text-xs text-slate-400">
-              地番がありません。地番管理で取り込んでください。
-            </li>
-          )}
-          {parcels.map((p) => (
-            <li key={p.workAreaId}>
-              <label className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-slate-50">
-                <input
-                  type="checkbox"
-                  checked={p.parcelId != null && chosen.includes(p.parcelId)}
-                  onChange={() => p.parcelId && toggle(p.parcelId)}
-                />
-                <span className="flex-1 min-w-0 truncate">{p.label}</span>
-                <span className="text-[11px] text-slate-400">{p.points.length} 点</span>
-              </label>
-            </li>
-          ))}
-        </ul>
-
-        {/* 境界標 の 表。 選んだ 地番 の 杭種 から 作る */}
-        <div className="mt-3 pt-3 border-t">
+    <div className="max-w-2xl">
+      <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-semibold text-slate-500">
               境界標の種類及び筆界点の記号
@@ -324,6 +275,98 @@ export function LandStepParcels({
             ))}
           </datalist>
         </div>
+    </div>
+  )
+}
+
+// ========================================================================
+// 1. 対象地番 と 図面情報
+// ========================================================================
+export function LandStepParcels({
+  plan,
+  parcels,
+  stakeById,
+  farmId,
+  zone,
+  conv,
+  onPatch,
+}: {
+  plan: LandSurveyDrawing
+  parcels: ParcelOption[]
+  /** 筆界点 の 杭種 と 設置状態 (境界標 の 表 を 作る ため) */
+  stakeById: Map<string, { stakeType: string | null; stakeStatus: string }>
+  farmId: string | null
+  zone: number
+  conv: CoordinateConverter
+  onPatch: Patch
+}) {
+  const spec = plan.spec
+  const chosen = spec.parcelIds
+
+  /** 選んだ 地番 の 筆界点 から 境界標 の 表 を 作る */
+  const markersOf = (ids: string[]): MarkerColumn[] => {
+    const pts = ids.flatMap((id) => parcels.find((p) => p.parcelId === id)?.points ?? [])
+    return markersFromPoints(
+      pts.map((q) => ({
+        pointNumber: q.pointNumber,
+        stakeType: stakeById.get(q.id)?.stakeType ?? null,
+        stakeStatus: stakeById.get(q.id)?.stakeStatus ?? '',
+      })),
+    )
+  }
+
+  const setParcels = (ids: string[]) => {
+    const picked = ids
+      .map((id) => parcels.find((p) => p.parcelId === id))
+      .filter((p): p is ParcelOption => p != null)
+    const head = headerFromParcels(picked)
+    onPatch({
+      // 地番 を 変えたら 表題 も 取り直す (手 で 直して いた 場合 は そのまま)
+      ...(spec.headerAuto === false
+        ? {}
+        : { title: head.title, location: head.location || null }),
+      spec: {
+        ...spec,
+        parcelIds: ids,
+        // 境界標 も 同じ 扱い
+        markerColumns: spec.markerAuto === false ? spec.markerColumns : markersOf(ids),
+      },
+    })
+  }
+  const toggle = (parcelId: string) =>
+    setParcels(
+      chosen.includes(parcelId) ? chosen.filter((x) => x !== parcelId) : [...chosen, parcelId],
+    )
+
+  return (
+    <div className="flex gap-4 h-full min-h-0">
+      <div className="w-[21rem] shrink-0 flex flex-col min-h-0 overflow-auto">
+        <div className="text-xs font-semibold text-slate-500 mb-1">
+          対象の地番（1 筆でも数筆でも）
+        </div>
+        <div className="text-[11px] text-slate-400 mb-1">
+          一覧のほか、右の地図の地番を押しても選べます。
+        </div>
+        <ul className="border rounded divide-y max-h-56 overflow-auto">
+          {parcels.length === 0 && (
+            <li className="p-3 text-xs text-slate-400">
+              地番がありません。地番管理で取り込んでください。
+            </li>
+          )}
+          {parcels.map((p) => (
+            <li key={p.workAreaId}>
+              <label className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-slate-50">
+                <input
+                  type="checkbox"
+                  checked={p.parcelId != null && chosen.includes(p.parcelId)}
+                  onChange={() => p.parcelId && toggle(p.parcelId)}
+                />
+                <span className="flex-1 min-w-0 truncate">{p.label}</span>
+                <span className="text-[11px] text-slate-400">{p.points.length} 点</span>
+              </label>
+            </li>
+          ))}
+        </ul>
 
         {/* 図面 の 表題 と 注記、作製者 / 申請人 */}
         <div className="mt-3 pt-3 border-t">
@@ -357,14 +400,18 @@ export function LandStepParcels({
 }
 
 // ========================================================================
-// 3. 基準点
+// 2. 基準点 と 境界情報
 // ========================================================================
 export function LandStepControls({
   plan,
+  parcels,
+  stakeById,
   controls,
   onPatch,
 }: {
   plan: LandSurveyDrawing
+  parcels: ParcelOption[]
+  stakeById: Map<string, { stakeType: string | null; stakeStatus: string }>
   controls: ControlPointForDraw[]
   onPatch: Patch
 }) {
@@ -476,13 +523,23 @@ export function LandStepControls({
             </tbody>
           </table>
         )}
+
+        {/* 座標変換 の パラメータ と 観測 の 注記 */}
+        <div className="mt-4 pt-3 border-t">
+          <ParamFields plan={plan} onPatch={onPatch} />
+        </div>
+
+        {/* 境界標 の 表 */}
+        <div className="mt-4 pt-3 border-t">
+          <MarkerFields plan={plan} parcels={parcels} stakeById={stakeById} onPatch={onPatch} />
+        </div>
       </div>
     </div>
   )
 }
 
 // ========================================================================
-// 4. 図枠
+// 3. 図枠
 // ========================================================================
 export function LandStepFrame({
   plan,
