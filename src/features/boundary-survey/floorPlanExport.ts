@@ -9,6 +9,7 @@
 // p21 だけ は 文字 も 文字 の まま 出せる。
 
 import { SHEET, type DrawItem, type DrawText, type LineStyle } from './floorPlanDraw'
+import { writeStepAp202 } from '@/lib/sxf/writeStepAp202'
 
 /** 線種 ごと の 刻み (mm)。 一点鎖線 は 長・短 の 繰り返し */
 function dashPattern(style: LineStyle | undefined): number[] {
@@ -254,11 +255,21 @@ function base64ToBytes(b64: string): Uint8Array {
 /**
  * 描く もの の 並び を SXF の P21 に する。
  *
+ * 市販 の CAD は .p21 を AP202 の 図形要素 で 読む もの が 多く、feature 形式
+ * で 出す と 中身 が 空 に 見える。 実物 (doc/*.p21) と 同じ AP202 で 書く。
+ */
+export function buildP21(items: DrawItem[], title: string): string {
+  return writeStepAp202(items, { w: SHEET.w, h: SHEET.h }, { title })
+}
+
+/**
+ * 旧 の feature 形式。 SFC を 求められた ときの ため に 残す。
+ *
  * SXF は 用紙 の 左下 が 原点 で y が 上向き な ので 上下 を 返す。
  * 色 (1=黒) と 線種 (1=実線) は 既定 の 番号 を そのまま 使い、
  * 線幅 と レイヤ だけ 出現順 に 定義 する。
  */
-export function buildP21(items: DrawItem[], title: string): string {
+export function buildFeatureP21(items: DrawItem[], title: string): string {
   const layers: string[] = []
   const widths: number[] = []
   const layerNo = (name: string) => {
