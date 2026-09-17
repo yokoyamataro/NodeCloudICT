@@ -9,22 +9,44 @@
 
 import type { FloorPlanFrame } from './floorPlanTypes'
 
-/** 境界標 の 種類。 用紙 上部 の 表 の 列 */
-export type MarkerKind = 'concrete' | 'metal' | 'plastic'
+/**
+ * 境界標 の 種類。 用紙 上部 の 表 の 列 に なる。
+ *
+ * 現場 に よって 使う 種類 が 違う ので、列 は 足し引き でき、名前 も 選ぶ か
+ * 直接 打つ か どちら でも よい ように する。
+ */
+export const MARKER_PRESETS = [
+  'コンクリート杭',
+  '金属標',
+  '金属鋲',
+  'プラスチック杭',
+  '石杭',
+  '木杭',
+  '金属プレート',
+  '刻印',
+  '標識',
+  'ビス',
+  '既設構造物',
+] as const
 
-export const MARKER_KIND_LABEL: Record<MarkerKind, string> = {
-  concrete: 'コンクリート杭',
-  metal: '金属鋲',
-  plastic: 'プラスチック杭',
+export interface MarkerColumn {
+  id: string
+  /** 種類 の 名前 */
+  kind: string
+  /** 既設 の 点名 */
+  existing: string
+  /** 新設 の 点名 */
+  created: string
 }
 
-/** 既設 / 新設 の 点名 を 種類 ごと に */
-export type MarkerTable = Record<MarkerKind, { existing: string; created: string }>
-
-export const EMPTY_MARKERS: MarkerTable = {
-  concrete: { existing: '', created: '' },
-  metal: { existing: '', created: '' },
-  plastic: { existing: '', created: '' },
+/** 既定 の 3 列 (実物 に よく 出る 並び) */
+export function defaultMarkerColumns(): MarkerColumn[] {
+  return ['コンクリート杭', '金属鋲', 'プラスチック杭'].map((kind, i) => ({
+    id: `m${i + 1}`,
+    kind,
+    existing: '',
+    created: '',
+  }))
 }
 
 /** 与点 の 成果 の 1 行 */
@@ -47,8 +69,8 @@ export interface LandDrawSpec {
   datums: DatumRow[]
   /** 地図番号 */
   mapNumber: string
-  /** 境界標 の 種類 と 点名 */
-  markers: MarkerTable
+  /** 境界標 の 種類 と 点名。 列 は 足し引き できる */
+  markerColumns: MarkerColumn[]
   /** 測量年月日 */
   surveyedOn: string | null
   /** 座標系 (平面直角 の 系番号) */
@@ -70,7 +92,7 @@ export const DEFAULT_LAND_SPEC: LandDrawSpec = {
   controlPointIds: [],
   datums: [],
   mapNumber: '',
-  markers: EMPTY_MARKERS,
+  markerColumns: defaultMarkerColumns(),
   surveyedOn: null,
   zone: 13,
   datumTitle: '与点の成果　世界測地系　測地成果2024',

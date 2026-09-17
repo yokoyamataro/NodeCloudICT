@@ -8,17 +8,16 @@
 // 作製者 / 申請人 の 入力 と 図枠 の 手直し は 建物図面 の 部品 を そのまま 使う。
 
 import { useMemo, useState } from 'react'
-import { Download, Loader2 } from 'lucide-react'
+import { Download, Loader2, Trash2 } from 'lucide-react'
 import type { ParcelOption } from './floorPlanTypes'
 import type { LandDrawPatch } from '@/stores/landDrawStore'
 import {
   LAND_SCALES,
-  MARKER_KIND_LABEL,
+  MARKER_PRESETS,
   calcParcelArea,
   n2,
   n6,
   type LandSurveyDrawing,
-  type MarkerKind,
 } from './landDrawTypes'
 import { buildLandSheet, type ControlPointForDraw, type LandParcelForDraw } from './landDrawSheet'
 import { applyOverlay } from './floorPlanDraw'
@@ -116,47 +115,96 @@ export function LandStepInfo({
         </div>
       </Field>
 
-      <div className="pt-2 mt-2 border-t text-xs font-semibold text-slate-500">
-        境界標の種類及び筆界点の記号または点名
+      <div className="pt-2 mt-2 border-t flex items-center gap-2">
+        <span className="text-xs font-semibold text-slate-500">
+          境界標の種類及び筆界点の記号または点名
+        </span>
+        <button
+          type="button"
+          onClick={() =>
+            setSpec({
+              markerColumns: [
+                ...spec.markerColumns,
+                { id: `m${Date.now().toString(36)}`, kind: '', existing: '', created: '' },
+              ],
+            })
+          }
+          className="px-2 py-0.5 text-xs border rounded hover:bg-slate-50"
+        >
+          + 種類を追加
+        </button>
       </div>
-      <table className="w-full text-xs border-collapse">
-        <thead className="bg-slate-50">
-          <tr>
-            <th className="px-2 py-1 border w-14" />
-            {(Object.keys(MARKER_KIND_LABEL) as MarkerKind[]).map((k) => (
-              <th key={k} className="px-2 py-1 border font-medium">
-                {MARKER_KIND_LABEL[k]}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {(['existing', 'created'] as const).map((row) => (
-            <tr key={row}>
-              <td className="px-2 py-1 border bg-slate-50 text-center">
-                {row === 'existing' ? '既設' : '新設'}
-              </td>
-              {(Object.keys(MARKER_KIND_LABEL) as MarkerKind[]).map((k) => (
-                <td key={k} className="px-1 py-0.5 border">
-                  <input
-                    className="w-full px-1.5 py-1 text-xs border rounded"
-                    value={spec.markers[k][row]}
-                    onChange={(e) =>
-                      setSpec({
-                        markers: {
-                          ...spec.markers,
-                          [k]: { ...spec.markers[k], [row]: e.target.value },
-                        },
-                      })
-                    }
-                    placeholder="例: K1,K2"
-                  />
-                </td>
+      <div className="overflow-x-auto">
+        <table className="text-xs border-collapse">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="px-2 py-1 border w-14" />
+              {spec.markerColumns.map((c) => (
+                <th key={c.id} className="px-1 py-1 border font-medium min-w-[9rem]">
+                  <div className="flex items-center gap-1">
+                    <input
+                      className="w-full px-1.5 py-1 text-xs border rounded"
+                      list="marker-presets"
+                      value={c.kind}
+                      onChange={(e) =>
+                        setSpec({
+                          markerColumns: spec.markerColumns.map((x) =>
+                            x.id === c.id ? { ...x, kind: e.target.value } : x,
+                          ),
+                        })
+                      }
+                      placeholder="種類を選ぶか入力"
+                    />
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={() =>
+                        setSpec({
+                          markerColumns: spec.markerColumns.filter((x) => x.id !== c.id),
+                        })
+                      }
+                      className="p-0.5 text-slate-400 hover:text-red-600"
+                      title="この種類を削除"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {(['existing', 'created'] as const).map((row) => (
+              <tr key={row}>
+                <td className="px-2 py-1 border bg-slate-50 text-center">
+                  {row === 'existing' ? '既設' : '新設'}
+                </td>
+                {spec.markerColumns.map((c) => (
+                  <td key={c.id} className="px-1 py-0.5 border">
+                    <input
+                      className="w-full px-1.5 py-1 text-xs border rounded"
+                      value={c[row]}
+                      onChange={(e) =>
+                        setSpec({
+                          markerColumns: spec.markerColumns.map((x) =>
+                            x.id === c.id ? { ...x, [row]: e.target.value } : x,
+                          ),
+                        })
+                      }
+                      placeholder="例: K1,K2"
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <datalist id="marker-presets">
+        {MARKER_PRESETS.map((m) => (
+          <option key={m} value={m} />
+        ))}
+      </datalist>
 
       <div className="pt-3 mt-2 border-t text-xs font-semibold text-slate-500">
         座標変換のパラメータ（省略可）
@@ -396,7 +444,7 @@ export function LandStepControls({
         </div>
         {spec.datums.length === 0 ? (
           <div className="text-xs text-slate-400">
-            基準点を選ぶと表に入ります。区分と備考はここで書き足せます。
+            基準点を選ぶと表に入ります。区分と備考はここで書き足せます。備考は改行で 2 行に分けられます。
           </div>
         ) : (
           <table className="w-full text-xs border-collapse">
@@ -430,11 +478,13 @@ export function LandStepControls({
                   <td className="px-1 py-0.5 border text-right font-mono">{d.x.toFixed(3)}</td>
                   <td className="px-1 py-0.5 border text-right font-mono">{d.y.toFixed(3)}</td>
                   <td className="px-1 py-0.5 border">
-                    <input
-                      className="w-full px-1.5 py-1 text-xs border rounded"
+                    <textarea
+                      rows={2}
+                      className="w-full px-1.5 py-1 text-xs border rounded resize-y"
                       value={d.note}
                       onChange={(e) => setDatum(d.id, { note: e.target.value })}
-                      placeholder="例: ネットワーク型RTK法による単点観測法"
+                      placeholder={'ネットワーク型RTK法\nによる単点観測法'}
+                      title="改行で 2 行に分けられます"
                     />
                   </td>
                 </tr>

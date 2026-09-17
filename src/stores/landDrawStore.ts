@@ -9,9 +9,10 @@ import { errorMessage } from '@/lib/errorMessage'
 import { DEFAULT_FRAME, type FloorPlanFrame } from '@/features/boundary-survey/floorPlanTypes'
 import {
   DEFAULT_LAND_SPEC,
-  EMPTY_MARKERS,
+  defaultMarkerColumns,
   type LandDrawSpec,
   type LandSurveyDrawing,
+  type MarkerColumn,
 } from '@/features/boundary-survey/landDrawTypes'
 
 export type LandDrawPatch = Partial<
@@ -21,12 +22,43 @@ export type LandDrawPatch = Partial<
   >
 >
 
+/**
+ * 境界標 の 表。 初期 の 版 は 3 種類 の 決め打ち だった ので 列 に 直す。
+ */
+function normalizeMarkers(raw: Partial<LandDrawSpec> & { markers?: unknown }): MarkerColumn[] {
+  if (Array.isArray(raw.markerColumns) && raw.markerColumns.length > 0) {
+    return raw.markerColumns.map((c, i) => ({
+      id: String(c?.id ?? `m${i + 1}`),
+      kind: String(c?.kind ?? ''),
+      existing: String(c?.existing ?? ''),
+      created: String(c?.created ?? ''),
+    }))
+  }
+  const old = raw.markers as
+    | Record<string, { existing?: string; created?: string }>
+    | undefined
+  if (old && typeof old === 'object') {
+    const label: Record<string, string> = {
+      concrete: 'コンクリート杭',
+      metal: '金属鋲',
+      plastic: 'プラスチック杭',
+    }
+    return Object.keys(label).map((k, i) => ({
+      id: `m${i + 1}`,
+      kind: label[k],
+      existing: old[k]?.existing ?? '',
+      created: old[k]?.created ?? '',
+    }))
+  }
+  return defaultMarkerColumns()
+}
+
 function normalize(row: Record<string, unknown>): LandSurveyDrawing {
   const raw = (row.spec ?? {}) as Partial<LandDrawSpec>
   const spec: LandDrawSpec = {
     ...DEFAULT_LAND_SPEC,
     ...raw,
-    markers: { ...EMPTY_MARKERS, ...(raw.markers ?? {}) },
+    markerColumns: normalizeMarkers(raw),
     paramNote: { ...DEFAULT_LAND_SPEC.paramNote, ...(raw.paramNote ?? {}) },
     parcelIds: Array.isArray(raw.parcelIds) ? raw.parcelIds : [],
     controlPointIds: Array.isArray(raw.controlPointIds) ? raw.controlPointIds : [],

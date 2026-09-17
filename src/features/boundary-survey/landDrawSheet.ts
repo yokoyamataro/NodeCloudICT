@@ -23,39 +23,44 @@ import {
 } from './floorPlanTypes'
 import { buildWhiskers } from './floorPlanWhisker'
 import {
-  MARKER_KIND_LABEL,
   calcParcelArea,
   n2,
   n3,
   n6,
   type LandDrawSpec,
   type LandSurveyDrawing,
-  type MarkerKind,
 } from './landDrawTypes'
 
 /** 罫線 の 位置 (mm)。 実測値 */
 export const LSHEET = {
-  left: 24.9,
-  right: 338.8,
-  /** ヘッダ */
-  headTop: 9.8,
-  headMid: 20.4,
-  headBottom: 31.0,
-  /** 上段 の 表 の 行 (境界標) */
-  markerRow1: 15.1,
-  markerRow2: 20.4,
-  markerRow3: 25.7,
-  /** ヘッダ の 縦罫 */
-  hx: [24.9, 55.9, 64.9, 99.9, 134.9, 171.9, 191.8, 217.9] as const,
-  /** 地番 の 値 の 右端 (上段 だけ) */
-  hnValueRight: 261.9,
+  left: 25.08,
+  right: 338.84,
+  /** 枠 の 上端 と 下端 (左右 で 段違い) */
+  frameTop: 9.78,
+  frameBottom: 246.51,
+  /** ヘッダ の 横罫 */
+  headTop: 9.97,
+  headMid: 20.45,
+  headBottom: 31.05,
+  /** 境界標 の 表 の 行 (種類 / 既設 / 新設) */
+  markerRow1: 15.18,
+  markerRow3: 25.78,
+  /** 境界標 の 表 の 左右 */
+  markerLeft: 55.88,
+  markerRight: 172.15,
+  /** 種類 の ラベル 列 の 右端 */
+  markerLabelRight: 65.09,
+  /** ヘッダ の 縦罫 (全高) */
+  hx: [55.88, 172.09, 191.83, 218.06] as const,
+  /** 地番 の 値 の 右端 (上段 だけ)。 ここ から 右上 は 枠 の 外 */
+  hnValueRight: 262.13,
   /** 表題欄 */
-  titleTop: 231.3,
-  titleBottom: 246.3,
-  tx: [24.9, 45.8, 171.9, 191.8, 211.8, 303.8, 313.9, 338.8] as const,
+  titleTop: 231.33,
+  titleBottom: 246.38,
+  tx: [25.08, 45.85, 172.09, 191.83, 211.9, 303.85, 314.07, 338.84] as const,
   /** 本体。 左 が 計算書、右 が 図 */
-  bodyTop: 31.0,
-  bodyBottom: 231.3,
+  bodyTop: 31.05,
+  bodyBottom: 231.33,
   calcRight: 196.0,
 } as const
 
@@ -137,63 +142,77 @@ function drawFrame(out: DrawItem[], line: LineFn, text: TextFn, plan: LandSurvey
   const S = LSHEET
   const spec = plan.spec
 
-  // 外枠
+  // 横罫。 一番上 は 地番 の 値 の 右端 で 止まる (そこ から 右上 は 枠 の 外)
   line(S.left, S.headTop, S.hnValueRight, S.headTop)
-  line(S.left, S.headTop, S.left, S.titleBottom)
-  line(S.right, S.headMid, S.right, S.titleBottom)
   line(S.left, S.headMid, S.right, S.headMid)
   line(S.left, S.headBottom, S.right, S.headBottom)
   line(S.left, S.titleTop, S.right, S.titleTop)
   line(S.left, S.titleBottom, S.right, S.titleBottom)
+  // 境界標 の 表 の 行 (表題 の 下 / 既設 の 下)
+  line(S.markerLeft, S.markerRow1, S.markerRight, S.markerRow1)
+  line(S.markerLeft, S.markerRow3, S.markerRight, S.markerRow3)
 
-  // ヘッダ の 縦罫
-  for (const x of S.hx) line(x, S.headTop, x, S.headBottom)
-  line(S.hnValueRight, S.headTop, S.hnValueRight, S.headMid)
+  // 縦罫。 左 は 通し、右 は 段違い の ぶん 下 から
+  line(S.left, S.frameTop, S.left, S.frameBottom)
+  line(S.right, S.headMid, S.right, S.frameBottom)
+  for (const x of S.hx) line(x, S.frameTop, x, S.headBottom)
+  // 種類 の 列 の 仕切り は 表題 の 行 を 跨がない
+  for (const x of markerDividers(spec)) line(x, S.markerRow1, x, S.headBottom)
 
-  // 境界標 の 表 (種類 / 既設 / 新設)
-  line(S.hx[1], S.markerRow1, S.hx[5], S.markerRow1)
-  line(S.hx[1], S.markerRow3, S.hx[5], S.markerRow3)
+  // 表題欄 の 仕切り
+  for (const x of S.tx) line(x, S.titleTop, x, S.titleBottom)
 
   // ---- ヘッダ の 中身 ----
-  text(40.4, 16.5, '地図番号', 2.8, 'middle', { pitch: 3.4, id: 'land:mapNoLabel' })
-  text(40.4, 27.5, spec.mapNumber, 3.4, 'middle', { id: 'land:mapNo' })
+  const mapNoCx = (S.left + S.hx[0]) / 2
+  text(mapNoCx, 16.5, '地図番号', 2.8, 'middle', { pitch: 3.4, id: 'land:mapNoLabel' })
+  text(mapNoCx, 27.5, spec.mapNumber, 3.4, 'middle', { id: 'land:mapNo' })
 
-  text(113.9, 13.6, '境界標の種類及び筆界点の記号または点名', 2.4, 'middle', {
-    id: 'land:markerTitle',
+  text((S.markerLeft + S.markerRight) / 2, 13.6, '境界標の種類及び筆界点の記号または点名', 2.4,
+    'middle', { id: 'land:markerTitle' })
+
+  const rowY = [S.markerRow1, S.headMid, S.markerRow3, S.headBottom]
+  ;['種類', '既設', '新設'].forEach((lab, i) => {
+    text((S.markerLeft + S.markerLabelRight) / 2, (rowY[i] + rowY[i + 1]) / 2 + 1.0, lab, 2.4,
+      'middle', { id: `land:markerRow${i}` })
   })
-  const rowY = [S.markerRow1, S.markerRow2, S.markerRow3, S.headBottom]
-  const rowLabel = ['種類', '既設', '新設']
-  rowLabel.forEach((lab, i) => {
-    text((S.hx[1] + S.hx[2]) / 2, (rowY[i] + rowY[i + 1]) / 2 + 1.0, lab, 2.4, 'middle', {
-      id: `land:markerRow${i}`,
+  const cols = spec.markerColumns
+  const edges = markerEdges(spec)
+  cols.forEach((c, i) => {
+    const cx = (edges[i] + edges[i + 1]) / 2
+    text(cx, (rowY[0] + rowY[1]) / 2 + 1.0, c.kind, 2.4, 'middle', {
+      id: `land:markerKind:${c.id}`,
     })
-  })
-  const kinds: MarkerKind[] = ['concrete', 'metal', 'plastic']
-  kinds.forEach((k, i) => {
-    const cx = (S.hx[2 + i] + S.hx[3 + i]) / 2
-    text(cx, (rowY[0] + rowY[1]) / 2 + 1.0, MARKER_KIND_LABEL[k], 2.4, 'middle', {
-      id: `land:markerKind:${k}`,
+    text(cx, (rowY[1] + rowY[2]) / 2 + 1.0, c.existing, 2.6, 'middle', {
+      id: `land:markerExisting:${c.id}`,
     })
-    text(cx, (rowY[1] + rowY[2]) / 2 + 1.0, spec.markers[k].existing, 2.6, 'middle', {
-      id: `land:markerExisting:${k}`,
-    })
-    text(cx, (rowY[2] + rowY[3]) / 2 + 1.0, spec.markers[k].created, 2.6, 'middle', {
-      id: `land:markerCreated:${k}`,
+    text(cx, (rowY[2] + rowY[3]) / 2 + 1.0, c.created, 2.6, 'middle', {
+      id: `land:markerCreated:${c.id}`,
     })
   })
 
-  text((S.hx[6] + S.hx[7]) / 2, 16.5, '地番', 2.8, 'middle', { pitch: 5.0, id: 'land:parcelLabel' })
-  text((S.hx[6] + S.hx[7]) / 2, 27.5, '土地の所在', 2.8, 'middle', {
-    pitch: 3.4,
-    id: 'land:locLabel',
-  })
-  text(S.hx[7] + 3, 17.0, parcelNumbersOf(plan), 3.4, 'start', { id: 'land:parcelNo' })
-  text(S.hx[7] + 3, 28.0, plan.location ?? '', 3.4, 'start', { id: 'land:location' })
+  const labelCx = (S.hx[2] + S.hx[3]) / 2
+  text(labelCx, 16.5, '地番', 2.8, 'middle', { pitch: 5.0, id: 'land:parcelLabel' })
+  text(labelCx, 27.5, '土地の所在', 2.8, 'middle', { pitch: 3.4, id: 'land:locLabel' })
+  text(S.hx[3] + 3, 17.0, parcelNumbersOf(plan), 3.4, 'start', { id: 'land:parcelNo' })
+  text(S.hx[3] + 3, 28.0, plan.location ?? '', 3.4, 'start', { id: 'land:location' })
 
   // 用紙 の 見出し は 枠 の 外
   text(268.0, 19.0, '地積測量図', 5.4, 'start', { pitch: 13.5, id: 'land:title' })
 
   void out
+}
+
+/** 境界標 の 表 の 列 の 境目 (左端 から 右端 まで) */
+function markerEdges(spec: LandDrawSpec): number[] {
+  const S = LSHEET
+  const n = Math.max(spec.markerColumns.length, 1)
+  const w = (S.markerRight - S.markerLabelRight) / n
+  return Array.from({ length: n + 1 }, (_, i) => S.markerLabelRight + w * i)
+}
+
+/** 列 を 分ける 縦罫 (両端 は 枠 の 線 な ので 除く) */
+function markerDividers(spec: LandDrawSpec): number[] {
+  return markerEdges(spec).slice(1, -1)
 }
 
 /** ヘッダ に 出す 地番 の 並び */
@@ -205,6 +224,95 @@ function parcelNumbersOf(plan: LandSurveyDrawing): string {
 // 左: 計算書
 // ========================================================================
 
+/**
+ * 表 を 1 つ 引く。 外枠 と 行 / 列 の 仕切り、中身 の 文字 を まとめて 出す。
+ * 桁 は 実物 に 合わせて 列 の 位置 を 絶対値 で 渡す。
+ */
+interface TCell {
+  text: string
+  align?: 'start' | 'middle' | 'end'
+  /** 2 段 に 書く とき の 2 行目 */
+  sub?: string
+  h?: number
+  /** 右 へ 何 列 ぶん 伸ばす か (仕切り を 引かない) */
+  span?: number
+  id?: string
+}
+
+function drawTable(
+  out: DrawItem[],
+  text: TextFn,
+  xs: number[],
+  yTop: number,
+  rows: { h: number; cells: TCell[] }[],
+  layer: string,
+): number {
+  const x0 = xs[0]
+  const x1 = xs[xs.length - 1]
+  let y = yTop
+  const ys = [y]
+  for (const r of rows) {
+    y += r.h
+    ys.push(y)
+  }
+  // 外枠 と 行 の 仕切り
+  for (const yy of ys) out.push({ kind: 'line', x1: x0, y1: yy, x2: x1, y2: yy, w: LW, layer })
+  // 列 の 仕切り。 まとめた セル の 所 は 引かない
+  for (let c = 0; c < xs.length; c += 1) {
+    const x = xs[c]
+    let from: number | null = null
+    for (let r = 0; r <= rows.length; r += 1) {
+      const inner = c > 0 && c < xs.length - 1
+      const merged =
+        inner && r < rows.length ? coveredBySpan(rows[r].cells, c) : false
+      if (!merged) {
+        if (from == null) from = ys[r]
+      } else if (from != null) {
+        out.push({ kind: 'line', x1: x, y1: from, x2: x, y2: ys[r], w: LW, layer })
+        from = null
+      }
+    }
+    if (from != null) {
+      out.push({ kind: 'line', x1: x, y1: from, x2: x, y2: ys[ys.length - 1], w: LW, layer })
+    }
+  }
+  // 中身
+  rows.forEach((r, ri) => {
+    let ci = 0
+    for (const cell of r.cells) {
+      const span = cell.span ?? 1
+      const left = xs[ci]
+      const right = xs[Math.min(ci + span, xs.length - 1)]
+      const align = cell.align ?? 'middle'
+      const tx = align === 'start' ? left + 1.2 : align === 'end' ? right - 1.2 : (left + right) / 2
+      const h = cell.h ?? 2.2
+      if (cell.sub) {
+        text(tx, ys[ri] + r.h / 2 - 0.3, cell.text, h, align, { layer, id: cell.id })
+        text(tx, ys[ri] + r.h / 2 + h + 0.4, cell.sub, h, align, { layer })
+      } else {
+        text(tx, ys[ri] + r.h / 2 + h * 0.38, cell.text, h, align, { layer, id: cell.id })
+      }
+      ci += span
+    }
+  })
+  return ys[ys.length - 1]
+}
+
+/** そのセル境界 が まとめた セル の 内側 か */
+function coveredBySpan(cells: TCell[], col: number): boolean {
+  let ci = 0
+  for (const c of cells) {
+    const span = c.span ?? 1
+    if (col > ci && col < ci + span) return true
+    ci += span
+  }
+  return false
+}
+
+/**
+ * 左 の 計算書。 表 の 左右 と 列 の 位置 は 実物 の 実測値。
+ * 行 の 数 は 中身 で 変わる ので 高さ だけ 流す。
+ */
 function drawCalc(
   out: DrawItem[],
   text: TextFn,
@@ -213,106 +321,205 @@ function drawCalc(
   parcels: LandParcelForDraw[],
   controls: ControlPointForDraw[],
 ) {
-  const S = LSHEET
   const spec = plan.spec
-  const x0 = S.left + 12
-  let y = S.bodyTop + 8
+  const ROW = 3.49
 
   // ---- 座標変換 の パラメータ ----
+  let y = 41.76
   if (spec.paramNote.tky2jgd || spec.paramNote.patchjgd) {
-    text(x0 + 60, y, 'TKY2JGD', 2.2, 'middle', { id: 'land:param:h1' })
-    text(x0 + 100, y, 'PatchJGD', 2.2, 'middle', { id: 'land:param:h2' })
-    y += 3.6
-    text(x0 + 60, y, spec.paramNote.tky2jgd, 2.2, 'middle', { id: 'land:param:v1' })
-    text(x0 + 100, y, spec.paramNote.patchjgd, 2.2, 'middle', { id: 'land:param:v2' })
-    y += 4.5
-    text(x0, y, '基準点', 2.2, 'start', { id: 'land:param:l1' })
-    y += 3.4
-    text(x0, y, '筆界点', 2.2, 'start', { id: 'land:param:l2' })
-    y += 6
+    y = drawTable(
+      out,
+      text,
+      [48.51, 65.47, 85.47, 105.47],
+      y,
+      [
+        {
+          h: 6.99,
+          cells: [
+            { text: '' },
+            { text: 'TKY2JGD', sub: spec.paramNote.tky2jgd, id: 'land:param:1' },
+            { text: 'PatchJGD', sub: spec.paramNote.patchjgd, id: 'land:param:2' },
+          ],
+        },
+        { h: 3.55, cells: [{ text: '基準点' }, { text: '－' }, { text: '－' }] },
+        { h: 3.50, cells: [{ text: '筆界点' }, { text: '－' }, { text: '－' }] },
+      ],
+      L.calc,
+    )
+    y += 6.5
+  } else {
+    y = 55.8 + 6.5
   }
 
   // ---- 与点 の 成果 ----
-  text(x0, y, spec.datumTitle, 3.0, 'start', { id: 'land:datumTitle' })
-  y += 5
-  const dc = [x0 + 34, x0 + 74, x0 + 108, x0 + 122]
-  text(dc[0], y, '点 名', 2.4, 'middle', { id: 'land:datum:h0' })
-  text(dc[1], y, 'X座標', 2.4, 'end', { id: 'land:datum:h1' })
-  text(dc[2], y, 'Y座標', 2.4, 'end', { id: 'land:datum:h2' })
-  text(dc[3], y, '備 考', 2.4, 'start', { id: 'land:datum:h3' })
-  y += 4
+  text(48.7, y, spec.datumTitle, 3.0, 'start', { id: 'land:datumTitle' })
+  y += 7.1
 
-  const rows = spec.datums.length > 0 ? spec.datums : datumsFromControls(controls)
-  for (const d of rows) {
-    if (d.category) text(x0, y, d.category, 2.2, 'start', { id: `land:datum:${d.id}:c` })
-    text(dc[0], y, d.name, 2.4, 'middle', { id: `land:datum:${d.id}:n` })
-    text(dc[1], y, n3(d.x), 2.4, 'end', { id: `land:datum:${d.id}:x` })
-    text(dc[2], y, n3(d.y), 2.4, 'end', { id: `land:datum:${d.id}:y` })
-    if (d.note) text(dc[3], y, d.note, 2.2, 'start', { id: `land:datum:${d.id}:r` })
-    y += 3.8
+  const datums = spec.datums.length > 0 ? spec.datums : datumsFromControls(controls)
+  const datumRows: { h: number; cells: TCell[] }[] = [
+    {
+      h: 3.5,
+      cells: [
+        { text: '' },
+        { text: '点 名' },
+        { text: 'X座標' },
+        { text: 'Y座標' },
+        { text: '備 考' },
+      ],
+    },
+  ]
+  for (const d of datums) {
+    // 備考 は 改行 で 2 行 に できる (実物 も 「ネットワーク型RTK法 / による単点観測法」)
+    const note = (d.note ?? '').split('\n')
+    datumRows.push({
+      h: (ROW + 0.06) * Math.max(note.length, 1),
+      cells: [
+        { text: d.category, align: 'start', id: `land:datum:${d.id}:c` },
+        { text: d.name, align: 'start', id: `land:datum:${d.id}:n` },
+        { text: n3(d.x), align: 'end', id: `land:datum:${d.id}:x` },
+        { text: n3(d.y), align: 'end', id: `land:datum:${d.id}:y` },
+        {
+          text: note[0] ?? '',
+          sub: note[1],
+          align: 'start',
+          id: `land:datum:${d.id}:r`,
+        },
+      ],
+    })
   }
+  y = drawTable(out, text, [48.7, 76.26, 104.71, 129.22, 153.73, 178.24], y, datumRows, L.calc)
+
   if (spec.observationNote) {
-    y += 1.5
-    text(x0, y, spec.observationNote, 2.2, 'start', { id: 'land:obsNote' })
-    y += 5
-  } else {
     y += 4
+    text(48.7, y, spec.observationNote, 2.2, 'start', { id: 'land:obsNote' })
   }
 
   // ---- 求積表 ----
-  text(x0 + 45, y, '求積表', 3.2, 'middle', { bold: true, id: 'land:areaTitle' })
-  y += 6
+  y += 6.5
+  text(103.4, y, '求積表', 3.2, 'middle', { bold: true, id: 'land:areaTitle' })
+  y += 6.1
 
-  const cx = [x0 + 6, x0 + 30, x0 + 58, x0 + 84, x0 + 128]
+  const xs = [48.39, 65.34, 85.34, 105.35, 125.35, 158.37]
   let total = 0
   parcels.forEach((p, pi) => {
     const calc = calcParcelArea(p.label, p.points)
     total += calc.area
 
-    text(x0, y, '地 番', 2.4, 'start', { id: `land:area:${pi}:label` })
-    text(x0 + 16, y, `${pi + 1}  ${p.label}`, 2.6, 'start', { id: `land:area:${pi}:no` })
-    y += 4.2
-    text(cx[0], y, 'NO', 2.2, 'start', { id: `land:area:${pi}:h0` })
-    text(cx[1], y, 'Xn', 2.2, 'end', { id: `land:area:${pi}:h1` })
-    text(cx[2], y, 'Yn', 2.2, 'end', { id: `land:area:${pi}:h2` })
-    text(cx[3], y, 'Yn+1 - Yn-1', 2.2, 'end', { id: `land:area:${pi}:h3` })
-    text(cx[4], y, 'Xn・(Yn+1 - Yn-1)', 2.2, 'end', { id: `land:area:${pi}:h4` })
-    y += 3.6
-
+    const rows: { h: number; cells: TCell[] }[] = [
+      // 地番 の 行。 実物 は ここ も 枠 の 中
+      {
+        h: 3.32,
+        cells: [
+          { text: '地 番', align: 'start', h: 2.4, id: `land:area:${pi}:label` },
+          {
+            text: `${circled(pi + 1)} ${p.label}`,
+            align: 'start',
+            h: 2.6,
+            span: 4,
+            id: `land:area:${pi}:no`,
+          },
+        ],
+      },
+      {
+        h: 3.5,
+        cells: [
+          { text: 'NO', align: 'start' },
+          { text: 'Xn', align: 'end' },
+          { text: 'Yn', align: 'end' },
+          { text: 'Yn+1-Yn-1', align: 'end' },
+          { text: 'Xn・(Yn+1-Yn-1)', align: 'end' },
+        ],
+      },
+    ]
     for (const r of calc.rows) {
-      text(cx[0], y, r.name, 2.2, 'start', { id: `land:area:${pi}:${r.name}:n` })
-      text(cx[1], y, n3(r.x), 2.2, 'end', { id: `land:area:${pi}:${r.name}:x` })
-      text(cx[2], y, n3(r.y), 2.2, 'end', { id: `land:area:${pi}:${r.name}:y` })
-      text(cx[3], y, n3(r.dy), 2.2, 'end', { id: `land:area:${pi}:${r.name}:d` })
-      text(cx[4], y, n6(r.product), 2.2, 'end', { id: `land:area:${pi}:${r.name}:p` })
-      y += 3.5
+      rows.push({
+        h: ROW,
+        cells: [
+          { text: r.name, align: 'start', id: `land:area:${pi}:${r.name}:n` },
+          { text: n3(r.x), align: 'end', id: `land:area:${pi}:${r.name}:x` },
+          { text: n3(r.y), align: 'end', id: `land:area:${pi}:${r.name}:y` },
+          { text: n3(r.dy), align: 'end', id: `land:area:${pi}:${r.name}:d` },
+          { text: n6(r.product), align: 'end', id: `land:area:${pi}:${r.name}:p` },
+        ],
+      })
     }
-    line(cx[3] - 16, y - 2.4, cx[4], y - 2.4, LW, L.calc)
-    text(cx[3], y, '合 計', 2.2, 'end', { id: `land:area:${pi}:sum:l` })
-    text(cx[4], y, n6(calc.sum), 2.2, 'end', { id: `land:area:${pi}:sum` })
-    y += 3.5
-    text(cx[3], y, '合 計 面 積', 2.2, 'end', { id: `land:area:${pi}:area:l` })
-    text(cx[4], y, n6(calc.area), 2.2, 'end', { id: `land:area:${pi}:area` })
-    y += 3.5
-    text(cx[3], y, '地 積', 2.2, 'end', { id: `land:area:${pi}:reg:l` })
-    text(cx[4], y, `${n2(calc.registered)} ㎡`, 2.2, 'end', { id: `land:area:${pi}:reg` })
-    y += 7
+    rows.push({
+      h: 3.55,
+      cells: [
+        { text: '合 計', align: 'end', span: 4 },
+        { text: n6(calc.sum), align: 'end', id: `land:area:${pi}:sum` },
+      ],
+    })
+    rows.push({
+      h: 3.49,
+      cells: [
+        { text: '合 計 面 積', align: 'end', span: 4 },
+        { text: n6(calc.area), align: 'end', id: `land:area:${pi}:area` },
+      ],
+    })
+    rows.push({
+      h: 3.49,
+      cells: [
+        { text: '地 積', align: 'end', span: 4 },
+        { text: `${n2(calc.registered)} ㎡`, align: 'end', id: `land:area:${pi}:reg` },
+      ],
+    })
+    y = drawTable(out, text, xs, y, rows, L.calc) + 3.5
   })
 
   if (parcels.length > 1) {
-    text(x0 + 30, y, '総合計面積', 2.6, 'start', { id: 'land:grandLabel' })
-    text(cx[4], y, n6(total), 2.6, 'end', { id: 'land:grand' })
-    y += 8
+    y += 3.5
+    y = drawTable(
+      out,
+      text,
+      [48.39, 118.36, 158.37],
+      y,
+      [
+        {
+          h: 5.02,
+          cells: [
+            { text: '総合計面積', h: 2.6, id: 'land:grandLabel' },
+            { text: `${n6(total)} ㎡`, align: 'end', h: 2.6, id: 'land:grand' },
+          ],
+        },
+      ],
+      L.calc,
+    )
   }
 
   // ---- 測量年月日 / 座標系 ----
-  text(x0 + 10, y, '測量年月日', 2.4, 'start', { id: 'land:surveyedLabel' })
-  text(x0 + 52, y, warekiDate(plan.spec.surveyedOn), 2.4, 'start', { id: 'land:surveyed' })
-  y += 4.2
-  text(x0 + 10, y, '座　標　系', 2.4, 'start', { id: 'land:zoneLabel' })
-  text(x0 + 52, y, `${romanZone(plan.spec.zone)}系`, 2.4, 'start', { id: 'land:zone' })
+  y += 7
+  drawTable(
+    out,
+    text,
+    [48.39, 75.37, 125.35],
+    y,
+    [
+      {
+        h: 4.0,
+        cells: [
+          { text: '測量年月日', h: 2.4 },
+          { text: warekiDate(spec.surveyedOn), h: 2.4, id: 'land:surveyed' },
+        ],
+      },
+      {
+        h: 4.0,
+        cells: [
+          { text: '座 標 系', h: 2.4 },
+          { text: `${romanZone(spec.zone)}系`, h: 2.4, id: 'land:zone' },
+        ],
+      },
+    ],
+    L.calc,
+  )
 
-  void out
+  void line
+}
+
+/** 丸 で 囲んだ 数字 (①②…)。 図面 の 地番 の 通し番号 */
+function circled(n: number): string {
+  const C = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
+  return n >= 1 && n <= C.length ? C[n - 1] : String(n)
 }
 
 /** 基準点 から 与点 の 成果 の 行 を 作る */
