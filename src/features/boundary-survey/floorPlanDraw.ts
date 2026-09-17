@@ -309,16 +309,35 @@ export function buildSheet(
   scaleCell(out, tlD, tlE, plan.plan_scale)
 
   vertical(out, '申請人', (trA + trB) / 2, S.bodyBottom + 2.8, S.titleBottom - 3.3, 3.1)
-  // 個人 / 共有 は 真ん中。 法人 は 名称 と 肩書 の 左端 を 揃える
+  // 個人 / 共有 は 1 行 ずつ 真ん中。
+  // 法人 は 名称 と 肩書 の 左端 を 揃え、その かたまり ごと 欄 の 真ん中 に 置く。
   const appLines = applicantLines(plan.frame)
   if (appLines.length > 0) {
     const gap = 1.4
+    const cellCx = (trB + trC) / 2
+    const cellW = trC - trB - 8
+    const namePitch = 6.0
+
+    // 左端 を 揃える 行 の 幅 を 見て、かたまり の 左端 を 決める
+    let blockW = 0
+    for (const l of appLines) {
+      if (l.kind === 'left') {
+        blockW = Math.max(blockW, Array.from(l.text).length * l.h)
+      } else if (l.kind === 'titled') {
+        const n = Math.max(Array.from(l.name).length, 1)
+        blockW = Math.max(
+          blockW,
+          Array.from(l.title).length * l.titleH + 3.5 + namePitch * (n - 1) + l.nameH,
+        )
+      }
+    }
+    const leftX = Math.max(trB + 3, cellCx - Math.min(blockW, cellW) / 2)
+
     const total = appLines.reduce((acc, l) => acc + applicantLineHeight(l) + gap, -gap)
-    const leftX = trB + 5
     let y = (S.bodyBottom + S.titleBottom) / 2 - total / 2 + applicantLineHeight(appLines[0])
     appLines.forEach((l, i) => {
       if (l.kind === 'center') {
-        text((trB + trC) / 2, y, l.text, l.h, 'middle', {
+        text(cellCx, y, l.text, l.h, 'middle', {
           pitch: l.h > 4 ? 6.1 : undefined,
           id: `applicant:${i}`,
         })
@@ -326,15 +345,11 @@ export function buildSheet(
         text(leftX, y, l.text, l.h, 'start', { id: `applicant:${i}` })
       } else {
         text(leftX, y, l.title, l.titleH, 'start', { id: `applicant:${i}:title` })
-        // 氏名 は 肩書 の 右 に 字間 を 空けて
         const nameLeft = leftX + Array.from(l.title).length * l.titleH + 3.5
-        const nameRight = trC - 4
-        const n = Math.max(Array.from(l.name).length, 1)
-        const p = Math.min(
-          8.0,
-          Math.max(0, (nameRight - nameLeft - l.nameH) / Math.max(n - 1, 1)),
-        )
-        text(nameLeft, y, l.name, l.nameH, 'start', { pitch: p, id: `applicant:${i}:name` })
+        text(nameLeft, y, l.name, l.nameH, 'start', {
+          pitch: namePitch,
+          id: `applicant:${i}:name`,
+        })
       }
       y += applicantLineHeight(l) + gap
     })
