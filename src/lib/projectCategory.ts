@@ -8,6 +8,8 @@ import type { ProjectCategory } from '@/types/database'
 const HIDDEN_BY_CATEGORY: Record<ProjectCategory, readonly string[]> = {
   // 地籍測量では土木系の工種メニューを出さない
   cadastral: [
+    // 工種 を まとめた 束 ごと 隠す (中身 も 下 に 並べて ある)
+    '/farmland',
     '/underdrain',
     '/soil-import',
     '/simple-grading',
@@ -16,8 +18,9 @@ const HIDDEN_BY_CATEGORY: Record<ProjectCategory, readonly string[]> = {
     '/stone-removal',
     '/open-channel',
   ],
-  // 土木工事では境界測量を出さない
-  civil: ['/boundary-survey'],
+  // 土木工事では境界測量を出さない。
+  // 土地家屋調査士設定 も 地籍 の 話 な ので 出さない。
+  civil: ['/boundary-survey', '/settings/surveyor'],
 }
 
 // nav 項目の href が、指定種別で表示対象かを判定する。

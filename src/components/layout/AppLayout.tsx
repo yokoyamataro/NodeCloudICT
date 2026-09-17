@@ -70,6 +70,7 @@ interface NavItem {
   name: string
   href: string
   icon: React.ComponentType<{ className?: string }>
+  children?: NavItem[]
 }
 
 interface NavGroup {
@@ -77,6 +78,98 @@ interface NavGroup {
   href: string
   icon: React.ComponentType<{ className?: string }>
   children?: NavItem[]
+}
+
+/**
+ * サイドバー の 1 項目。 束 は 何段 でも 入れ子 に できる。
+ * (土木工事 の 工種 を 「農地整備」 で まとめる ため に 2 段 に なった)
+ */
+function NavNode({
+  item,
+  depth,
+  expanded,
+  onToggle,
+  isActiveLink,
+  visible,
+}: {
+  item: NavItem
+  depth: number
+  expanded: Set<string>
+  onToggle: (name: string) => void
+  isActiveLink: (href: string) => boolean
+  /** 工事種別 で 出す か どうか。 束 の 中 まで 効かせる */
+  visible: (href: string) => boolean
+}) {
+  const kids = (item.children ?? []).filter((c) => visible(c.href))
+  const isOpen = expanded.has(item.name)
+  const anyChildActive = (n: NavItem): boolean =>
+    isActiveLink(n.href) || (n.children ?? []).some(anyChildActive)
+  const active = isActiveLink(item.href)
+  const childActive = kids.some(anyChildActive)
+
+  // 段 が 深く なる ほど 小さく 薄く する
+  const size =
+    depth === 0
+      ? 'gap-3 px-3 py-2 text-sm'
+      : depth === 1
+      ? 'gap-2 px-3 py-1.5 text-xs'
+      : 'gap-2 px-3 py-1 text-[11px]'
+  const iconSize = depth === 0 ? 'h-5 w-5' : 'h-4 w-4'
+  const tone = active
+    ? 'bg-slate-800 text-white'
+    : depth === 0
+    ? 'text-slate-300 hover:bg-slate-800 hover:text-white'
+    : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+
+  if (kids.length === 0) {
+    return (
+      <li>
+        <Link
+          to={item.href}
+          className={cn(
+            'flex items-center rounded-lg font-medium transition-colors',
+            size,
+            active ? (depth === 0 ? 'bg-slate-800 text-white' : 'bg-slate-700 text-white') : tone,
+          )}
+        >
+          <item.icon className={iconSize} />
+          {item.name}
+        </Link>
+      </li>
+    )
+  }
+
+  return (
+    <li>
+      <button
+        onClick={() => onToggle(item.name)}
+        className={cn(
+          'w-full flex items-center rounded-lg font-medium transition-colors',
+          size,
+          active || childActive ? 'bg-slate-800 text-white' : tone,
+        )}
+      >
+        <item.icon className={iconSize} />
+        <span className="flex-1 text-left">{item.name}</span>
+        {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+      </button>
+      {isOpen && (
+        <ul className="mt-1 ml-4 space-y-1">
+          {kids.map((c) => (
+            <NavNode
+              key={c.name}
+              item={c}
+              depth={depth + 1}
+              expanded={expanded}
+              onToggle={onToggle}
+              isActiveLink={isActiveLink}
+              visible={visible}
+            />
+          ))}
+        </ul>
+      )}
+    </li>
+  )
 }
 
 const navigation: NavGroup[] = [
@@ -111,59 +204,67 @@ const navigation: NavGroup[] = [
     href: '/boundary-survey/registry-map',
     icon: Map,
   },
+  // 土木工事: 面 の 工種 は 「農地整備」 に まとめる (線形物 は 別立て)
   {
-    name: '暗渠工事',
-    href: '/underdrain',
-    icon: GitBranch,
-    children: [
-      { name: '工事区域', href: '/underdrain/work-area', icon: Square },
-      { name: 'CAD解析', href: '/underdrain/cad-analysis', icon: FileSearch },
-      { name: '配管系統', href: '/underdrain/pipe-wiring', icon: Cable },
-      { name: '座標計算', href: '/underdrain/coordinate-calc', icon: MapPin },
-      { name: '施工計画', href: '/underdrain/depth-calc', icon: Ruler },
-      { name: 'ICT施工', href: '/underdrain/landxml', icon: FileOutput },
-    ],
-  },
-  {
-    name: '客土工事',
-    href: '/soil-import',
+    name: '農地整備',
+    href: '/farmland',
     icon: Layers,
     children: [
-      { name: '工事区域', href: '/soil-import/work-area', icon: Square },
-      { name: '帯置計画作成', href: '/soil-import/strip-plan', icon: Rows3 },
-      { name: '坪置計画作成', href: '/soil-import/heap-plan', icon: Grid3x3 },
-    ],
-  },
-  {
-    name: '簡易整地',
-    href: '/simple-grading',
-    icon: Mountain,
-    children: [
-      { name: '工事区域', href: '/simple-grading/work-area', icon: Square },
-    ],
-  },
-  {
-    name: '整地',
-    href: '/grading',
-    icon: LandPlot,
-    children: [
-      { name: '工事区域', href: '/grading/work-area', icon: Square },
-    ],
-  },
-  {
-    name: '心破土改',
-    href: '/subsoil',
-    icon: Shovel,
-    children: [
-      { name: '工事区域', href: '/subsoil/work-area', icon: Square },
-    ],
-  },
-  {
-    name: '徐礫',
-    href: '/stone-removal',
-    icon: Gem,
-    children: [
-      { name: '工事区域', href: '/stone-removal/work-area', icon: Square },
+    {
+      name: '暗渠工事',
+      href: '/underdrain',
+      icon: GitBranch,
+      children: [
+        { name: '工事区域', href: '/underdrain/work-area', icon: Square },
+        { name: 'CAD解析', href: '/underdrain/cad-analysis', icon: FileSearch },
+        { name: '配管系統', href: '/underdrain/pipe-wiring', icon: Cable },
+        { name: '座標計算', href: '/underdrain/coordinate-calc', icon: MapPin },
+        { name: '施工計画', href: '/underdrain/depth-calc', icon: Ruler },
+        { name: 'ICT施工', href: '/underdrain/landxml', icon: FileOutput },
+      ],
+    },
+    {
+      name: '客土工事',
+      href: '/soil-import',
+      icon: Layers,
+      children: [
+        { name: '工事区域', href: '/soil-import/work-area', icon: Square },
+        { name: '帯置計画作成', href: '/soil-import/strip-plan', icon: Rows3 },
+        { name: '坪置計画作成', href: '/soil-import/heap-plan', icon: Grid3x3 },
+      ],
+    },
+    {
+      name: '簡易整地',
+      href: '/simple-grading',
+      icon: Mountain,
+      children: [
+        { name: '工事区域', href: '/simple-grading/work-area', icon: Square },
+      ],
+    },
+    {
+      name: '整地',
+      href: '/grading',
+      icon: LandPlot,
+      children: [
+        { name: '工事区域', href: '/grading/work-area', icon: Square },
+      ],
+    },
+    {
+      name: '心破土改',
+      href: '/subsoil',
+      icon: Shovel,
+      children: [
+        { name: '工事区域', href: '/subsoil/work-area', icon: Square },
+      ],
+    },
+    {
+      name: '徐礫',
+      href: '/stone-removal',
+      icon: Gem,
+      children: [
+        { name: '工事区域', href: '/stone-removal/work-area', icon: Square },
+      ],
+    },
     ],
   },
   {
@@ -194,11 +295,15 @@ export function AppLayout() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     // 既定 は 暗渠工事。 加えて、今 開いて いる ページ を 含む 束 も 開いて おく
     // (束 に まとめた 途端 に 行き先 が 見えなく なる のを 避ける)
-    const open = new Set(['暗渠工事'])
+    const open = new Set(['農地整備', '暗渠工事'])
     const path = window.location.pathname
-    for (const g of navigation) {
-      if (g.children?.some((c) => path.startsWith(c.href))) open.add(g.name)
+    const walk = (n: NavItem): boolean => {
+      const hit =
+        path.startsWith(n.href) || (n.children ?? []).map(walk).some(Boolean)
+      if (hit && (n.children ?? []).length > 0) open.add(n.name)
+      return hit
     }
+    for (const g of navigation) walk(g)
     return open
   })
 
@@ -600,81 +705,24 @@ export function AppLayout() {
             </div>
           </div>
           <nav className="flex-1 p-4 overflow-y-auto">
-          <ul className="space-y-1">
+            <ul className="space-y-1">
               {navigation
                 .filter((item) =>
                   isNavVisibleForCategory(item.href, currentProject?.category ?? null),
                 )
-                .map((item) => {
-                const hasChildren = item.children && item.children.length > 0
-                const isExpanded = expandedGroups.has(item.name)
-                const isActive = isActiveLink(item.href)
-                const isChildActive = item.children?.some((child) =>
-                  isActiveLink(child.href)
-                )
-
-                return (
-                  <li key={item.name}>
-                    {hasChildren ? (
-                      <>
-                        <button
-                          onClick={() => toggleGroup(item.name)}
-                          className={cn(
-                            'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                            isActive || isChildActive
-                              ? 'bg-slate-800 text-white'
-                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                          )}
-                        >
-                          <item.icon className="h-5 w-5" />
-                          <span className="flex-1 text-left">{item.name}</span>
-                          {isExpanded ? (
-                            <ChevronDown className="h-4 w-4" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4" />
-                          )}
-                        </button>
-                        {isExpanded && item.children && (
-                          <ul className="mt-1 ml-4 space-y-1">
-                            {item.children.map((child) => {
-                              const isChildItemActive = isActiveLink(child.href)
-                              return (
-                                <li key={child.name}>
-                                  <Link
-                                    to={child.href}
-                                    className={cn(
-                                      'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                                      isChildItemActive
-                                        ? 'bg-slate-700 text-white'
-                                        : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                                    )}
-                                  >
-                                    <child.icon className="h-4 w-4" />
-                                    {child.name}
-                                  </Link>
-                                </li>
-                              )
-                            })}
-                          </ul>
-                        )}
-                      </>
-                    ) : (
-                      <Link
-                        to={item.href}
-                        className={cn(
-                          'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                          isActive
-                            ? 'bg-slate-800 text-white'
-                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                        )}
-                      >
-                        <item.icon className="h-5 w-5" />
-                        {item.name}
-                      </Link>
-                    )}
-                </li>
-              )
-              })}
+                .map((item) => (
+                  <NavNode
+                    key={item.name}
+                    item={item}
+                    depth={0}
+                    expanded={expandedGroups}
+                    onToggle={toggleGroup}
+                    isActiveLink={isActiveLink}
+                    visible={(href) =>
+                      isNavVisibleForCategory(href, currentProject?.category ?? null)
+                    }
+                  />
+                ))}
             </ul>
         </nav>
       </aside>
