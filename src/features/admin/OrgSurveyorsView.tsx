@@ -16,6 +16,9 @@ interface SurveyorRow {
   registration_no: string | null
   office_name: string | null
   phone_no: string | null
+  office_address: string | null
+  corporation_name: string | null
+  corporation_role: string | null
   sort_order: number
   created_at: string
   updated_at: string
@@ -34,6 +37,10 @@ interface EditableRow {
   registrationNo: string
   officeName: string
   phoneNo: string
+  officeAddress: string
+  corporationName: string
+  /** 法人 の 場合 の 立場。 '' = 個人 */
+  corporationRole: '' | 'member' | 'representative'
   sortOrder: number
   dirty: boolean
   isNew: boolean
@@ -45,6 +52,9 @@ const toEditable = (r: SurveyorRow): EditableRow => ({
   registrationNo: r.registration_no ?? '',
   officeName: r.office_name ?? '',
   phoneNo: r.phone_no ?? '',
+  officeAddress: r.office_address ?? '',
+  corporationName: r.corporation_name ?? '',
+  corporationRole: (r.corporation_role as '' | 'member' | 'representative' | null) ?? '',
   sortOrder: r.sort_order,
   dirty: false,
   isNew: false,
@@ -97,6 +107,9 @@ export function OrgSurveyorsView({ organizationId, editable }: Props) {
         registrationNo: '',
         officeName: '',
         phoneNo: '',
+        officeAddress: '',
+        corporationName: '',
+        corporationRole: '',
         sortOrder: prev.length,
         dirty: true,
         isNew: true,
@@ -144,6 +157,10 @@ export function OrgSurveyorsView({ organizationId, editable }: Props) {
               registration_no: r.registrationNo.trim() || null,
               office_name: r.officeName.trim() || null,
               phone_no: r.phoneNo.trim() || null,
+              office_address: r.officeAddress.trim() || null,
+              corporation_name: r.corporationName.trim() || null,
+              // 法人名 が 無ければ 立場 も 持たない
+              corporation_role: r.corporationName.trim() ? r.corporationRole || null : null,
               sort_order: r.sortOrder,
             } as never)
           if (err) throw err
@@ -155,6 +172,10 @@ export function OrgSurveyorsView({ organizationId, editable }: Props) {
               registration_no: r.registrationNo.trim() || null,
               office_name: r.officeName.trim() || null,
               phone_no: r.phoneNo.trim() || null,
+              office_address: r.officeAddress.trim() || null,
+              corporation_name: r.corporationName.trim() || null,
+              // 法人名 が 無ければ 立場 も 持たない
+              corporation_role: r.corporationName.trim() ? r.corporationRole || null : null,
               sort_order: r.sortOrder,
             } as never)
             .eq('id', r.id)
@@ -174,7 +195,8 @@ export function OrgSurveyorsView({ organizationId, editable }: Props) {
       <div className="flex items-center gap-2 mb-2">
         <h3 className="text-sm font-semibold text-slate-700">土地家屋調査士</h3>
         <span className="text-xs text-slate-500">
-          報告書ヘッダで選択できる調査士セット。氏名を選ぶと 登録番号・所属会・電話番号 が自動で入る。
+          報告書ヘッダや図面の表題欄で選べる調査士。氏名を選ぶと 登録番号・所属会・事務所・電話番号 が自動で入る。
+          土地家屋調査士法人の場合は 法人名 と 社員 / 代表社員 の別 も入れる。
         </span>
         {editable && (
           <div className="ml-auto flex items-center gap-2">
@@ -221,7 +243,10 @@ export function OrgSurveyorsView({ organizationId, editable }: Props) {
               <th className="px-2 py-1.5 text-left border">調査士名</th>
               <th className="px-2 py-1.5 text-left border">登録番号</th>
               <th className="px-2 py-1.5 text-left border">所属調査士会</th>
+              <th className="px-2 py-1.5 text-left border">事務所の住所</th>
               <th className="px-2 py-1.5 text-left border">電話番号</th>
+              <th className="px-2 py-1.5 text-left border">土地家屋調査士法人</th>
+              <th className="px-2 py-1.5 text-left border w-24">立場</th>
               {editable && <th className="w-10 border"></th>}
             </tr>
           </thead>
@@ -261,12 +286,48 @@ export function OrgSurveyorsView({ organizationId, editable }: Props) {
                 <td className="px-1 py-0.5 border">
                   <input
                     type="text"
+                    value={r.officeAddress}
+                    onChange={(e) => patchRow(r.id, { officeAddress: e.target.value })}
+                    disabled={!editable}
+                    className="w-full px-1.5 py-1 border rounded bg-white disabled:bg-slate-50"
+                    placeholder="斜里郡斜里町青葉町9番地13"
+                  />
+                </td>
+                <td className="px-1 py-0.5 border">
+                  <input
+                    type="text"
                     value={r.phoneNo}
                     onChange={(e) => patchRow(r.id, { phoneNo: e.target.value })}
                     disabled={!editable}
                     className="w-full px-1.5 py-1 border rounded bg-white disabled:bg-slate-50"
                     placeholder="0152-23-1311"
                   />
+                </td>
+                <td className="px-1 py-0.5 border">
+                  <input
+                    type="text"
+                    value={r.corporationName}
+                    onChange={(e) => patchRow(r.id, { corporationName: e.target.value })}
+                    disabled={!editable}
+                    className="w-full px-1.5 py-1 border rounded bg-white disabled:bg-slate-50"
+                    placeholder="個人事務所なら空のまま"
+                  />
+                </td>
+                <td className="px-1 py-0.5 border">
+                  <select
+                    value={r.corporationRole}
+                    onChange={(e) =>
+                      patchRow(r.id, {
+                        corporationRole: e.target.value as EditableRow['corporationRole'],
+                      })
+                    }
+                    disabled={!editable || !r.corporationName.trim()}
+                    className="w-full px-1 py-1 border rounded bg-white disabled:bg-slate-50"
+                  >
+                    <option value="">（個人）</option>
+                    <option value="representative">代表社員</option>
+                    <option value="member">社員</option>
+                  </select>
                 </td>
                 {editable && (
                   <td className="text-center border">

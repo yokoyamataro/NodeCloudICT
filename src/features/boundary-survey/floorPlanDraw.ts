@@ -29,7 +29,7 @@ import {
   termValue,
   termValueText,
   warekiCreatedText,
-  MAKER_QUALIFICATION,
+  makerTitle,
   type FloorFigure,
   type FloorPlan,
   type Pt,
@@ -235,8 +235,10 @@ export function buildSheet(
   const yName = corp ? 237.6 : 236.5
   text((tlB + tlC) / 2, yAddress, plan.frame.makerAddress, 2.1, 'middle')
   if (corp) text((tlB + tlC) / 2, 232.6, corp, 2.6, 'middle')
-  text(tlB + 6.5, yName - 4.2, MAKER_QUALIFICATION.slice(0, 4), 1.8)
-  text(tlB + 6.5, yName - 1.9, MAKER_QUALIFICATION.slice(4), 1.8)
+  // 法人 の 場合 は 資格 では なく 立場 (社員 / 代表社員)
+  const title = makerTitle(plan.frame)
+  text(tlB + 6.5, yName - 4.2, title.slice(0, 4), 1.8)
+  text(tlB + 6.5, yName - 1.9, title.slice(4), 1.8)
   const nameChars = Math.max(Array.from(plan.frame.makerName).length, 1)
   text(tlB + 27.2, yName, plan.frame.makerName, 3.8, 'start', { pitch: 48.5 / nameChars })
   vertical(out, '縮尺', (tlC + tlD) / 2, S.bodyBottom + 3.4, S.titleBottom - 4.0, 2.8)

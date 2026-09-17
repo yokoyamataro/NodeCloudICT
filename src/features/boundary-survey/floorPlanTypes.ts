@@ -466,13 +466,24 @@ export interface FloorPlanFrame {
   makerAddress: string
   /** 土地家屋調査士法人 の 場合 の 名称。 空 なら 個人 と して 氏名 だけ 出す */
   makerCorporation: string
+  /** 法人 の 場合 の 立場 */
+  makerRole?: 'member' | 'representative'
   makerName: string
   applicantName: string
   remarks: string
 }
 
-/** 資格 は この 様式 では 固定 */
+/** 資格 は この 様式 では 固定 (個人 の 事務所 の 場合) */
 export const MAKER_QUALIFICATION = '土地家屋調査士'
+
+/**
+ * 表題欄 の 氏名 の 左 に 出す 肩書。
+ * 土地家屋調査士法人 の 場合 は 資格 では なく 立場 (社員 / 代表社員) を 書く。
+ */
+export function makerTitle(frame: FloorPlanFrame): string {
+  if (!frame.makerCorporation.trim()) return MAKER_QUALIFICATION
+  return frame.makerRole === 'representative' ? '代表社員' : '社員'
+}
 
 export const DEFAULT_FRAME: FloorPlanFrame = {
   createdOn: null,

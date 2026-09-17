@@ -9,7 +9,7 @@
 
 import { Loader2 } from 'lucide-react'
 import type { LandReportBody } from '@/stores/landReportStore'
-import { useOrganizationSurveyors } from './useOrganizationSurveyors'
+import { surveyorTitle, useOrganizationSurveyors } from './useOrganizationSurveyors'
 
 interface Props {
   body: LandReportBody
@@ -95,9 +95,22 @@ export function ReportSectionHeader({ body, onChange }: Props) {
               {selected.registrationNo || '—'}
             </div>
             <div>
+              <span className="text-slate-500">事務所:</span>{' '}
+              {selected.officeAddress || '—'}
+            </div>
+            <div>
               <span className="text-slate-500">電話番号:</span>{' '}
               {selected.phoneNo || '—'}
             </div>
+            {selected.corporationName && (
+              <div>
+                <span className="text-slate-500">法人:</span>{' '}
+                {selected.corporationName}
+                <span className="ml-2 px-1 rounded bg-slate-200 text-[11px]">
+                  {surveyorTitle(selected)}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -1949,6 +1949,20 @@ export function StepFrame({
             placeholder="例: 土地家屋調査士法人〇〇"
           />
         </Field>
+        {frame.makerCorporation.trim() !== '' && (
+          <Field label="立場" hint="法人の場合、表題欄には資格ではなくこちらを出します。">
+            <select
+              className={inputCls}
+              value={frame.makerRole ?? 'member'}
+              onChange={(e) =>
+                setFrame({ makerRole: e.target.value as 'member' | 'representative' })
+              }
+            >
+              <option value="representative">代表社員</option>
+              <option value="member">社員</option>
+            </select>
+          </Field>
+        )}
         <Field label="氏名" hint="資格「土地家屋調査士」は様式で固定のため入力は不要です。">
           <input
             className={inputCls}

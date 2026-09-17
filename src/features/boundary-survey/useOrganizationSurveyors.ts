@@ -16,6 +16,12 @@ export interface OrgSurveyor {
   registrationNo: string | null
   officeName: string | null
   phoneNo: string | null
+  /** 事務所 の 住所 */
+  officeAddress: string | null
+  /** 土地家屋調査士法人 の 名称。 個人事務所 は null */
+  corporationName: string | null
+  /** 法人 の 場合 の 立場 */
+  corporationRole: 'member' | 'representative' | null
 }
 
 interface Row {
@@ -25,6 +31,9 @@ interface Row {
   registration_no: string | null
   office_name: string | null
   phone_no: string | null
+  office_address: string | null
+  corporation_name: string | null
+  corporation_role: string | null
   sort_order: number
 }
 
@@ -41,7 +50,19 @@ const toSurveyor = (r: Row): OrgSurveyor => ({
   registrationNo: r.registration_no,
   officeName: r.office_name,
   phoneNo: r.phone_no,
+  officeAddress: r.office_address,
+  corporationName: r.corporation_name,
+  corporationRole:
+    r.corporation_role === 'member' || r.corporation_role === 'representative'
+      ? r.corporation_role
+      : null,
 })
+
+/** 表題欄 や 報告書 に 出す 肩書。 法人 なら 立場 を 付ける */
+export function surveyorTitle(s: OrgSurveyor): string {
+  if (!s.corporationName) return '土地家屋調査士'
+  return s.corporationRole === 'representative' ? '代表社員' : '社員'
+}
 
 export function useOrganizationSurveyors(): Result {
   const { user, profile } = useAuth()
