@@ -68,6 +68,18 @@ export function insideDistance(ring: EN[], edgeIndex: number, p: EN): number {
   return (sign * ((p.e - e.a.e) * dy - (p.n - e.a.n) * dx)) / len * -1
 }
 
+/** 境界線 の 上 に 下ろした 垂線 の 足 */
+export function footOnEdge(ring: EN[], edgeIndex: number, p: EN): EN | null {
+  const e = siteEdge(ring, edgeIndex)
+  if (!e) return null
+  const dx = e.b.e - e.a.e
+  const dy = e.b.n - e.a.n
+  const L2 = dx * dx + dy * dy
+  if (L2 < 1e-12) return null
+  const t = ((p.e - e.a.e) * dx + (p.n - e.a.n) * dy) / L2
+  return { e: e.a.e + dx * t, n: e.a.n + dy * t }
+}
+
 /** 建物 の 頂点 を 現地 に 置く */
 export function placeVertex(p: Pt, pl: Placement): EN {
   const t = (pl.rotationDeg * Math.PI) / 180

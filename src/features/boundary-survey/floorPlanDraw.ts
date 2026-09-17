@@ -11,6 +11,7 @@
 
 import { polyArea, polyCentroid } from './floorPlanRegion'
 import { buildWhiskers } from './floorPlanWhisker'
+import { footOnEdge } from './floorPlanPlace'
 import {
   buildingKeys,
   groundOfBuilding,
@@ -513,6 +514,8 @@ function drawSite(
       pts: pc.points.map((p) => ({ e: p.y, n: p.x })),
     }))
   const site = rings.flatMap((r) => r.pts)
+  // 離れ の 計算 に 使う 敷地 の 通し (境界線 の 番号 は この 並び)
+  const ring = site
 
   // 附属建物 は 別棟 な ので 棟 ごと に 据えた もの を 全部 描く
   const buildings: { key: string; pts: { e: number; n: number }[] }[] = []
@@ -602,6 +605,42 @@ function drawSite(
       })
     }
   }
+  // 敷地境界 から の 離れ。 建物 の 辺 上 の 点 から 境界線 へ 垂線 を 引く
+  for (const d of plan.site.refDistances) {
+    if (d.buildingEdge == null || d.siteEdge == null) continue
+    const g = groundOfBuilding(plan.figures, d.buildingKey ?? 'main')
+    const pl = placementOf(plan.site, d.buildingKey ?? 'main')
+    if (!g || !pl.placed) continue
+    const pts = placeOutline(figureOutline(g), pl.offsetE, pl.offsetN, pl.rotationDeg)
+    const a = pts[d.buildingEdge % pts.length]
+    const b = pts[(d.buildingEdge + 1) % pts.length]
+    if (!a || !b) continue
+    const t = d.t ?? 0
+    const from: { e: number; n: number } = {
+      e: a.e + (b.e - a.e) * t,
+      n: a.n + (b.n - a.n) * t,
+    }
+    const foot = footOnEdge(ring, d.siteEdge, from)
+    if (!foot) continue
+    const p1 = toSheet(from.e, from.n)
+    const p2 = toSheet(foot.e, foot.n)
+    out.push({ kind: 'line', x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, w: LW, layer: L.dim })
+    // 寸法 は 線 に 沿わせる
+    let deg = (-Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180) / Math.PI
+    if (deg > 90 || deg < -90) deg += 180
+    const rad = (-deg * Math.PI) / 180
+    out.push({
+      kind: 'text',
+      x: (p1.x + p2.x) / 2 + Math.sin(rad) * 0.9,
+      y: (p1.y + p2.y) / 2 - Math.cos(rad) * 0.9,
+      text: d.label ? `${d.label} ${d.value.toFixed(2)}` : d.value.toFixed(2),
+      h: 2.0,
+      anchor: 'middle',
+      rot: deg,
+      layer: L.dim,
+    })
+  }
+
   // 隣接地 の ヒゲ線 と 地番
   for (const st of whisker.stubs) {
     const a = toSheet(st.a.e, st.a.n)

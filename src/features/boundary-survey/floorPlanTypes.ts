@@ -436,8 +436,28 @@ export interface SitePlan {
   whisker?: { show: boolean; lengthMm: number }
   /** 隣地 の 地番 など の 注記 (手 で 足す 分) */
   notes: SiteNote[]
-  /** 敷地境界 から の 離れ。 図面 に 記入 する 寸法 */
-  refDistances: { id: string; label: string; value: number }[]
+  /**
+   * 敷地境界 から の 離れ。 図面 に 記入 する 寸法。
+   *
+   * 建物 の 辺 → その 辺 上 の 点 → 境界線 の 順 に 選ぶ と 距離 が 決まる。
+   * 出た 値 は value に 入れる ので、手 で 直したい ときは auto を 外して
+   * value を 打ち替える。
+   */
+  refDistances: {
+    id: string
+    label: string
+    value: number
+    /** true の 間 は 選んだ 3 つ から 計算 し直す */
+    auto?: boolean
+    /** どの 棟 の 辺 か */
+    buildingKey?: string
+    /** 建物 の 辺 (moves の index) */
+    buildingEdge?: number
+    /** その 辺 の どこ か。 0=始点 / 1=終点 / 途中 は 0〜1 */
+    t?: number
+    /** 境界線 (敷地 の 辺 の 通し番号) */
+    siteEdge?: number
+  }[]
 }
 
 export const DEFAULT_SITE: SitePlan = {

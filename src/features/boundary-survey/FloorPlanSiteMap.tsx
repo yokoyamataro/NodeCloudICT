@@ -101,6 +101,8 @@ export function FloorPlanSiteMap({
   onEdgePick,
   onVertexPick,
   onBuildingEdgePick,
+  onEdgePointPick,
+  pointPickEdge,
 }: {
   farmId: string | null
   /** 平面直角 の 系番号。 地番 の 取込 に 使う */
@@ -142,6 +144,10 @@ export function FloorPlanSiteMap({
   onVertexPick?: (vertexIndex: number) => void
   /** 地図 上 の 建物 の 辺 を 押した */
   onBuildingEdgePick?: (edgeIndex: number) => void
+  /** 建物 の 辺 の 上 の 一点 を 押した。 t は 辺 の 始点 から の 割合 */
+  onEdgePointPick?: (edgeIndex: number, t: number) => void
+  /** 点 を 拾う 対象 の 辺 (これ だけ 押せる ように する) */
+  pointPickEdge?: number | null
 }) {
   const ll = useMemo(() => (e: number, n: number) => conv.toLatLng(n, e), [conv])
 
@@ -307,6 +313,43 @@ export function FloorPlanSiteMap({
           </Polygon>
         )
       })}
+
+      {/* 辺 の 上 の 点 を 拾う */}
+      {onEdgePointPick != null &&
+        pointPickEdge != null &&
+        building.length >= 2 &&
+        (() => {
+          const a = building[pointPickEdge % building.length]
+          const b = building[(pointPickEdge + 1) % building.length]
+          if (!a || !b) return null
+          return (
+            <Polyline
+              positions={[a, b]}
+              pathOptions={{ color: '#2563eb', weight: 12, opacity: 0.35 }}
+              eventHandlers={{
+                click: (ev) => {
+                  // 押した 場所 を 辺 に 落として 割合 を 出す
+                  const p = ev.latlng
+                  const ax = a[1]
+                  const ay = a[0]
+                  const bx = b[1]
+                  const by = b[0]
+                  const dx = bx - ax
+                  const dy = by - ay
+                  const L2 = dx * dx + dy * dy
+                  let t = L2 < 1e-18 ? 0 : ((p.lng - ax) * dx + (p.lat - ay) * dy) / L2
+                  t = Math.min(1, Math.max(0, t))
+                  // 端 の 近く は 端部 に 吸い付かせる
+                  if (t < 0.06) t = 0
+                  else if (t > 0.94) t = 1
+                  onEdgePointPick(pointPickEdge, Math.round(t * 1000) / 1000)
+                },
+              }}
+            >
+              <Tooltip sticky>辺の上を押す（端は端部に吸着）</Tooltip>
+            </Polyline>
+          )
+        })()}
 
       {/* 建物 の 辺。 押して 選べる ように する */}
       {onBuildingEdgePick != null &&

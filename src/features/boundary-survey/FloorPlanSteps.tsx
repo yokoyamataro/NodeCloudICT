@@ -75,6 +75,7 @@ import {
   centerOn,
   parallelGuides,
   ringCentroid,
+  insideDistance,
   siteRing,
   solveByParallel,
   solveByPoints,
@@ -1372,11 +1373,15 @@ type PickTarget =
   | { kind: 'siteEdge' }
   | { kind: 'vertex'; row: number }
   | { kind: 'edge'; row: number }
+  // 離れ: 建物 の 辺 → 辺 上 の 点 → 境界線 の 順
+  | { kind: 'refEdge'; id: string }
+  | { kind: 'refPoint'; id: string }
+  | { kind: 'refSite'; id: string }
 
 function samePick(a: PickTarget | null, b: PickTarget): boolean {
   if (!a || a.kind !== b.kind) return false
-  if (a.kind === 'vertex' && b.kind === 'vertex') return a.row === b.row
-  if (a.kind === 'edge' && b.kind === 'edge') return a.row === b.row
+  if ('row' in a && 'row' in b) return a.row === b.row
+  if ('id' in a && 'id' in b) return a.id === b.id
   return true
 }
 
@@ -1576,7 +1581,9 @@ export function StepSite({
 
   // 地図 で 強調 する もの
   const highlightEdge =
-    site.method === 'three_point'
+    pick?.kind === 'refSite'
+      ? [site.refDistances.find((d) => d.id === pick.id)?.siteEdge ?? -1]
+      : site.method === 'three_point'
       ? constraints.map((c) => c.edgeIndex)
       : site.method === 'parallel'
       ? [parallelSpec.siteEdge]
@@ -1591,6 +1598,8 @@ export function StepSite({
       setParallel({ ...parallelSpec, siteEdge: edgeIndex })
     } else if (pick.kind === 'edge') {
       setConstraints(constraints.map((c, j) => (j === pick.row ? { ...c, edgeIndex } : c)))
+    } else if (pick.kind === 'refSite') {
+      patchRef(pick.id, { siteEdge: edgeIndex })
     }
     setPick(null)
   }
@@ -1602,11 +1611,57 @@ export function StepSite({
     setPick(null)
   }
 
+  /** 選んだ 3 つ から 離れ を 出す */
+  const calcRef = (d: SitePlan['refDistances'][number]): number | null => {
+    if (d.buildingEdge == null || d.siteEdge == null) return null
+    const g = groundOfBuilding(plan.figures, d.buildingKey ?? key)
+    const pl = placementOf(site, d.buildingKey ?? key)
+    if (!g || !pl.placed) return null
+    const pts = placeOutline(figureOutline(g), pl.offsetE, pl.offsetN, pl.rotationDeg)
+    const a = pts[d.buildingEdge % pts.length]
+    const b = pts[(d.buildingEdge + 1) % pts.length]
+    if (!a || !b) return null
+    const t = d.t ?? 0
+    const p = { e: a.e + (b.e - a.e) * t, n: a.n + (b.n - a.n) * t }
+    const v = insideDistance(ring, d.siteEdge, p)
+    return Math.round(Math.abs(v) * 100) / 100
+  }
+
+  /** 1 行 を 直し、自動 なら 値 も 出し直す */
+  const patchRef = (id: string, p: Partial<SitePlan['refDistances'][number]>) => {
+    setSite({
+      refDistances: site.refDistances.map((d) => {
+        if (d.id !== id) return d
+        const next = { ...d, ...p }
+        if (next.auto !== false) {
+          const v = calcRef(next)
+          if (v != null) next.value = v
+        }
+        return next
+      }),
+    })
+  }
+
   /** 地図 の 建物 の 辺 を 押した */
   const pickBuildingEdge = (i: number) => {
-    if (pick?.kind !== 'buildingEdge') return
-    setParallel({ ...parallelSpec, buildingEdge: i })
-    setPick(null)
+    if (pick?.kind === 'buildingEdge') {
+      setParallel({ ...parallelSpec, buildingEdge: i })
+      setPick(null)
+      return
+    }
+    if (pick?.kind === 'refEdge') {
+      // 辺 が 決まったら 続けて 辺 の 上 の 点 を 拾う
+      patchRef(pick.id, { buildingKey: key, buildingEdge: i })
+      setPick({ kind: 'refPoint', id: pick.id })
+    }
+  }
+
+  /** 辺 の 上 の 点 を 押した */
+  const pickEdgePoint = (_i: number, t: number) => {
+    if (pick?.kind !== 'refPoint') return
+    patchRef(pick.id, { t })
+    // 最後 に 境界線 を 選ぶ
+    setPick({ kind: 'refSite', id: pick.id })
   }
 
   return (
@@ -1913,39 +1968,137 @@ export function StepSite({
           }}
         />
 
-        <ListEditor
-          title="敷地境界からの離れ（図面に記入する寸法）"
-          empty="例: 北側境界まで 1.20 のように、図面に記入する寸法を足します。"
-          ids={site.refDistances.map((d) => d.id)}
-          onAdd={() =>
-            setSite({ refDistances: [...site.refDistances, { id: newId(), label: '', value: 0 }] })
-          }
-          onRemove={(id) =>
-            setSite({ refDistances: site.refDistances.filter((d) => d.id !== id) })
-          }
-          render={(id) => {
-            const d = site.refDistances.find((x) => x.id === id)!
-            const upd = (p: Partial<typeof d>) =>
-              setSite({
-                refDistances: site.refDistances.map((x) => (x.id === id ? { ...x, ...p } : x)),
-              })
-            return (
-              <>
-                <input
-                  className="flex-1 min-w-0 px-2 py-1 text-sm border rounded"
-                  placeholder="例: 北側境界まで"
-                  value={d.label}
-                  onChange={(e) => upd({ label: e.target.value })}
-                />
-                <NumField
-                  value={d.value}
-                  onChange={(v) => upd({ value: v })}
-                  className="w-20 px-2 py-1 text-sm border rounded text-right font-mono"
-                />
-              </>
-            )
-          }}
-        />
+        {/* 敷地境界 から の 離れ。 建物 の 辺 → 辺 上 の 点 → 境界線 の 順 に 選ぶ */}
+        <div className="pt-3 mt-3 border-t">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-xs font-semibold text-slate-500">敷地境界からの離れ</div>
+            <button
+              type="button"
+              onClick={() => {
+                const id = newId()
+                setSite({
+                  refDistances: [...site.refDistances, { id, label: '', value: 0, auto: true }],
+                })
+                setPick({ kind: 'refEdge', id })
+                setPickingParcel(false)
+              }}
+              className="px-2 py-0.5 text-xs border rounded hover:bg-slate-50 flex items-center gap-1"
+            >
+              <Plus className="h-3 w-3" />
+              追加
+            </button>
+          </div>
+          {site.refDistances.length === 0 ? (
+            <div className="text-[11px] text-slate-400">
+              「追加」を押すと、建物の辺 → 辺上の点 → 境界線 の順に地図で選びます。
+            </div>
+          ) : (
+            <ul className="space-y-1">
+              {site.refDistances.map((d) => {
+                const step =
+                  d.buildingEdge == null ? 1 : d.t == null ? 2 : d.siteEdge == null ? 3 : 0
+                const picking =
+                  pick && 'id' in pick && pick.id === d.id
+                    ? pick.kind === 'refEdge'
+                      ? '建物の辺を押す'
+                      : pick.kind === 'refPoint'
+                      ? '辺の上の点を押す'
+                      : '境界線を押す'
+                    : null
+                return (
+                  <li key={d.id} className="border rounded p-1.5 bg-white">
+                    <div className="flex items-center gap-1 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => startPick({ kind: 'refEdge', id: d.id })}
+                        className={`px-1.5 py-0.5 rounded border ${
+                          pick?.kind === 'refEdge' && pick.id === d.id
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        辺 {d.buildingEdge != null ? d.buildingEdge + 1 : '—'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => startPick({ kind: 'refPoint', id: d.id })}
+                        disabled={d.buildingEdge == null}
+                        className={`px-1.5 py-0.5 rounded border disabled:opacity-40 ${
+                          pick?.kind === 'refPoint' && pick.id === d.id
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        {d.t == null
+                          ? '点 —'
+                          : d.t === 0
+                          ? '始点'
+                          : d.t === 1
+                          ? '終点'
+                          : `${(d.t * 100).toFixed(0)}%`}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => startPick({ kind: 'refSite', id: d.id })}
+                        disabled={d.t == null}
+                        className={`px-1.5 py-0.5 rounded border disabled:opacity-40 ${
+                          pick?.kind === 'refSite' && pick.id === d.id
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        境界線 {d.siteEdge != null ? d.siteEdge + 1 : '—'}
+                      </button>
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onClick={() => {
+                          setPick(null)
+                          setSite({ refDistances: site.refDistances.filter((x) => x.id !== d.id) })
+                        }}
+                        className="ml-auto p-0.5 text-slate-400 hover:text-red-600"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="mt-1 flex items-center gap-1">
+                      <input
+                        className="flex-1 min-w-0 px-2 py-1 text-xs border rounded"
+                        placeholder="注記（省略可）"
+                        value={d.label}
+                        onChange={(e) => patchRef(d.id, { label: e.target.value })}
+                      />
+                      <NumField
+                        value={d.value}
+                        onChange={(v) => patchRef(d.id, { value: v, auto: false })}
+                        className={`w-20 px-2 py-1 text-sm border rounded text-right font-mono ${
+                          d.auto === false ? 'bg-amber-50' : ''
+                        }`}
+                      />
+                      <label className="flex items-center gap-0.5 text-[10px] text-slate-500">
+                        <input
+                          type="checkbox"
+                          checked={d.auto !== false}
+                          onChange={(e) => patchRef(d.id, { auto: e.target.checked })}
+                        />
+                        自動
+                      </label>
+                    </div>
+
+                    {picking ? (
+                      <div className="mt-0.5 text-[10px] text-blue-700">地図で{picking}…</div>
+                    ) : step !== 0 ? (
+                      <div className="mt-0.5 text-[10px] text-slate-400">
+                        {step === 1 ? '建物の辺' : step === 2 ? '辺上の点' : '境界線'}が未選択です
+                      </div>
+                    ) : null}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 min-w-0 border rounded overflow-hidden">
@@ -1978,10 +2131,28 @@ export function StepSite({
           highlightEdge={highlightEdge}
           highlightVertex={highlightVertex}
           highlightBuildingEdge={
-            site.method === 'parallel' ? parallelSpec.buildingEdge : null
+            pick?.kind === 'refPoint' || pick?.kind === 'refSite'
+              ? (site.refDistances.find((d) => d.id === pick.id)?.buildingEdge ?? null)
+              : site.method === 'parallel'
+              ? parallelSpec.buildingEdge
+              : null
           }
-          onBuildingEdgePick={pick?.kind === 'buildingEdge' ? pickBuildingEdge : undefined}
-          onEdgePick={pick?.kind === 'siteEdge' || pick?.kind === 'edge' ? pickEdge : undefined}
+          onBuildingEdgePick={
+            pick?.kind === 'buildingEdge' || pick?.kind === 'refEdge'
+              ? pickBuildingEdge
+              : undefined
+          }
+          onEdgePointPick={pick?.kind === 'refPoint' ? pickEdgePoint : undefined}
+          pointPickEdge={
+            pick?.kind === 'refPoint'
+              ? (site.refDistances.find((d) => d.id === pick.id)?.buildingEdge ?? null)
+              : null
+          }
+          onEdgePick={
+            pick?.kind === 'siteEdge' || pick?.kind === 'edge' || pick?.kind === 'refSite'
+              ? pickEdge
+              : undefined
+          }
           onVertexPick={pick?.kind === 'vertex' ? pickVertex : undefined}
         />
       </div>
