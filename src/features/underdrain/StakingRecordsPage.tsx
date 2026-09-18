@@ -656,6 +656,28 @@ export function StakingRecordsPage() {
     const hit = r?.recordSetId ? slideOfSet.get(r.recordSetId) : undefined
     return hit ?? { dx: xOffset, dy: yOffset, dz: zOffset }
   }
+  /** 記録セット の 移動。 書いた あと 取り直して 結果 を 出す */
+  const [setMoveStatus, setSetMoveStatus] = useState<string | null>(null)
+  const handleMoveToSet = async (ids: string[], setId: string | null) => {
+    if (ids.length === 0) return
+    setSetMoveStatus(null)
+    await moveRecordsToSet(ids, setId)
+    const err = useStakingStore.getState().error
+    if (err) {
+      setSetMoveStatus(`移動できませんでした: ${err}`)
+      return
+    }
+    // 楽観更新 だけ に 頼らず、DB の 結果 を 見て 表示 を 揃える
+    if (currentFarm) await fetchRecords(currentFarm.id)
+    const name = setId ? (sets.find((x) => x.id === setId)?.name ?? null) : null
+    const label = setId
+      ? (name && name.trim() !== ''
+          ? name
+          : (sets.find((x) => x.id === setId)?.measuredOn ?? 'セット'))
+      : '未振り分け'
+    setSetMoveStatus(`${ids.length} 件 を 「${label}」 に 移しました`)
+  }
+
   /** セット ごと の 記録 の 数 (null = 未振り分け) */
   const countBySet = useMemo(() => {
     const m = new Map<string | null, number>()
@@ -1414,7 +1436,7 @@ export function StakingRecordsPage() {
                 .filter((g) => selectedGroupKeys.has(g.key))
                 .flatMap((g) => [g.m1?.id, g.m2?.id].filter((x): x is string => !!x))
               if (ids.length === 0) return
-              void moveRecordsToSet(ids, v === '__none__' ? null : v)
+              void handleMoveToSet(ids, v === '__none__' ? null : v)
               e.currentTarget.value = ''
             }}
             className="px-1 py-1 border rounded bg-white disabled:opacity-40"
@@ -1429,6 +1451,15 @@ export function StakingRecordsPage() {
             <option value="__none__">（未振り分けに戻す）</option>
           </select>
         </label>
+        {setMoveStatus && (
+          <span
+            className={`text-[11px] ${
+              setMoveStatus.startsWith('移動できません') ? 'text-red-600' : 'text-emerald-700'
+            }`}
+          >
+            {setMoveStatus}
+          </span>
+        )}
         {selectedGroupKeys.size > 0 && (
           <button
             onClick={() => setSelectedGroupKeys(new Set())}
@@ -1629,6 +1660,29 @@ export function StakingRecordsPage() {
                         >
                           ×2
                         </span>
+                      )}
+                      {/* 記録セット。 ここ で 点 ごと に 移せる。
+                          スライド量 は セット ごと な ので 選び直す と 補正 も 変わる。 */}
+                      {sets.length > 0 && (
+                        <select
+                          value={(g.m1 ?? g.m2)?.recordSetId ?? ''}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            e.stopPropagation()
+                            const ids = [g.m1?.id, g.m2?.id].filter((x): x is string => !!x)
+                            if (ids.length === 0) return
+                            void handleMoveToSet(ids, e.target.value || null)
+                          }}
+                          className="mt-0.5 block w-full max-w-[9rem] px-1 py-0.5 text-[10px] border rounded bg-white"
+                          title="この点の実測記録が属する記録セット"
+                        >
+                          <option value="">（未振り分け）</option>
+                          {sets.map((st) => (
+                            <option key={st.id} value={st.id}>
+                              {setLabel(st)}
+                            </option>
+                          ))}
+                        </select>
                       )}
                     </td>
                     {/* 設計 (点名 + XYZ + リンク 操作 ボタン) — 実測1 の record を 対象 */}
