@@ -6244,27 +6244,23 @@ export function OpenChannelAlignmentPage() {
                                   </span>
                                 )}
                               </label>
-                              {/* 編集対象 の 切替 (現況 / 計画 / 出来形)。
-                                  計画 = 従来の Interactive エディタ、現況 = 地図拾い or 表モーダル、
-                                  出来形 = プレースホルダ (次ステップ) */}
-                              <div className="flex items-center gap-0.5 border-l pl-2 ml-1">
-                                <span className="text-[10px] text-slate-500 mr-0.5">編集</span>
-                                {EDIT_TARGET_TABS.map((b) => (
-                                  <button
-                                    key={b.key}
-                                    onClick={() => {
-                                      setEditTarget(b.key)
-                                      // 対象を 切り替えたら 地図ピック モードは 解除
-                                      setMapCaptureTarget(null)
-                                    }}
-                                    className={`px-2 py-0.5 text-[11px] border rounded ${
-                                      editTarget === b.key ? b.act : b.idle
-                                    }`}
-                                  >
-                                    {b.label}
-                                  </button>
-                                ))}
-                              </div>
+                              {/* 編集対象 (現況 / 計画 / 出来形) は 左メニュー の 「横断」 タブ
+                                  で 選ぶ。 ここ は いま どれ を 編集 して いる か の 表示 だけ。 */}
+                              {(() => {
+                                const m = EDIT_TARGET_TABS.find((t) => t.key === editTarget)
+                                if (!m) return null
+                                return (
+                                  <div className="flex items-center gap-1 border-l pl-2 ml-1">
+                                    <span className="text-[10px] text-slate-500">編集</span>
+                                    <span
+                                      className={`px-2 py-0.5 text-[11px] border rounded ${m.act}`}
+                                      title="左メニュー の 「横断」 タブ で 切り替え"
+                                    >
+                                      {m.label}
+                                    </span>
+                                  </div>
+                                )
+                              })()}
                               <div className="ml-auto flex gap-1">
                                 {selectedStation.crossSection ||
                                 (selectedStation.plannedSectionRaw?.length ?? 0) > 0 ? (
