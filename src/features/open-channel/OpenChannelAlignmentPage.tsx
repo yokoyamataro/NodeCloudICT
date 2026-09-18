@@ -2386,6 +2386,37 @@ function dxfToWorld(
 }
 
 /**
+ * トレース 点リスト の 「ここ に 割り込む」 帯。
+ * 点 と 点 の 間 を 押して 次 の 1 点 を 入れる 位置 を 決める。
+ */
+function InsertSlot({
+  active,
+  onClick,
+  last,
+}: {
+  active: boolean
+  onClick: () => void
+  last?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full flex items-center gap-1 px-1.5 text-[10px] leading-none ${
+        active
+          ? 'bg-amber-100 text-amber-800 py-1'
+          : 'text-transparent hover:text-slate-500 hover:bg-slate-100 py-0.5'
+      }`}
+      title={last ? '末尾 に 足す' : 'ここ に 割り込む'}
+    >
+      <span className="flex-1 border-t border-dashed border-current" />
+      <span>{active ? 'ここ に 追加' : '＋'}</span>
+      <span className="flex-1 border-t border-dashed border-current" />
+    </button>
+  )
+}
+
+/**
  * DXF トレース モーダル: 選択測点 + 対象 (現況/計画/出来形) 向けに
  * 校正 (DL/中心線/縮尺) と トレース (LINE/LWPOLYLINE クリックで 点列 抽出) を 行う。
  */
@@ -2431,10 +2462,17 @@ function DxfTraceModal({
     const initial = (station[stationSectionKey] as MeasuredCrossPoint[] | null | undefined) ?? []
     return initial.map((p) => ({ ...p }))
   })
+  /**
+   * 次 の 1 点 を 入れる 位置。 null = 末尾 (従来 どおり 右端 に 足す)。
+   * 数値 の とき は その 前 に 割り込む (0 = 先頭 = 左端)。
+   * 割り込み 中 も 拾った 順 に 並ぶ よう、1 点 足す ごと に 1 つ 進める。
+   */
+  const [insertIndex, setInsertIndex] = useState<number | null>(null)
   // station or 対象 が 変わった時 に 該当 断面の 点列を 再読込
   useEffect(() => {
     const initial = (station[stationSectionKey] as MeasuredCrossPoint[] | null | undefined) ?? []
     setLocalPoints(initial.map((p) => ({ ...p })))
+    setInsertIndex(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [station.id, activeTarget])
 
@@ -2622,19 +2660,38 @@ function DxfTraceModal({
       const w = dxfToWorld(worldPt.x, worldPt.y, parsedCalib)
       const now = Date.now()
       const rand = () => Math.random().toString(36).slice(2, 7)
-      setLocalPoints((pts) => [
-        ...pts,
-        {
-          id: `dxf-${now}-${rand()}`,
-          offset: w.offset,
-          elevation: w.elevation,
-        },
-      ])
+      const pt: MeasuredCrossPoint = {
+        id: `dxf-${now}-${rand()}`,
+        offset: w.offset,
+        elevation: w.elevation,
+      }
+      setLocalPoints((pts) => {
+        const at = insertIndex == null ? pts.length : Math.min(insertIndex, pts.length)
+        return [...pts.slice(0, at), pt, ...pts.slice(at)]
+      })
+      // 割り込み 中 は キャレット も 1 つ 進めて、続けて 拾って も 順 が 崩れない
+      setInsertIndex((i) => (i == null ? null : i + 1))
       return
     }
   }
-  const clearLocalPoints = () => setLocalPoints([])
-  const undoLastPoint = () => setLocalPoints((pts) => pts.slice(0, -1))
+  const clearLocalPoints = () => {
+    setLocalPoints([])
+    setInsertIndex(null)
+  }
+  /** キャレット の 直前 1 点 を 取消 (末尾 モード なら 最後 の 点) */
+  const undoLastPoint = () => {
+    setLocalPoints((pts) => {
+      const at = insertIndex == null ? pts.length : Math.min(insertIndex, pts.length)
+      if (at <= 0) return pts
+      return [...pts.slice(0, at - 1), ...pts.slice(at)]
+    })
+    setInsertIndex((i) => (i == null ? null : Math.max(0, i - 1)))
+  }
+  /** 点 を 1 個 消す。 キャレット より 前 を 消した ら キャレット も 詰める */
+  const removePointAt = (idx: number) => {
+    setLocalPoints((pts) => pts.filter((_, k) => k !== idx))
+    setInsertIndex((i) => (i == null ? null : i > idx ? i - 1 : i))
+  }
   const confirmAndClose = () => {
     // 入力順を そのまま 保存 (オーバーハング等 の 逆行を 潰さない)
     onReplacePoints(activeTarget, localPoints)
@@ -2676,8 +2733,9 @@ function DxfTraceModal({
         pts: localPoints.map(toDxfXY),
       })
     }
-    // 各点 の マーカー + ラベル (H / d を 2 段 で 縦積み)
-    for (const p of localPoints) {
+    // 各点 の マーカー + ラベル (H / d を 2 段 で 縦積み)。
+    // 通し番号 を 付けて、左 の 点リスト と 見比べられる ように する。
+    localPoints.forEach((p, idx) => {
       const xy = toDxfXY(p)
       items.push({
         kind: 'dot',
@@ -2685,24 +2743,46 @@ function DxfTraceModal({
         y: xy.y,
         color,
         label: [
-          `H ${p.elevation.toFixed(3)}`,
+          `#${idx + 1} H ${p.elevation.toFixed(3)}`,
           `d ${p.offset >= 0 ? '+' : ''}${p.offset.toFixed(3)}`,
         ],
       })
+    })
+    // 割り込み 位置 を 図 の 上 でも 示す。 割り込む 2 点 を 橙 の 丸 で 囲み、
+    // その 間 を 破線 に する (どこ に 入る のか 一目 で 分かる)
+    if (insertIndex != null) {
+      const at = Math.min(insertIndex, localPoints.length)
+      const before = at > 0 ? localPoints[at - 1] : null
+      const after = at < localPoints.length ? localPoints[at] : null
+      if (before && after) {
+        items.push({
+          kind: 'line',
+          color: '#f59e0b',
+          dashed: true,
+          pts: [toDxfXY(before), toDxfXY(after)],
+        })
+      }
+      for (const p of [before, after]) {
+        if (!p) continue
+        const xy = toDxfXY(p)
+        items.push({ kind: 'dot', x: xy.x, y: xy.y, color: '#f59e0b', r: 1.6 })
+      }
     }
     return items
-  }, [parsedCalib, localPoints, activeTarget])
+  }, [parsedCalib, localPoints, activeTarget, insertIndex])
 
-  // トレース仮線 の 出発点 = 直前に 拾った 1 点 (localPoints 末尾)。 校正済み で
-  // 1 点以上 あれば DXF 座標に 逆マッピングして 渡す。
+  // トレース仮線 の 出発点 = キャレット の 直前 1 点 (末尾 モード なら localPoints
+  // 末尾)。 校正済み で 1 点以上 あれば DXF 座標に 逆マッピングして 渡す。
   const traceRubberBandFrom = useMemo<{ x: number; y: number } | null>(() => {
     if (!parsedCalib || localPoints.length === 0) return null
-    const p = localPoints[localPoints.length - 1]
+    const at = insertIndex == null ? localPoints.length : Math.min(insertIndex, localPoints.length)
+    if (at === 0) return null
+    const p = localPoints[at - 1]
     return {
       x: parsedCalib.centerX + (p.offset * 1000) / parsedCalib.hScale,
       y: parsedCalib.dlY + ((p.elevation - parsedCalib.dlElevation) * 1000) / parsedCalib.vScale,
     }
-  }, [parsedCalib, localPoints])
+  }, [parsedCalib, localPoints, insertIndex])
 
   // カーソル位置の 補助ラベル (校正済み + トレース中に 有効)。
   // 校正 済み なら 常時 現在位置の 「H (標高) / d (中心離れ)」を 返す。
@@ -2972,7 +3052,7 @@ function DxfTraceModal({
                       onClick={undoLastPoint}
                       disabled={localPoints.length === 0}
                       className="ml-auto px-2 py-0.5 border rounded bg-white hover:bg-slate-50 disabled:opacity-40"
-                      title="直前 1 点を 取消 (BS でも 可)"
+                      title="追加位置 の 直前 1 点を 取消 (BS でも 可)"
                     >
                       1 点 戻す (BS)
                     </button>
@@ -2983,6 +3063,76 @@ function DxfTraceModal({
                     >
                       全クリア
                     </button>
+                  </div>
+                  {/* 追加位置。 既定 は 末尾 (右端) だが、先頭 (左端) や
+                      点 と 点 の 間 を 選ぶ と そこ に 割り込んで 拾える。 */}
+                  <div className="pt-1 border-t">
+                    <div className="flex items-center gap-1 text-[11px]">
+                      <span className="text-slate-500">追加位置</span>
+                      <button
+                        onClick={() => setInsertIndex(null)}
+                        className={`ml-auto px-2 py-0.5 border rounded ${
+                          insertIndex == null
+                            ? 'bg-slate-700 text-white border-slate-700'
+                            : 'bg-white hover:bg-slate-50'
+                        }`}
+                        title="末尾 に 足す (従来 どおり)"
+                      >
+                        末尾 (右端)
+                      </button>
+                      <button
+                        onClick={() => setInsertIndex(0)}
+                        disabled={localPoints.length === 0}
+                        className={`px-2 py-0.5 border rounded disabled:opacity-40 ${
+                          insertIndex === 0
+                            ? 'bg-amber-500 text-white border-amber-500'
+                            : 'bg-white hover:bg-slate-50'
+                        }`}
+                        title="先頭 に 割り込む"
+                      >
+                        先頭 (左端)
+                      </button>
+                    </div>
+                    {localPoints.length > 0 && (
+                      <div className="mt-1 max-h-48 overflow-y-auto border rounded bg-white">
+                        {localPoints.map((p, idx) => (
+                          <div key={p.id}>
+                            <InsertSlot
+                              active={insertIndex === idx}
+                              onClick={() => setInsertIndex(idx)}
+                            />
+                            <div className="px-1.5 py-0.5 flex items-center gap-1 text-[11px] font-mono hover:bg-slate-50">
+                              <span className="w-6 text-slate-400">#{idx + 1}</span>
+                              <span className="w-14 text-right">
+                                {p.offset >= 0 ? '+' : ''}
+                                {p.offset.toFixed(3)}
+                              </span>
+                              <span className="w-14 text-right">{p.elevation.toFixed(3)}</span>
+                              <button
+                                onClick={() => removePointAt(idx)}
+                                className="ml-auto px-1 text-red-500 hover:bg-red-50 rounded"
+                                title="この 点 を 削除"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        <InsertSlot
+                          active={insertIndex == null || insertIndex >= localPoints.length}
+                          onClick={() => setInsertIndex(null)}
+                          last
+                        />
+                      </div>
+                    )}
+                    {insertIndex != null && (
+                      <div className="mt-1 text-[11px] text-amber-700">
+                        {insertIndex === 0
+                          ? '先頭 に 割り込み 中'
+                          : `#${insertIndex} の 後ろ に 割り込み 中`}
+                        。 図 の 橙 破線 の 位置 に 入ります。
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
