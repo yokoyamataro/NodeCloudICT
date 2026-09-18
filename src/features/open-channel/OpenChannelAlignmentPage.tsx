@@ -283,8 +283,23 @@ function StationFocus({
   targetZoom?: number
 }) {
   const map = useMap()
+  // 直前 に 合わせた 位置。 同じ 所 なら 動かさない。
+  //
+  // latLng は 毎回 新しい 配列 に なる (測点 を 触る たび に stations が
+  // 作り直される) ので、素直 に 依存 に 入れる と 断面点 を 1 つ 足す だけ で
+  // 地図 が 測点 へ 飛んで しまう。 地図 で 点 を 拾って いる 最中 に これ を
+  // やられる と 探して いた 場所 から 引き剥がされる。
+  const lastRef = useRef<[number, number] | null>(null)
+  const lat = latLng?.[0] ?? null
+  const lng = latLng?.[1] ?? null
   useEffect(() => {
-    if (!latLng) return
+    if (lat == null || lng == null) {
+      lastRef.current = null
+      return
+    }
+    const prev = lastRef.current
+    if (prev && Math.abs(prev[0] - lat) < 1e-9 && Math.abs(prev[1] - lng) < 1e-9) return
+    lastRef.current = [lat, lng]
     let cancelled = false
     const raf1 = requestAnimationFrame(() => {
       if (cancelled) return
@@ -292,16 +307,15 @@ function StationFocus({
         if (cancelled) return
         map.invalidateSize({ animate: false })
         const nextZoom = Math.max(map.getZoom(), targetZoom)
-        map.setView(latLng, nextZoom, { animate: true, duration: 0.4 })
+        map.setView([lat, lng], nextZoom, { animate: true, duration: 0.4 })
       })
-      // raf2 の cleanup は 外側 では 追えないが requestAnimationFrame は 1 回で 完結
       void raf2
     })
     return () => {
       cancelled = true
       cancelAnimationFrame(raf1)
     }
-  }, [latLng, targetZoom, map])
+  }, [lat, lng, targetZoom, map])
   return null
 }
 
@@ -5407,12 +5421,13 @@ export function OpenChannelAlignmentPage() {
                 const sp = stake.distance + spOffset
                 const side = stake.offset >= 0 ? 'R' : 'L'
                 return (
-                  <div key={`ws-${stake.id}`}>
+                  <div key={`ws-${stake.id}-${mapCaptureTarget ? 'locked' : 'free'}`}>
                     <Polyline
                       positions={[
                         [centerLL.lat, centerLL.lng],
                         [stakeLL.lat, stakeLL.lng],
                       ]}
+                      interactive={false}
                       pathOptions={{
                         color: '#ec4899',
                         weight: 1.5,
@@ -5423,6 +5438,8 @@ export function OpenChannelAlignmentPage() {
                     <CircleMarker
                       center={[stakeLL.lat, stakeLL.lng]}
                       radius={4}
+                      // 断面点 を 拾って いる 間 は 座標 の マーカー を 邪魔 しない
+                      interactive={mapCaptureTarget == null}
                       pathOptions={{
                         color: '#fff',
                         fillColor: '#ec4899',
@@ -5461,12 +5478,19 @@ export function OpenChannelAlignmentPage() {
                 const fillColor = hasOverride ? '#f59e0b' : '#a78bfa'
                 return (
                   <CircleMarker
-                    key={s.id}
+                    key={`${s.id}-${mapCaptureTarget ? 'locked' : 'free'}`}
                     center={[ll.lat, ll.lng]}
                     radius={isSel ? 6 : 4}
-                    eventHandlers={{
-                      click: () => setSelectedStationId(isSel ? null : s.id),
-                    }}
+                    // 断面点 を 地図 から 拾って いる 間 は 測点 の 印 を 触れなく する。
+                    // 座標 の マーカー を 狙った つもり で 測点 を 選んで しまい、
+                    // 別 の 測点 へ 地図 が 飛ぶ 事故 を 防ぐ。
+                    // interactive は 作る ときの 設定 な ので key で 作り直す。
+                    interactive={mapCaptureTarget == null}
+                    eventHandlers={
+                      mapCaptureTarget == null
+                        ? { click: () => setSelectedStationId(isSel ? null : s.id) }
+                        : undefined
+                    }
                     pathOptions={{
                       color: '#fff',
                       fillColor,
@@ -5753,9 +5777,24 @@ export function OpenChannelAlignmentPage() {
                                   onClick={() => {
                                     if (mapCaptureTarget === target) {
                                       setMapCaptureTarget(null)
-                                    } else {
-                                      setMapCaptureTarget(target)
+                                      return
                                     }
+                                    // 現況 で まだ 何も 保存 して いない ときは、いま 断面図 に
+                                    // 出て いる 実測点 を そのまま 土台 に する。
+                                    // これ を しない と 1 点 拾った 途端 に 実測点 が 消えて
+                                    // 「反映 されない」 ように 見える。
+                                    if (
+                                      target === 'current' &&
+                                      !selectedStation.currentSection?.length &&
+                                      autoCurrentSection.length > 0
+                                    ) {
+                                      handleReplaceStationSection(
+                                        selectedStation.id,
+                                        'current',
+                                        autoCurrentSection,
+                                      )
+                                    }
+                                    setMapCaptureTarget(target)
                                   }}
                                   className={`px-2 py-0.5 text-[11px] border rounded ${
                                     mapCaptureTarget === target
