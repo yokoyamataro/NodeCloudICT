@@ -3182,173 +3182,6 @@ function DxfTraceModal({
 
 
 /**
- * 現況取込 (実測記録) の サイドバー セクション。
- *
- * 測設記録 (staking_records) の 実測点を 逆スライド (実測 − スライド量) して
- * から 中心線に 投影し、各測点の 現況横断 (currentSection) に 入れる。
- *
- * 逆スライドを かける のは、実測は GPS の 系統差を 含んだ ままで、設計の
- * 土俵に 乗せない と 断面図で 設計線と 比べられない ため。スライド量は
- * 測設記録の 画面で 工区ごとに 入れて ある もの を そのまま 使う。
- */
-function StakingCurrentImportSection({
-  farmId,
-  stations,
-  segments,
-  sideOrientation,
-  onImported,
-}: {
-  farmId: string | null
-  stations: StationRow[]
-  segments: AlignmentSegment[]
-  sideOrientation: SideOrientation
-  onImported: (nextStations: StationRow[]) => void
-}) {
-  const records = useStakingStore((st) => st.records)
-  const fetchRecords = useStakingStore((st) => st.fetchRecords)
-  // スライド量 は 記録セット ごと。 セット が 無い 記録 は 工区 単位 の 値
-  const sets = useSurveySetStore((st) => st.sets)
-  const fetchSets = useSurveySetStore((st) => st.fetchByFarm)
-  const [slide, setSlide] = useState<SurveySlide>(NO_SLIDE)
-  const [useSlide, setUseSlide] = useState(true)
-  /** 横断幅。中心線 沿い に この 範囲内 の 記録だけ 対象に する [m] */
-  const [alongTolM, setAlongTolM] = useState(0.5)
-  const [halfWidth, setHalfWidth] = useState(10)
-  const [busy, setBusy] = useState(false)
-  const [status, setStatus] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!farmId) return
-    void fetchRecords(farmId)
-    void fetchSets(farmId)
-    void fetchSurveySlide(farmId).then(setSlide)
-  }, [farmId, fetchRecords, fetchSets])
-
-  const targetRecords = records.filter((r) => r.farmId === farmId && r.measuredZ != null)
-
-  const handleImport = () => {
-    if (!farmId || stations.length === 0) return
-    setBusy(true)
-    setStatus(null)
-    try {
-      const sign = sideOrientation === 'reverse' ? -1 : 1
-      let hit = 0
-      let used = 0
-      const next = stations.map((st) => {
-        const center = pointAtDistance(segments, st.distance)
-        const tangent = tangentAtDistance(segments, st.distance)
-        if (!center || !tangent) return st
-        const perpX = -tangent.y * sign
-        const perpY = tangent.x * sign
-        const pts: MeasuredCrossPoint[] = []
-        for (const r of targetRecords) {
-          if (r.measuredZ == null) continue
-          // 逆スライド: 実測 − スライド量 で 設計の 土俵に 乗せる。
-          // スライド量 は その 記録 の セット の 値 を 使う
-          const sl = r.recordSetId
-            ? (sets.find((st2) => st2.id === r.recordSetId)?.slide ?? slide)
-            : slide
-          const x = useSlide ? r.measuredX - sl.dx : r.measuredX
-          const y = useSlide ? r.measuredY - sl.dy : r.measuredY
-          const z = useSlide ? r.measuredZ - sl.dz : r.measuredZ
-          const dx = x - center.x
-          const dy = y - center.y
-          // 中心線 沿い の ずれ。断面から 外れて いる 記録は 拾わない
-          const along = dx * tangent.x + dy * tangent.y
-          if (Math.abs(along) > alongTolM) continue
-          const offset = dx * perpX + dy * perpY
-          if (Math.abs(offset) > halfWidth) continue
-          pts.push({
-            id: `sr-${r.id}`,
-            offset: Math.round(offset * 1000) / 1000,
-            elevation: Math.round(z * 1000) / 1000,
-            note: r.targetName ?? undefined,
-          })
-        }
-        if (pts.length === 0) return st
-        hit++
-        used += pts.length
-        pts.sort((a, b) => a.offset - b.offset)
-        return { ...st, currentSection: pts }
-      })
-      onImported(next)
-      setStatus(
-        `完了: ${hit}/${stations.length} 測点 に ${used} 点 を 取込` +
-          (useSlide
-            ? ` (逆スライド。 記録セット ${sets.length} 件 の 値 を 点ごと に 適用)`
-            : ' (スライド適用なし)'),
-      )
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="space-y-2 text-xs">
-      <div className="text-slate-500">
-        測設記録の 実測点を 中心線に 投影して 現況横断に 保存します。対象{' '}
-        <span className="font-mono">{targetRecords.length}</span> 点。
-        <br />
-        断面図には 保存前でも 横断幅 以内の 実測点が 出ています。ここで 保存すると
-        その 内容が 測点に 残ります。
-      </div>
-      <label className="flex items-center gap-2">
-        <input type="checkbox" checked={useSlide} onChange={(e) => setUseSlide(e.target.checked)} />
-        <span>逆スライドを かける (実測 − スライド量)</span>
-      </label>
-      <div className="text-[11px] text-slate-500 pl-6">
-        スライド量 は 記録セット ごと。 未振り分け の 記録 は dx={slide.dx} / dy={slide.dy} /
-        dz={slide.dz}
-        <span className="ml-1">(測設記録の画面で設定)</span>
-      </div>
-      <div className="flex items-center gap-3">
-        <label className="flex items-center gap-1">
-          <span className="text-slate-600">横断幅</span>
-          <input
-            type="number"
-            step={0.1}
-            min={0.1}
-            value={alongTolM}
-            onChange={(e) => {
-              const n = parseFloat(e.target.value)
-              if (Number.isFinite(n) && n > 0) setAlongTolM(n)
-            }}
-            className="w-16 px-1 py-0.5 border rounded text-right"
-            title="中心線沿いに何mまでの記録をこの断面上の点として拾うか (横断幅)"
-          />
-          <span className="text-slate-500">m</span>
-        </label>
-        <label className="flex items-center gap-1">
-          <span className="text-slate-600">左右</span>
-          <input
-            type="number"
-            step={1}
-            min={1}
-            value={halfWidth}
-            onChange={(e) => {
-              const n = parseFloat(e.target.value)
-              if (Number.isFinite(n) && n > 0) setHalfWidth(n)
-            }}
-            className="w-16 px-1 py-0.5 border rounded text-right"
-            title="中心から何mまでの記録を拾うか"
-          />
-          <span className="text-slate-500">m</span>
-        </label>
-      </div>
-      <button
-        type="button"
-        onClick={handleImport}
-        disabled={busy || !farmId || stations.length === 0 || targetRecords.length === 0}
-        className="px-3 py-1.5 bg-cyan-700 text-white rounded hover:bg-cyan-600 disabled:opacity-50"
-      >
-        {busy ? '取込中…' : '全測点の現況を実測記録から取込'}
-      </button>
-      {status && <div className="text-[11px] text-emerald-700">{status}</div>}
-    </div>
-  )
-}
-
-/**
  * 現況取込 (LandXML) の サイドバー セクション。
  * 工区共有 の LandXML (kind='ground') を Storage から fetch し、
  * TIN から 各測点 の 現況横断 (currentSection) + 現況地盤高
@@ -4080,10 +3913,10 @@ export function OpenChannelAlignmentPage() {
    * 何が 測られて いるか」を 常に 見せる ための もの で、開いた だけで
    * 勝手に 保存されると 手入力の 現況を 潰しかねない。
    */
-  const autoCurrentSection = useMemo<MeasuredCrossPoint[]>(() => {
-    if (!selectedStation || !farmId) return []
-    const center = pointAtDistance(segments, selectedStation.distance)
-    const tangent = tangentAtDistance(segments, selectedStation.distance)
+  const measuredPointsOnStation = (st: StationRow): MeasuredCrossPoint[] => {
+    if (!farmId) return []
+    const center = pointAtDistance(segments, st.distance)
+    const tangent = tangentAtDistance(segments, st.distance)
     if (!center || !tangent) return []
     const sign = selected?.sideOrientation === 'reverse' ? -1 : 1
     const perpX = -tangent.y * sign
@@ -4111,8 +3944,46 @@ export function OpenChannelAlignmentPage() {
     }
     out.sort((a, b) => a.offset - b.offset)
     return out
+  }
+
+  const autoCurrentSection = useMemo<MeasuredCrossPoint[]>(() => {
+    if (!selectedStation) return []
+    return measuredPointsOnStation(selectedStation)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStation, farmId, segments, selected?.sideOrientation, stakingRecords, surveySlide, surveySets, crossBandM])
+
+  /**
+   * 「横断 > 現況」 の 表 に 出す、測点 ごと の 「その 断面 の 上 に ある 実測点」 の 数。
+   * 取込 ボタン を 押す 価値 が ある 測点 が どれ か を 先 に 見せる ため。
+   * 現況 タブ 以外 では 数えない (記録 × 測点 の 総当たり な ので)。
+   */
+  const measuredCountByStation = useMemo(() => {
+    const m = new Map<string, number>()
+    if (editTarget !== 'current') return m
+    for (const st of stations) m.set(st.id, measuredPointsOnStation(st).length)
+    return m
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editTarget, stations, farmId, segments, selected?.sideOrientation, stakingRecords, surveySlide, surveySets, crossBandM])
+
+  /** 直近 の 取込 結果 (「横断 > 現況」 の 表 の 下 に 出す) */
+  const [stationImportMsg, setStationImportMsg] = useState<string | null>(null)
+
+  /**
+   * 1 測点 分 の 現況 を 実測記録 から 取込む。
+   * 一括 では なく 行 ごと に 押す 形 に して いる のは、手入力 済み の 現況 を
+   * まとめて 潰さない ため。 中心高 (currentGroundHeight) は 取込 内容 から 補間。
+   */
+  const handleImportStationCurrent = (st: StationRow) => {
+    const pts = measuredPointsOnStation(st)
+    if (pts.length === 0) {
+      setStationImportMsg(
+        `${st.label}: 横断幅 ${crossBandM} m 以内 に 実測点 が 見つかり ません`,
+      )
+      return
+    }
+    handleReplaceStationSection(st.id, 'current', pts)
+    setStationImportMsg(`${st.label}: 実測記録 から ${pts.length} 点 を 取込みました`)
+  }
 
   // 「横断を 切替中は 図面の 断面方向 (左右=画面 左右) が 水平に なる ように 地図を 回転」
   // する 用の bearing (度)。 CoordinateMap の mapBearingDeg (setBearing 経由) に 渡す。
@@ -5642,7 +5513,7 @@ export function OpenChannelAlignmentPage() {
                   タブ は 右下 の 横断図 パネル の 編集対象 と 同じ state を 見る ので、
                   ここ で 切り替える と 下 の エディタ も 一緒 に 切り替わる。 */}
               <CollapsibleSection title="横断 (現況・計画・出来形)" storageKey="oc:section:cross">
-                <div className="flex gap-1">
+                <div className="flex items-center gap-1 flex-wrap">
                   {EDIT_TARGET_TABS.map((t) => (
                     <button
                       key={t.key}
@@ -5658,6 +5529,27 @@ export function OpenChannelAlignmentPage() {
                       {t.label}
                     </button>
                   ))}
+                  {/* 取込 で 拾う 範囲。 右下 横断図 の 「横断幅」 と 同じ 値 */}
+                  {editTarget === 'current' && (
+                    <label
+                      className="ml-auto flex items-center gap-1 text-[11px] text-slate-500"
+                      title="中心線沿いにこの範囲内の実測記録を、その断面上の点として拾います"
+                    >
+                      <span>横断幅</span>
+                      <input
+                        type="number"
+                        step={0.1}
+                        min={0.05}
+                        value={crossBandM}
+                        onChange={(e) => {
+                          const n = parseFloat(e.target.value)
+                          if (Number.isFinite(n) && n > 0) setCrossBandM(n)
+                        }}
+                        className="w-14 px-1 py-0.5 border rounded text-right text-[11px]"
+                      />
+                      <span>m</span>
+                    </label>
+                  )}
                 </div>
                 {stations.length === 0 ? (
                   <div className="text-xs text-slate-500">
@@ -5669,7 +5561,7 @@ export function OpenChannelAlignmentPage() {
                       {editTarget === 'plan'
                         ? '「編集」 で 右下 の 横断図 に 計画断面 を 開き ます。 個別断面 が 無い 測点 は 標準断面 を 複製 して 始め ます。'
                         : editTarget === 'current'
-                          ? '「編集」 で 右下 の 横断図 に 現況断面 を 開き ます。 地図 の 実測点 / 表 / DXF から 点 を 拾え ます。'
+                          ? '「取込」 で その 測点 の 現況 を 実測記録 から 取り込み ます (手入力 済み の 現況 は その 測点 だけ 上書き)。 「編集」 で 右下 の 横断図 を 開く と 地図 / 表 / DXF から も 拾え ます。'
                           : '「編集」 で 右下 の 横断図 に 出来形断面 を 開き ます。'}
                     </div>
                     <div className="border rounded overflow-auto max-h-80">
@@ -5694,8 +5586,16 @@ export function OpenChannelAlignmentPage() {
                                 現況高 (m)
                               </th>
                             )}
+                            {editTarget === 'current' && (
+                              <th
+                                className="px-2 py-1 w-16 text-right whitespace-nowrap"
+                                title="この断面の横断幅以内にある実測記録の点数"
+                              >
+                                実測
+                              </th>
+                            )}
                             <th className="px-2 py-1 w-28 text-center whitespace-nowrap">状態</th>
-                            <th className="px-2 py-1 w-16 text-center whitespace-nowrap"></th>
+                            <th className="px-2 py-1 w-24 text-center whitespace-nowrap"></th>
                           </tr>
                         </thead>
                         <tbody>
@@ -5758,6 +5658,18 @@ export function OpenChannelAlignmentPage() {
                                     />
                                   </td>
                                 )}
+                                {editTarget === 'current' && (
+                                  <td className="px-2 py-1 text-right tabular-nums text-[11px] whitespace-nowrap">
+                                    {(() => {
+                                      const n = measuredCountByStation.get(s.id) ?? 0
+                                      return n > 0 ? (
+                                        <span className="text-cyan-700">{n}</span>
+                                      ) : (
+                                        <span className="text-slate-300">0</span>
+                                      )
+                                    })()}
+                                  </td>
+                                )}
                                 <td className="px-2 py-1 text-center text-[11px] whitespace-nowrap">
                                   {(() => {
                                     if (editTarget === 'plan') {
@@ -5788,17 +5700,32 @@ export function OpenChannelAlignmentPage() {
                                     )
                                   })()}
                                 </td>
-                                <td className="px-1 py-1 text-center">
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      openStationSection(s, editTarget)
-                                    }}
-                                    className="px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50"
-                                    title="右下 の 横断図 で この 測点 の 断面 を 編集"
-                                  >
-                                    編集
-                                  </button>
+                                <td className="px-1 py-1 text-center whitespace-nowrap">
+                                  <div className="inline-flex gap-0.5">
+                                    {editTarget === 'current' && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleImportStationCurrent(s)
+                                        }}
+                                        disabled={(measuredCountByStation.get(s.id) ?? 0) === 0}
+                                        className="px-1.5 py-0.5 text-[11px] border rounded bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100 disabled:opacity-40"
+                                        title="この 測点 の 現況 を 実測記録 から 取込 (逆スライド 済み)"
+                                      >
+                                        取込
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        openStationSection(s, editTarget)
+                                      }}
+                                      className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50"
+                                      title="右下 の 横断図 で この 測点 の 断面 を 編集"
+                                    >
+                                      編集
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             )
@@ -5806,29 +5733,15 @@ export function OpenChannelAlignmentPage() {
                         </tbody>
                       </table>
                     </div>
+                    {editTarget === 'current' && stationImportMsg && (
+                      <div className="text-[11px] text-emerald-700">{stationImportMsg}</div>
+                    )}
                   </>
                 )}
-                {/* 現況 の 一括取込。 測点 ごと の 手作業 より 先に 効く ので
-                    タブ の 下 に 置く。 既定 は 畳んで おく。 */}
+                {/* 現況 の 一括取込 (LandXML)。 実測記録 から の 取込 は 行 ごと の
+                    「取込」 ボタン に 移した。 既定 は 畳んで おく。 */}
                 {editTarget === 'current' && (
                   <div className="space-y-2 pt-1 border-t">
-                    {/* 現況取込 (実測記録): 測設記録の 実測点を 逆スライドして 現況横断に 入れる。
-                        既存横断図 (DXF) から の トレース は 右下 横断図 パネル の
-                        「DXF から 取込」 ボタン (トレース モーダル) から。 */}
-                    <CollapsibleSection
-                      title="現況取込 (実測記録)"
-                      storageKey="oc:section:staking"
-                      defaultOpen={false}
-                    >
-                      <StakingCurrentImportSection
-                        farmId={farmId ?? null}
-                        stations={stations}
-                        segments={segments}
-                        sideOrientation={selected?.sideOrientation ?? 'forward'}
-                        onImported={(next) => setStations(next)}
-                      />
-                    </CollapsibleSection>
-
                     {/* 現況取込 (LandXML): 工区共有 の LandXML (kind='ground') の TIN から
                         各測点 の 現況横断 (currentSection) + 現況地盤高 (currentGroundHeight)
                         を 一括 サンプリング する。 */}
