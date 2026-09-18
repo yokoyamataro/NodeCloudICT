@@ -50,6 +50,8 @@ import {
   STAKE_STATUS_LABEL,
   STAKE_STATUS_BADGE,
 } from '@/types/database'
+import { CoordinateColumnPicker } from './CoordinateColumnPicker'
+import { useCoordVisibleColumns, type CoordColumnKey } from './coordinateColumns'
 import { STAKE_TYPE_OPTIONS } from '@/lib/stakeTypes'
 
 // 数値入力用コンポーネント（入力中はフォーマットしない）
@@ -1589,6 +1591,20 @@ export function CoordinatesPage() {
     }
   }
 
+  // 表示 する 列 (点番号 は いつも 出す)
+  const [visibleCols, setVisibleCols] = useCoordVisibleColumns()
+  const showCol = (k: CoordColumnKey) => visibleCols.has(k)
+
+  /** 一覧 の すぐ 上 に 置く 帯。 表示列 の 選択 と 件数 */
+  const renderListBar = () => (
+    <div className="flex items-center gap-2 px-4 py-1.5 border-b bg-white">
+      <CoordinateColumnPicker visible={visibleCols} onChange={setVisibleCols} />
+      <span className="text-[11px] text-slate-400">
+        {displayCoordinates.length} 点
+      </span>
+    </div>
+  )
+
   // 一括操作バー（チェック時のみ表示）
   const renderBulkBar = () => {
     if (checkedIds.size === 0) return null
@@ -2340,13 +2356,14 @@ export function CoordinatesPage() {
           <h2 className="text-lg font-semibold mb-3">座標計算書</h2>
           {renderToolbar('hover:bg-gray-50')}
         </div>
+        {renderListBar()}
         {/* 一括操作バーは表スクロールの外側に出す（下にスクロールしても表示し続ける） */}
         {renderBulkBar()}
         <div className="flex-1 overflow-auto">
           <table className="min-w-full w-max text-sm">
             <thead className="bg-slate-100 sticky top-0 z-30">
               <tr>
-                <th className="px-1 py-2 w-8 text-center sticky left-0 z-30 bg-slate-100">
+                <th className="px-1 py-2 w-8 text-center bg-slate-100">
                   <input
                     type="checkbox"
                     checked={allChecked}
@@ -2355,58 +2372,84 @@ export function CoordinatesPage() {
                     aria-label="全選択"
                   />
                 </th>
-                <th className="px-0.5 py-2 text-left font-medium w-20 sticky left-8 z-30 bg-slate-100">点番号</th>
-                <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
-                <th className="pr-2 pl-1 py-2 text-right font-medium w-28">Y (m)</th>
-                <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
-                <th className="px-0.5 py-2 text-left font-medium">
-                  <div className="flex items-center gap-1">
-                    <span>種類</span>
-                    <PointTypeFilterButton
-                      compact
-                      typeOptions={typeOptions}
-                      onOpenManageModal={() => setShowPointTypeModal(true)}
-                    />
-                  </div>
-                </th>
-                <th className="px-0.5 py-2 text-left font-medium">
-                  <div className="flex items-center gap-1">
-                    <span>杭種</span>
-                    <StakeTypeFilterButton
-                      compact
-                      options={stakeTypeOptions}
-                      visible={visibleStakeTypes}
-                      onChange={setVisibleStakeTypes}
-                    />
-                  </div>
-                </th>
-                <th className="px-0.5 py-2 text-center font-medium w-28" title="杭設置のワークフロー状態">
-                  <div className="flex items-center justify-center gap-1">
-                    <span>設置</span>
-                    <StakeStatusFilterButton compact />
-                  </div>
-                </th>
-                <th className="px-0.5 py-2 text-center font-medium w-16">
-                  <div className="flex items-center justify-center gap-1">
-                    <span>写真</span>
-                    <PhotoCountFilterButton
-                      compact
-                      value={photoCountFilter}
-                      onChange={setPhotoCountFilter}
-                    />
-                  </div>
-                </th>
-                <th className="px-0.5 py-2 text-right font-medium">緯度</th>
-                <th className="px-0.5 py-2 text-right font-medium">経度</th>
-                <th
-                  className="px-0.5 py-2 text-right font-medium whitespace-nowrap"
-                  title="楕円体高 = 標高 Z + ジオイド高 N (JPGEO2024)"
-                >
-                  楕円体高
-                </th>
-                <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
-                <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新日時</th>
-                <th className="px-0.5 py-2 text-left font-medium">備考</th>
+                <th className="px-0.5 py-2 text-left font-medium w-20 bg-slate-100">点番号</th>
+                {showCol('x') && (
+                  <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
+                )}
+                {showCol('y') && (
+                  <th className="pr-2 pl-1 py-2 text-right font-medium w-28">Y (m)</th>
+                )}
+                {showCol('z') && (
+                  <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
+                )}
+                {showCol('type') && (
+                  <th className="px-0.5 py-2 text-left font-medium">
+                    <div className="flex items-center gap-1">
+                      <span>種類</span>
+                      <PointTypeFilterButton
+                        compact
+                        typeOptions={typeOptions}
+                        onOpenManageModal={() => setShowPointTypeModal(true)}
+                      />
+                    </div>
+                  </th>
+                )}
+                {showCol('stakeType') && (
+                  <th className="px-0.5 py-2 text-left font-medium">
+                    <div className="flex items-center gap-1">
+                      <span>杭種</span>
+                      <StakeTypeFilterButton
+                        compact
+                        options={stakeTypeOptions}
+                        visible={visibleStakeTypes}
+                        onChange={setVisibleStakeTypes}
+                      />
+                    </div>
+                  </th>
+                )}
+                {showCol('stakeStatus') && (
+                  <th className="px-0.5 py-2 text-center font-medium w-28" title="杭設置のワークフロー状態">
+                    <div className="flex items-center justify-center gap-1">
+                      <span>設置</span>
+                      <StakeStatusFilterButton compact />
+                    </div>
+                  </th>
+                )}
+                {showCol('photo') && (
+                  <th className="px-0.5 py-2 text-center font-medium w-16">
+                    <div className="flex items-center justify-center gap-1">
+                      <span>写真</span>
+                      <PhotoCountFilterButton
+                        compact
+                        value={photoCountFilter}
+                        onChange={setPhotoCountFilter}
+                      />
+                    </div>
+                  </th>
+                )}
+                {showCol('lat') && (
+                  <th className="px-0.5 py-2 text-right font-medium">緯度</th>
+                )}
+                {showCol('lng') && (
+                  <th className="px-0.5 py-2 text-right font-medium">経度</th>
+                )}
+                {showCol('ellipsoid') && (
+                  <th
+                    className="px-0.5 py-2 text-right font-medium whitespace-nowrap"
+                    title="楕円体高 = 標高 Z + ジオイド高 N (JPGEO2024)"
+                  >
+                    楕円体高
+                  </th>
+                )}
+                {showCol('updatedBy') && (
+                  <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
+                )}
+                {showCol('updatedAt') && (
+                  <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新日時</th>
+                )}
+                {showCol('notes') && (
+                  <th className="px-0.5 py-2 text-left font-medium">備考</th>
+                )}
                 <th className="px-1 py-2 w-16"></th>
               </tr>
             </thead>
@@ -2458,7 +2501,7 @@ export function CoordinatesPage() {
                   onClick={() => handlePointClick(coord.id)}
                 >
                   <td
-                    className={`px-1 py-0.5 text-center sticky left-0 z-10 ${rowBg}`}
+                    className={`px-1 py-0.5 text-center ${rowBg}`}
                     onClick={(e) => e.stopPropagation()}
                   >
                     {orderSelectMode ? (
@@ -2479,7 +2522,7 @@ export function CoordinatesPage() {
                       />
                     )}
                   </td>
-                  <td className={`px-0.5 py-0.5 sticky left-8 z-10 ${rowBg}`}>
+                  <td className={`px-0.5 py-0.5 ${rowBg}`}>
                     <input
                       type="text"
                       value={coord.pointNumber}
@@ -2488,101 +2531,127 @@ export function CoordinatesPage() {
                       className="w-full px-1 py-0.5 border rounded text-sm"
                     />
                   </td>
-                  <td className="px-0 py-0.5 w-28">
-                    <NumberInput
-                      value={coord.x}
-                      onChange={(v) => updateCoordinate(coord.id, 'x', v ?? 0)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
-                    />
-                  </td>
-                  <td className="px-0 py-0.5 w-28">
-                    <NumberInput
-                      value={coord.y}
-                      onChange={(v) => updateCoordinate(coord.id, 'y', v ?? 0)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
-                    />
-                  </td>
-                  <td className="px-0 py-0.5 w-20">
-                    <NumberInput
-                      value={coord.z}
-                      onChange={(v) => updateCoordinate(coord.id, 'z', v)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
-                      placeholder="-"
-                    />
-                  </td>
-                  <td className="px-0.5 py-0.5">
-                    <select
-                      value={coord.type ?? ''}
-                      onChange={(e) => updateCoordinate(coord.id, 'type', e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="px-1 py-0.5 border rounded text-xs"
-                    >
-                      <option value="">(空)</option>
-                      {typeOptions.map((opt) => (
-                        <option key={opt.code} value={opt.code}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </td>
+                  {showCol('x') && (
+                    <td className="px-0 py-0.5 w-28">
+                      <NumberInput
+                        value={coord.x}
+                        onChange={(v) => updateCoordinate(coord.id, 'x', v ?? 0)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
+                      />
+                    </td>
+                  )}
+                  {showCol('y') && (
+                    <td className="px-0 py-0.5 w-28">
+                      <NumberInput
+                        value={coord.y}
+                        onChange={(v) => updateCoordinate(coord.id, 'y', v ?? 0)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
+                      />
+                    </td>
+                  )}
+                  {showCol('z') && (
+                    <td className="px-0 py-0.5 w-20">
+                      <NumberInput
+                        value={coord.z}
+                        onChange={(v) => updateCoordinate(coord.id, 'z', v)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
+                        placeholder="-"
+                      />
+                    </td>
+                  )}
+                  {showCol('type') && (
+                    <td className="px-0.5 py-0.5">
+                      <select
+                        value={coord.type ?? ''}
+                        onChange={(e) => updateCoordinate(coord.id, 'type', e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="px-1 py-0.5 border rounded text-xs"
+                      >
+                        <option value="">(空)</option>
+                        {typeOptions.map((opt) => (
+                          <option key={opt.code} value={opt.code}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </td>
+                  )}
                   {/* 杭種（自由入力 + 候補 datalist） */}
-                  <td className="px-0.5 py-0.5">
-                    <input
-                      list="stake-type-options"
-                      type="text"
-                      value={coord.stakeType ?? ''}
-                      onChange={(e) =>
-                        updateCoordinate(coord.id, 'stakeType', e.target.value || null)
-                      }
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder="-"
-                      className="w-20 px-1 py-0.5 border rounded text-xs bg-white"
-                    />
-                  </td>
-                  <td className="px-0.5 py-0.5" onClick={(e) => e.stopPropagation()}>
-                    <StakeStatusCell
-                      value={coord.stakeStatus}
-                      onChange={(next) => void setStakeStatus(coord.id, next)}
-                      measured={stakedCoordIds.has(coord.id)}
-                    />
-                  </td>
-                  <td className="px-0.5 py-0.5 text-center" onClick={(e) => e.stopPropagation()}>
-                    <PhotoCountCell
-                      count={attachmentsByEntity.get(`coordinate:${coord.id}`)?.length ?? 0}
-                      onClick={() => setPhotoCoordId(coord.id)}
-                    />
-                  </td>
-                  <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
-                    {coord.lat?.toFixed(8) ?? '-'}
-                  </td>
-                  <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
-                    {coord.lng?.toFixed(8) ?? '-'}
-                  </td>
-                  <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono whitespace-nowrap">
-                    {ellipsoidalHeightOf(coord)?.toFixed(3) ?? '-'}
-                  </td>
-                  <td
-                    className="px-0.5 py-0.5 text-xs text-muted-foreground whitespace-nowrap max-w-[8rem] truncate"
-                    title={coord.updatedBy ? (memberNameById.get(coord.updatedBy) ?? coord.updatedBy) : ''}
-                  >
-                    {coord.updatedBy ? (memberNameById.get(coord.updatedBy) ?? '-') : '-'}
-                  </td>
-                  <td className="px-0.5 py-0.5 text-xs text-muted-foreground font-mono whitespace-nowrap">
-                    {fmtDateTime(coord.updatedAt)}
-                  </td>
-                  <td className="px-0.5 py-0.5">
-                    <input
-                      type="text"
-                      value={coord.notes ?? ''}
-                      onChange={(e) =>
-                        updateCoordinate(coord.id, 'notes', e.target.value || null)
-                      }
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder="-"
-                      className="w-40 px-1 py-0.5 border rounded text-xs bg-white"
-                    />
-                  </td>
+                  {showCol('stakeType') && (
+                    <td className="px-0.5 py-0.5">
+                      <input
+                        list="stake-type-options"
+                        type="text"
+                        value={coord.stakeType ?? ''}
+                        onChange={(e) =>
+                          updateCoordinate(coord.id, 'stakeType', e.target.value || null)
+                        }
+                        onClick={(e) => e.stopPropagation()}
+                        placeholder="-"
+                        className="w-20 px-1 py-0.5 border rounded text-xs bg-white"
+                      />
+                    </td>
+                  )}
+                  {showCol('stakeStatus') && (
+                    <td className="px-0.5 py-0.5" onClick={(e) => e.stopPropagation()}>
+                      <StakeStatusCell
+                        value={coord.stakeStatus}
+                        onChange={(next) => void setStakeStatus(coord.id, next)}
+                        measured={stakedCoordIds.has(coord.id)}
+                      />
+                    </td>
+                  )}
+                  {showCol('photo') && (
+                    <td className="px-0.5 py-0.5 text-center" onClick={(e) => e.stopPropagation()}>
+                      <PhotoCountCell
+                        count={attachmentsByEntity.get(`coordinate:${coord.id}`)?.length ?? 0}
+                        onClick={() => setPhotoCoordId(coord.id)}
+                      />
+                    </td>
+                  )}
+                  {showCol('lat') && (
+                    <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
+                      {coord.lat?.toFixed(8) ?? '-'}
+                    </td>
+                  )}
+                  {showCol('lng') && (
+                    <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
+                      {coord.lng?.toFixed(8) ?? '-'}
+                    </td>
+                  )}
+                  {showCol('ellipsoid') && (
+                    <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono whitespace-nowrap">
+                      {ellipsoidalHeightOf(coord)?.toFixed(3) ?? '-'}
+                    </td>
+                  )}
+                  {showCol('updatedBy') && (
+                    <td
+                      className="px-0.5 py-0.5 text-xs text-muted-foreground whitespace-nowrap max-w-[8rem] truncate"
+                      title={coord.updatedBy ? (memberNameById.get(coord.updatedBy) ?? coord.updatedBy) : ''}
+                    >
+                      {coord.updatedBy ? (memberNameById.get(coord.updatedBy) ?? '-') : '-'}
+                    </td>
+                  )}
+                  {showCol('updatedAt') && (
+                    <td className="px-0.5 py-0.5 text-xs text-muted-foreground font-mono whitespace-nowrap">
+                      {fmtDateTime(coord.updatedAt)}
+                    </td>
+                  )}
+                  {showCol('notes') && (
+                    <td className="px-0.5 py-0.5">
+                      <input
+                        type="text"
+                        value={coord.notes ?? ''}
+                        onChange={(e) =>
+                          updateCoordinate(coord.id, 'notes', e.target.value || null)
+                        }
+                        onClick={(e) => e.stopPropagation()}
+                        placeholder="-"
+                        className="w-40 px-1 py-0.5 border rounded text-xs bg-white"
+                      />
+                    </td>
+                  )}
                   <td className="px-1 py-0.5">
                     <button
                       onClick={(e) => {
@@ -2704,6 +2773,7 @@ export function CoordinatesPage() {
                 {renderToolbar('hover:bg-white')}
               </div>
 
+              {renderListBar()}
               {/* 一括操作バーは表スクロールの外側に出す（下にスクロールしても表示し続ける） */}
               {renderBulkBar()}
 
@@ -2712,7 +2782,7 @@ export function CoordinatesPage() {
                 <table className="min-w-full w-max text-sm">
                   <thead className="bg-slate-100 sticky top-0 z-30">
                     <tr>
-                      <th className="px-1 py-2 w-8 text-center sticky left-0 z-30 bg-slate-100">
+                      <th className="px-1 py-2 w-8 text-center bg-slate-100">
                         <input
                           type="checkbox"
                           checked={allChecked}
@@ -2721,58 +2791,84 @@ export function CoordinatesPage() {
                           aria-label="全選択"
                         />
                       </th>
-                      <th className="px-0.5 py-2 text-left font-medium w-20 sticky left-8 z-30 bg-slate-100">点番号</th>
-                      <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
-                      <th className="pr-2 pl-1 py-2 text-right font-medium w-28">Y (m)</th>
-                      <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
-                      <th className="px-0.5 py-2 text-left font-medium">
-                        <div className="flex items-center gap-1">
-                          <span>種類</span>
-                          <PointTypeFilterButton
-                            compact
-                            typeOptions={typeOptions}
-                            onOpenManageModal={() => setShowPointTypeModal(true)}
-                          />
-                        </div>
-                      </th>
-                      <th className="px-0.5 py-2 text-left font-medium">
-                  <div className="flex items-center gap-1">
-                    <span>杭種</span>
-                    <StakeTypeFilterButton
-                      compact
-                      options={stakeTypeOptions}
-                      visible={visibleStakeTypes}
-                      onChange={setVisibleStakeTypes}
-                    />
-                  </div>
-                </th>
-                      <th className="px-0.5 py-2 text-center font-medium w-28" title="杭設置のワークフロー状態">
-                        <div className="flex items-center justify-center gap-1">
-                          <span>設置</span>
-                          <StakeStatusFilterButton compact />
-                        </div>
-                      </th>
-                      <th className="px-0.5 py-2 text-center font-medium w-16">
-                        <div className="flex items-center justify-center gap-1">
-                          <span>写真</span>
-                          <PhotoCountFilterButton
-                            compact
-                            value={photoCountFilter}
-                            onChange={setPhotoCountFilter}
-                          />
-                        </div>
-                      </th>
-                      <th className="px-0.5 py-2 text-right font-medium">緯度</th>
-                      <th className="px-0.5 py-2 text-right font-medium">経度</th>
-                      <th
-                        className="px-0.5 py-2 text-right font-medium whitespace-nowrap"
-                        title="楕円体高 = 標高 Z + ジオイド高 N (JPGEO2024)"
-                      >
-                        楕円体高
-                      </th>
-                      <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
-                      <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新日時</th>
-                      <th className="px-0.5 py-2 text-left font-medium">備考</th>
+                      <th className="px-0.5 py-2 text-left font-medium w-20 bg-slate-100">点番号</th>
+                      {showCol('x') && (
+                  <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
+                )}
+                      {showCol('y') && (
+                  <th className="pr-2 pl-1 py-2 text-right font-medium w-28">Y (m)</th>
+                )}
+                      {showCol('z') && (
+                  <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
+                )}
+                      {showCol('type') && (
+                        <th className="px-0.5 py-2 text-left font-medium">
+                          <div className="flex items-center gap-1">
+                            <span>種類</span>
+                            <PointTypeFilterButton
+                              compact
+                              typeOptions={typeOptions}
+                              onOpenManageModal={() => setShowPointTypeModal(true)}
+                            />
+                          </div>
+                        </th>
+                      )}
+                      {showCol('stakeType') && (
+                  <th className="px-0.5 py-2 text-left font-medium">
+                    <div className="flex items-center gap-1">
+                      <span>杭種</span>
+                      <StakeTypeFilterButton
+                        compact
+                        options={stakeTypeOptions}
+                        visible={visibleStakeTypes}
+                        onChange={setVisibleStakeTypes}
+                      />
+                    </div>
+                  </th>
+                )}
+                      {showCol('stakeStatus') && (
+                        <th className="px-0.5 py-2 text-center font-medium w-28" title="杭設置のワークフロー状態">
+                          <div className="flex items-center justify-center gap-1">
+                            <span>設置</span>
+                            <StakeStatusFilterButton compact />
+                          </div>
+                        </th>
+                      )}
+                      {showCol('photo') && (
+                        <th className="px-0.5 py-2 text-center font-medium w-16">
+                          <div className="flex items-center justify-center gap-1">
+                            <span>写真</span>
+                            <PhotoCountFilterButton
+                              compact
+                              value={photoCountFilter}
+                              onChange={setPhotoCountFilter}
+                            />
+                          </div>
+                        </th>
+                      )}
+                      {showCol('lat') && (
+                  <th className="px-0.5 py-2 text-right font-medium">緯度</th>
+                )}
+                      {showCol('lng') && (
+                  <th className="px-0.5 py-2 text-right font-medium">経度</th>
+                )}
+                      {showCol('ellipsoid') && (
+                        <th
+                          className="px-0.5 py-2 text-right font-medium whitespace-nowrap"
+                          title="楕円体高 = 標高 Z + ジオイド高 N (JPGEO2024)"
+                        >
+                          楕円体高
+                        </th>
+                      )}
+                      {showCol('updatedBy') && (
+                  <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
+                )}
+                      {showCol('updatedAt') && (
+                  <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新日時</th>
+                )}
+                      {showCol('notes') && (
+                  <th className="px-0.5 py-2 text-left font-medium">備考</th>
+                )}
                       <th className="px-1 py-2 w-16"></th>
                     </tr>
                   </thead>
@@ -2824,7 +2920,7 @@ export function CoordinatesPage() {
                         onClick={() => handlePointClick(coord.id)}
                       >
                         <td
-                          className={`px-1 py-0.5 text-center sticky left-0 z-10 ${rowBg}`}
+                          className={`px-1 py-0.5 text-center ${rowBg}`}
                           onClick={(e) => e.stopPropagation()}
                         >
                           {orderSelectMode ? (
@@ -2845,7 +2941,7 @@ export function CoordinatesPage() {
                             />
                           )}
                         </td>
-                        <td className={`px-0.5 py-0.5 sticky left-8 z-10 ${rowBg}`}>
+                        <td className={`px-0.5 py-0.5 ${rowBg}`}>
                           <input
                             type="text"
                             value={coord.pointNumber}
@@ -2854,101 +2950,127 @@ export function CoordinatesPage() {
                             className="w-full px-1 py-0.5 border rounded text-sm"
                           />
                         </td>
-                        <td className="px-0 py-0.5 w-28">
-                          <NumberInput
-                            value={coord.x}
-                            onChange={(v) => updateCoordinate(coord.id, 'x', v ?? 0)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
-                          />
-                        </td>
-                        <td className="px-0 py-0.5 w-28">
-                          <NumberInput
-                            value={coord.y}
-                            onChange={(v) => updateCoordinate(coord.id, 'y', v ?? 0)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
-                          />
-                        </td>
-                        <td className="px-0 py-0.5 w-20">
-                          <NumberInput
-                            value={coord.z}
-                            onChange={(v) => updateCoordinate(coord.id, 'z', v)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
-                            placeholder="-"
-                          />
-                        </td>
-                        <td className="px-0.5 py-0.5">
-                          <select
-                            value={coord.type ?? ''}
-                            onChange={(e) => updateCoordinate(coord.id, 'type', e.target.value)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="px-1 py-0.5 border rounded text-xs"
-                          >
-                            <option value="">(空)</option>
-                            {typeOptions.map((opt) => (
-                              <option key={opt.code} value={opt.code}>{opt.label}</option>
-                            ))}
-                          </select>
-                        </td>
+                        {showCol('x') && (
+                          <td className="px-0 py-0.5 w-28">
+                            <NumberInput
+                              value={coord.x}
+                              onChange={(v) => updateCoordinate(coord.id, 'x', v ?? 0)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
+                            />
+                          </td>
+                        )}
+                        {showCol('y') && (
+                          <td className="px-0 py-0.5 w-28">
+                            <NumberInput
+                              value={coord.y}
+                              onChange={(v) => updateCoordinate(coord.id, 'y', v ?? 0)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
+                            />
+                          </td>
+                        )}
+                        {showCol('z') && (
+                          <td className="px-0 py-0.5 w-20">
+                            <NumberInput
+                              value={coord.z}
+                              onChange={(v) => updateCoordinate(coord.id, 'z', v)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
+                              placeholder="-"
+                            />
+                          </td>
+                        )}
+                        {showCol('type') && (
+                          <td className="px-0.5 py-0.5">
+                            <select
+                              value={coord.type ?? ''}
+                              onChange={(e) => updateCoordinate(coord.id, 'type', e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-1 py-0.5 border rounded text-xs"
+                            >
+                              <option value="">(空)</option>
+                              {typeOptions.map((opt) => (
+                                <option key={opt.code} value={opt.code}>{opt.label}</option>
+                              ))}
+                            </select>
+                          </td>
+                        )}
                         {/* 杭種 */}
-                        <td className="px-0.5 py-0.5">
-                          <input
-                            list="stake-type-options"
-                            type="text"
-                            value={coord.stakeType ?? ''}
-                            onChange={(e) =>
-                              updateCoordinate(coord.id, 'stakeType', e.target.value || null)
-                            }
-                            onClick={(e) => e.stopPropagation()}
-                            placeholder="-"
-                            className="w-20 px-1 py-0.5 border rounded text-xs bg-white"
-                          />
-                        </td>
-                        <td className="px-0.5 py-0.5" onClick={(e) => e.stopPropagation()}>
-                          <StakeStatusCell
-                            value={coord.stakeStatus}
-                            onChange={(next) => void setStakeStatus(coord.id, next)}
-                            measured={stakedCoordIds.has(coord.id)}
-                          />
-                        </td>
-                        <td className="px-0.5 py-0.5 text-center" onClick={(e) => e.stopPropagation()}>
-                          <PhotoCountCell
-                            count={attachmentsByEntity.get(`coordinate:${coord.id}`)?.length ?? 0}
-                            onClick={() => setPhotoCoordId(coord.id)}
-                          />
-                        </td>
-                        <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
-                          {coord.lat?.toFixed(8) ?? '-'}
-                        </td>
-                        <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
-                          {coord.lng?.toFixed(8) ?? '-'}
-                        </td>
-                        <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono whitespace-nowrap">
-                          {ellipsoidalHeightOf(coord)?.toFixed(3) ?? '-'}
-                        </td>
-                        <td
-                          className="px-0.5 py-0.5 text-xs text-muted-foreground whitespace-nowrap max-w-[7rem] truncate"
-                          title={coord.updatedBy ? (memberNameById.get(coord.updatedBy) ?? coord.updatedBy) : ''}
-                        >
-                          {coord.updatedBy ? (memberNameById.get(coord.updatedBy) ?? '-') : '-'}
-                        </td>
-                        <td className="px-0.5 py-0.5 text-xs text-muted-foreground font-mono whitespace-nowrap">
-                          {fmtDateTime(coord.updatedAt)}
-                        </td>
-                        <td className="px-0.5 py-0.5">
-                          <input
-                            type="text"
-                            value={coord.notes ?? ''}
-                            onChange={(e) =>
-                              updateCoordinate(coord.id, 'notes', e.target.value || null)
-                            }
-                            onClick={(e) => e.stopPropagation()}
-                            placeholder="-"
-                            className="w-40 px-1 py-0.5 border rounded text-xs bg-white"
-                          />
-                        </td>
+                        {showCol('stakeType') && (
+                          <td className="px-0.5 py-0.5">
+                            <input
+                              list="stake-type-options"
+                              type="text"
+                              value={coord.stakeType ?? ''}
+                              onChange={(e) =>
+                                updateCoordinate(coord.id, 'stakeType', e.target.value || null)
+                              }
+                              onClick={(e) => e.stopPropagation()}
+                              placeholder="-"
+                              className="w-20 px-1 py-0.5 border rounded text-xs bg-white"
+                            />
+                          </td>
+                        )}
+                        {showCol('stakeStatus') && (
+                          <td className="px-0.5 py-0.5" onClick={(e) => e.stopPropagation()}>
+                            <StakeStatusCell
+                              value={coord.stakeStatus}
+                              onChange={(next) => void setStakeStatus(coord.id, next)}
+                              measured={stakedCoordIds.has(coord.id)}
+                            />
+                          </td>
+                        )}
+                        {showCol('photo') && (
+                          <td className="px-0.5 py-0.5 text-center" onClick={(e) => e.stopPropagation()}>
+                            <PhotoCountCell
+                              count={attachmentsByEntity.get(`coordinate:${coord.id}`)?.length ?? 0}
+                              onClick={() => setPhotoCoordId(coord.id)}
+                            />
+                          </td>
+                        )}
+                        {showCol('lat') && (
+                          <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
+                            {coord.lat?.toFixed(8) ?? '-'}
+                          </td>
+                        )}
+                        {showCol('lng') && (
+                          <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
+                            {coord.lng?.toFixed(8) ?? '-'}
+                          </td>
+                        )}
+                        {showCol('ellipsoid') && (
+                          <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono whitespace-nowrap">
+                            {ellipsoidalHeightOf(coord)?.toFixed(3) ?? '-'}
+                          </td>
+                        )}
+                        {showCol('updatedBy') && (
+                          <td
+                            className="px-0.5 py-0.5 text-xs text-muted-foreground whitespace-nowrap max-w-[7rem] truncate"
+                            title={coord.updatedBy ? (memberNameById.get(coord.updatedBy) ?? coord.updatedBy) : ''}
+                          >
+                            {coord.updatedBy ? (memberNameById.get(coord.updatedBy) ?? '-') : '-'}
+                          </td>
+                        )}
+                        {showCol('updatedAt') && (
+                          <td className="px-0.5 py-0.5 text-xs text-muted-foreground font-mono whitespace-nowrap">
+                            {fmtDateTime(coord.updatedAt)}
+                          </td>
+                        )}
+                        {showCol('notes') && (
+                          <td className="px-0.5 py-0.5">
+                            <input
+                              type="text"
+                              value={coord.notes ?? ''}
+                              onChange={(e) =>
+                                updateCoordinate(coord.id, 'notes', e.target.value || null)
+                              }
+                              onClick={(e) => e.stopPropagation()}
+                              placeholder="-"
+                              className="w-40 px-1 py-0.5 border rounded text-xs bg-white"
+                            />
+                          </td>
+                        )}
                         <td className="px-1 py-0.5">
                           <button
                             onClick={(e) => {
