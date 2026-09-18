@@ -856,6 +856,62 @@ function formatWidthOnly(e: CrossSectionElement): string {
   return e.width.toFixed(2)
 }
 
+/** 標高 は mm 単位 (小数 3 桁) まで 出す。 12.3 → "12.300" */
+const mm3 = (x: number): string => x.toFixed(3)
+
+/**
+ * 標高 の 入力欄。 触って いない 間 は mm 単位 (小数 3 桁) で 揃えて 見せ、
+ * フォーカス 中 だけ 生 の 文字列 を 持つ (12.300 の 末尾 0 を 消さない と 打ちにくい)。
+ * 空 を 許す 欄 (現況高 など) は allowEmpty で null を 返す。
+ */
+function ElevationField({
+  value,
+  onCommit,
+  allowEmpty = false,
+  className,
+  placeholder,
+  onClick,
+}: {
+  value: number | null | undefined
+  onCommit: (v: number | null) => void
+  allowEmpty?: boolean
+  className?: string
+  placeholder?: string
+  onClick?: (e: React.MouseEvent<HTMLInputElement>) => void
+}) {
+  const [buf, setBuf] = useState<string | null>(null)
+  const shown = buf ?? (value == null ? '' : mm3(value))
+  const commit = () => {
+    const raw = (buf ?? '').trim()
+    setBuf(null)
+    if (buf == null) return
+    if (raw === '') {
+      if (allowEmpty && value != null) onCommit(null)
+      return
+    }
+    const n = parseFloat(raw)
+    if (!Number.isFinite(n)) return
+    const rounded = Math.round(n * 1000) / 1000
+    if (rounded !== value) onCommit(rounded)
+  }
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={shown}
+      placeholder={placeholder}
+      onClick={onClick}
+      onFocus={() => setBuf(value == null ? '' : String(value))}
+      onChange={(e) => setBuf(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur()
+      }}
+      className={className}
+    />
+  )
+}
+
 /**
  * 断面点 の 表。 中心 / 左 / 右 の かたまり ごと に 出す。
  * 左 / 右 は 末尾 に 空白行 を 持ち、そこ に 直接 打つ と 1 点 増える
@@ -936,13 +992,9 @@ function SectionRowTable({
                   />
                 </td>
                 <td className="px-1 py-1">
-                  <input
-                    type="number"
-                    step={0.001}
+                  <ElevationField
                     value={r.elevation}
-                    onChange={(e) =>
-                      onUpdate(r.id, { elevation: parseFloat(e.target.value) || 0 })
-                    }
+                    onCommit={(v) => onUpdate(r.id, { elevation: v ?? 0 })}
                     className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
                   />
                 </td>
@@ -982,8 +1034,8 @@ function SectionRowTable({
                 </td>
                 <td className="px-1 py-1">
                   <input
-                    type="number"
-                    step={0.001}
+                    type="text"
+                    inputMode="decimal"
                     value={dElevation}
                     onChange={(e) => setDElevation(e.target.value)}
                     onKeyDown={onDraftKey}
@@ -1752,13 +1804,13 @@ function ProfileRow({
   onRemove: () => void
 }) {
   const [spDraft, setSpDraft] = useState<string>(() => trimFloat3(p.distance + spOffset))
-  const [zDraft, setZDraft] = useState<string>(() => trimFloat3(p.floorHeight))
+  const [zDraft, setZDraft] = useState<string>(() => mm3(p.floorHeight))
   const [vclDraft, setVclDraft] = useState<string>(() => (p.vcl ? trimFloat3(p.vcl) : ''))
   // 外部 (別行 の コミット等) で 値が 変わった時 は ドラフト を 同期。
   // 「入力中」の この行 は onChangeCommit で 親を 更新するので 変わる → useEffect で
   // 同じ 文字列に 戻す (実質 no-op)。 他行 の 変更で この行 の p が 変わる こと は 通常 なし。
   useEffect(() => { setSpDraft(trimFloat3(p.distance + spOffset)) }, [p.distance, spOffset])
-  useEffect(() => { setZDraft(trimFloat3(p.floorHeight)) }, [p.floorHeight])
+  useEffect(() => { setZDraft(mm3(p.floorHeight)) }, [p.floorHeight])
   useEffect(() => { setVclDraft(p.vcl ? trimFloat3(p.vcl) : '') }, [p.vcl])
 
   const commitSp = () => {
@@ -1773,10 +1825,12 @@ function ProfileRow({
   const commitZ = () => {
     const v = parseFloat(zDraft)
     if (!Number.isFinite(v)) {
-      setZDraft(trimFloat3(p.floorHeight))
+      setZDraft(mm3(p.floorHeight))
       return
     }
     const nextZ = Math.round(v * 1000) / 1000
+    // 値 が 変わら なくて も 表示 は mm 単位 に 揃え 直す (12.3 → 12.300)
+    setZDraft(mm3(nextZ))
     if (nextZ !== p.floorHeight) onChangeCommit({ floorHeight: nextZ })
   }
   const commitVcl = () => {
@@ -5233,17 +5287,16 @@ export function OpenChannelAlignmentPage() {
                                 {/* 現況高: 直接 入力。空 なら 未計測扱い */}
                                 {editTarget === 'current' && (
                                   <td className="px-1 py-1 text-right whitespace-nowrap">
-                                    <input
-                                      type="number"
-                                      step={0.001}
-                                      defaultValue={s.currentGroundHeight ?? ''}
+                                    <ElevationField
+                                      value={s.currentGroundHeight ?? null}
+                                      allowEmpty
                                       onClick={(e) => e.stopPropagation()}
-                                      onBlur={(e) =>
-                                        handleUpdateStationCurrentHeight(s.id, e.target.value)
+                                      onCommit={(v) =>
+                                        handleUpdateStationCurrentHeight(
+                                          s.id,
+                                          v == null ? '' : String(v),
+                                        )
                                       }
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') e.currentTarget.blur()
-                                      }}
                                       placeholder="-"
                                       className="w-full px-1 py-0.5 border rounded text-right tabular-nums text-amber-700 bg-amber-50/40"
                                     />
