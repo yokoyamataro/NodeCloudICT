@@ -194,6 +194,11 @@ interface Props {
    * 別の場所 (全体図の左パネル) に置く画面では false にする。
    */
   showAttributes?: boolean
+  /**
+   * 共通属性 を 1 つ の 「属性」 ボタン に まとめる か。
+   * 横幅 の 無い スマホ の ペイント欄 向け。 レイヤ は 選択式 に なる。
+   */
+  attributesAsMenu?: boolean
 
   // ---- 作図・計測ツールから引き継いだ設定。未指定ならその操作を出さない ----
   /** ピック (スナップ): 近くの点に吸着させる */
@@ -263,6 +268,7 @@ export function MapDrawingToolbar({
   variant = 'floating',
   dropUp = false,
   showAttributes = true,
+  attributesAsMenu = false,
   selectMethod = 'point',
   onChangeSelectMethod,
   snapEnabled,
@@ -281,6 +287,7 @@ export function MapDrawingToolbar({
   const [measurePickerOpen, setMeasurePickerOpen] = useState(false)
   const [snapPickerOpen, setSnapPickerOpen] = useState(false)
   const [selectPickerOpen, setSelectPickerOpen] = useState(false)
+  const [attrMenuOpen, setAttrMenuOpen] = useState(false)
   const [currentMeasure, setCurrentMeasure] = useState<MeasureMode>('measure-dist')
   // 形状ボタンで最後に選ばれた形状 (直線 / 円 / 円弧 / 面)。
   // ボタンをタップした時に「今どの形状に入るか」を決めるために保持する。
@@ -328,6 +335,7 @@ export function MapDrawingToolbar({
         setMeasurePickerOpen(false)
         setSnapPickerOpen(false)
         setSelectPickerOpen(false)
+        setAttrMenuOpen(false)
       }
     }
     document.addEventListener('pointerdown', onDown)
@@ -339,10 +347,71 @@ export function MapDrawingToolbar({
     measurePickerOpen,
     snapPickerOpen,
     selectPickerOpen,
+    attrMenuOpen,
   ])
 
   const isShapeMode = mode === currentShape
   const isMeasure = mode === currentMeasure
+
+  /** ピック (スナップ)。本体で ON/OFF、▼ で 吸着させる種類を選ぶ */
+  const snapControl = onToggleSnap ? (
+        <div className="relative shrink-0 flex items-stretch">
+          <button
+            type="button"
+            onClick={onToggleSnap}
+            title={
+              snapEnabled
+                ? `ピック ON (${(snapTypes ?? []).map((t) => SNAP_TYPE_LABEL[t]).join(' / ') || '対象なし'})`
+                : 'ピック OFF (吸着しない)'
+            }
+            className={`h-8 w-8 flex items-center justify-center rounded-l shrink-0 border ${
+              snapEnabled
+                ? 'bg-amber-100 border-amber-400 text-amber-700'
+                : 'border-transparent text-slate-500 hover:bg-slate-100'
+            }`}
+          >
+            <Crosshair className="h-4 w-4" />
+          </button>
+          {onToggleSnapType && (
+            <button
+              type="button"
+              onClick={() => {
+                setSnapPickerOpen((v) => !v)
+                setShapePickerOpen(false)
+                setMeasurePickerOpen(false)
+                setColorPickerOpen(false)
+                setLinePickerOpen(false)
+              }}
+              title="吸着させる対象を選ぶ"
+              className={`h-8 w-4 flex items-center justify-center rounded-r border-l ${
+                snapEnabled
+                  ? 'bg-amber-100 border-amber-400 text-amber-700'
+                  : 'text-slate-500 hover:bg-slate-100 border-slate-300'
+              }`}
+            >
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          )}
+          {snapPickerOpen && onToggleSnapType && (
+            <div className={`absolute ${popSide} left-0 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[8rem]`}>
+              <div className="px-3 py-1 text-[10px] text-slate-500">吸着させる対象</div>
+              {(['vertex', 'intersection', 'center', 'edge'] as const).map((t) => (
+                <label
+                  key={t}
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={(snapTypes ?? []).includes(t)}
+                    onChange={() => onToggleSnapType(t)}
+                  />
+                  <span>{SNAP_TYPE_LABEL[t]}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+  ) : null
 
   return (
     <div
@@ -608,65 +677,8 @@ export function MapDrawingToolbar({
           <StickyNote className="h-4 w-4" />
         </button>
       )}
-      {/* ピック (スナップ)。本体で ON/OFF、▼ で 吸着させる種類を選ぶ */}
-      {onToggleSnap && (
-        <div className="relative shrink-0 flex items-stretch">
-          <button
-            type="button"
-            onClick={onToggleSnap}
-            title={
-              snapEnabled
-                ? `ピック ON (${(snapTypes ?? []).map((t) => SNAP_TYPE_LABEL[t]).join(' / ') || '対象なし'})`
-                : 'ピック OFF (吸着しない)'
-            }
-            className={`h-8 w-8 flex items-center justify-center rounded-l shrink-0 border ${
-              snapEnabled
-                ? 'bg-amber-100 border-amber-400 text-amber-700'
-                : 'border-transparent text-slate-500 hover:bg-slate-100'
-            }`}
-          >
-            <Crosshair className="h-4 w-4" />
-          </button>
-          {onToggleSnapType && (
-            <button
-              type="button"
-              onClick={() => {
-                setSnapPickerOpen((v) => !v)
-                setShapePickerOpen(false)
-                setMeasurePickerOpen(false)
-                setColorPickerOpen(false)
-                setLinePickerOpen(false)
-              }}
-              title="吸着させる対象を選ぶ"
-              className={`h-8 w-4 flex items-center justify-center rounded-r border-l ${
-                snapEnabled
-                  ? 'bg-amber-100 border-amber-400 text-amber-700'
-                  : 'text-slate-500 hover:bg-slate-100 border-slate-300'
-              }`}
-            >
-              <ChevronDown className="h-3 w-3" />
-            </button>
-          )}
-          {snapPickerOpen && onToggleSnapType && (
-            <div className={`absolute ${popSide} left-0 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[8rem]`}>
-              <div className="px-3 py-1 text-[10px] text-slate-500">吸着させる対象</div>
-              {(['vertex', 'intersection', 'center', 'edge'] as const).map((t) => (
-                <label
-                  key={t}
-                  className="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    checked={(snapTypes ?? []).includes(t)}
-                    onChange={() => onToggleSnapType(t)}
-                  />
-                  <span>{SNAP_TYPE_LABEL[t]}</span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {/* ピック は 属性 の 後ろ (attributesAsMenu) か ここ に 出す */}
+      {!attributesAsMenu && snapControl}
 
       {/* undo / redo */}
       {showUndoRedo && (
@@ -692,6 +704,126 @@ export function MapDrawingToolbar({
         </>
       )}
 
+      {/* 属性 (レイヤ / 色 / 線種 / 太さ) を 1 つ に まとめた メニュー。
+          横幅 の 無い スマホ 用。 元に戻す / やり直し の 右、その 右 が ピック。 */}
+      {attributesAsMenu && showAttributes && mode !== 'frame' && (
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setAttrMenuOpen((v) => !v)
+              setColorPickerOpen(false)
+              setLinePickerOpen(false)
+              setShapePickerOpen(false)
+              setMeasurePickerOpen(false)
+              setSnapPickerOpen(false)
+              setSelectPickerOpen(false)
+            }}
+            title="属性 — レイヤ / 色 / 線種 / 太さ"
+            className={`h-8 px-1.5 flex items-center gap-1 rounded border shrink-0 ${
+              attrMenuOpen ? 'bg-slate-200 border-slate-400' : 'hover:bg-slate-100'
+            }`}
+          >
+            <span
+              className="w-3.5 h-3.5 rounded-sm border shrink-0"
+              style={{ backgroundColor: color }}
+            />
+            <span className="text-[11px] text-slate-700">属性</span>
+            <ChevronDown className="h-3 w-3 text-slate-500" />
+          </button>
+          {attrMenuOpen && (
+            <div
+              className={`absolute ${popSide} right-0 z-[3000] bg-white border rounded shadow-lg p-2 w-56 flex flex-col gap-2`}
+            >
+              {/* レイヤ (DXF 出力 に 反映)。 スマホ で 打つ の は 辛い ので 選択式 */}
+              {onChangeLayer && (
+                <label className="flex items-center gap-2">
+                  <span className="text-[10px] text-slate-500 w-8 shrink-0">レイヤ</span>
+                  <select
+                    value={layer ?? '0'}
+                    onChange={(e) => onChangeLayer(e.target.value)}
+                    className="flex-1 h-8 px-1 border rounded font-mono text-[11px] bg-white"
+                  >
+                    {Array.from(
+                      new Set([...DEFAULT_LAYERS, ...(existingLayers ?? []), '0', layer ?? '0']),
+                    ).map((l) => (
+                      <option key={l} value={l}>
+                        {l}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {/* 色 */}
+              <div className="flex items-start gap-2">
+                <span className="text-[10px] text-slate-500 w-8 shrink-0 pt-1">色</span>
+                <div className="flex-1">
+                  <div className="grid grid-cols-6 gap-1">
+                    {COLOR_PRESETS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => onChangeColor(c)}
+                        className={`w-6 h-6 rounded border ${
+                          c === color ? 'ring-2 ring-blue-500' : ''
+                        }`}
+                        style={{ backgroundColor: c }}
+                        title={c}
+                      />
+                    ))}
+                  </div>
+                  <input
+                    type="color"
+                    value={color}
+                    onChange={(e) => onChangeColor(e.target.value)}
+                    className="w-full h-7 mt-1"
+                    title="カスタム色"
+                  />
+                </div>
+              </div>
+              {/* 線種 */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-500 w-8 shrink-0">線種</span>
+                <div className="flex-1 flex gap-1">
+                  {(['solid', 'dashed', 'dotted'] as const).map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => onChangeLineStyle(st)}
+                      title={LINE_STYLE_LABEL[st]}
+                      className={`flex-1 h-8 flex items-center justify-center rounded border ${
+                        lineStyle === st
+                          ? 'bg-blue-50 border-blue-400 text-blue-700'
+                          : 'text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <LineStyleSvg style={st} width={26} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* 太さ */}
+              <label className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-500 w-8 shrink-0">太さ</span>
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={widthPx}
+                  onChange={(e) => onChangeWidth(Number(e.target.value))}
+                  className="flex-1"
+                />
+                <span className="text-[10px] font-mono text-slate-600 w-5 text-right">
+                  {widthPx}
+                </span>
+              </label>
+            </div>
+          )}
+        </div>
+      )}
+      {attributesAsMenu && snapControl}
+
       {/* 閉じる (モード解除) */}
       {mode !== 'off' && (
         <button
@@ -706,7 +838,7 @@ export function MapDrawingToolbar({
       {/* 共通属性 (レイヤ / 色 / 線種 / 太さ)。ツールバーの一番右にまとめる。
           ここで決めた値が、これから描くものに付く。
           図枠は レイヤも 見た目も 固定なので、その間は 出さない */}
-      {showAttributes && mode !== 'frame' && (
+      {showAttributes && !attributesAsMenu && mode !== 'frame' && (
       <div className="ml-auto flex flex-wrap items-center gap-1 pl-2 border-l">
         {/* レイヤ名 (DXF 出力に反映) */}
         {onChangeLayer && (

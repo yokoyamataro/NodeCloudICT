@@ -7575,6 +7575,8 @@ export function MobileStakingPage() {
               <MapDrawingToolbar
                 // 画面の 下端に 置く ので、プルダウンは 上に 開かせる
                 dropUp
+                // 横幅 が 無い ので、レイヤ / 色 / 線種 / 太さ は 「属性」 に まとめる
+                attributesAsMenu
                 mode={drawingMode}
                 onChangeMode={(m) => {
                   setDrawingMode(m)
