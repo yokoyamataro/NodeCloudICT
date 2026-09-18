@@ -1090,20 +1090,22 @@ function SectionPointsEditor({
             onRemove={removeRow}
           />
         )}
-        <SectionRowTable
-          title="左 (L)"
-          rows={leftRows}
-          sourceOf={sourceOf}
-          onUpdate={updateRow}
-          onRemove={removeRow}
-        />
-        <SectionRowTable
-          title="右 (R)"
-          rows={rightRows}
-          sourceOf={sourceOf}
-          onUpdate={updateRow}
-          onRemove={removeRow}
-        />
+        <div className="grid grid-cols-2 gap-1.5">
+          <SectionRowTable
+            title="左 (L)"
+            rows={leftRows}
+            sourceOf={sourceOf}
+            onUpdate={updateRow}
+            onRemove={removeRow}
+          />
+          <SectionRowTable
+            title="右 (R)"
+            rows={rightRows}
+            sourceOf={sourceOf}
+            onUpdate={updateRow}
+            onRemove={removeRow}
+          />
+        </div>
         {rows.length === 0 && (
           <div className="px-2 py-4 text-center text-slate-400 text-[11px] border rounded">
             まだ 点が ありません。 「行を追加」 や 地図 / DXF / 取込 から 入力 を 始めて ください。
@@ -6062,405 +6064,405 @@ export function OpenChannelAlignmentPage() {
               })}
             </CoordinateMap>
           </div>
+        </div>
+      </div>
 
-          {/* 地図下 の 二面パネル: 縦断図 / 横断図 を タブ で 切替。
-              - 縦断図: 変化点 の 編集 UI は 左サイドバー 「縦断」に。
-              - 横断図: 中間点 選択 時 は その 測点 の 計画断面、
-                       選択なし の 時 は 標準断面 (=横断計画) を 編集。
-              計画 ボタン 押下 で 横断図 タブ に 自動切替。 */}
-          {selected && (
-            <div
-              className="shrink-0 border-t bg-white flex flex-col relative isolate overflow-hidden"
-              style={{ height: profileChartExpanded ? '420px' : 'auto' }}
+      {/* 画面 下端 の 二面パネル: 縦断図 / 横断図 を タブ で 切替。
+          - 縦断図: 変化点 の 編集 UI は 左サイドバー 「縦断」に。
+          - 横断図: 中間点 選択 時 は その 測点 の 計画断面、
+                   選択なし の 時 は 標準断面 (=横断計画) を 編集。
+          計画 ボタン 押下 で 横断図 タブ に 自動切替。 */}
+      {selected && (
+        <div
+          className="shrink-0 border-t bg-white flex flex-col relative isolate overflow-hidden"
+          style={{ height: profileChartExpanded ? '420px' : 'auto' }}
+        >
+          <div className="px-2 py-1 flex items-center gap-2 shrink-0 border-b bg-slate-50">
+            <button
+              type="button"
+              onClick={toggleProfileChart}
+              className="p-0.5 hover:bg-slate-100 rounded"
+              title={profileChartExpanded ? '折りたたむ' : '展開'}
             >
-              <div className="px-2 py-1 flex items-center gap-2 shrink-0 border-b bg-slate-50">
-                <button
-                  type="button"
-                  onClick={toggleProfileChart}
-                  className="p-0.5 hover:bg-slate-100 rounded"
-                  title={profileChartExpanded ? '折りたたむ' : '展開'}
-                >
-                  {profileChartExpanded ? (
-                    <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
-                  )}
-                </button>
-                <div className="flex gap-0.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBottomTab('profile')
-                      if (!profileChartExpanded) toggleProfileChart()
-                    }}
-                    className={`px-2 py-0.5 text-xs rounded ${
-                      bottomTab === 'profile'
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-white border hover:bg-slate-100 text-slate-700'
-                    }`}
-                  >
-                    縦断図
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBottomTab('crossSection')
-                      if (!profileChartExpanded) toggleProfileChart()
-                    }}
-                    className={`px-2 py-0.5 text-xs rounded ${
-                      bottomTab === 'crossSection'
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-white border hover:bg-slate-100 text-slate-700'
-                    }`}
-                  >
-                    横断図
-                  </button>
-                </div>
-                <span className="text-[11px] text-slate-500 truncate">
-                  {bottomTab === 'profile'
-                    ? '変化点 の 追加 / 編集 は 左サイドバー 「縦断」から'
-                    : selectedStation
-                    ? `${selectedStation.label} の 計画断面`
-                    : '横断計画 (標準断面) — 中間点 で 計画 を 押すと 個別 に 編集 できます'}
-                </span>
-              </div>
-              {/* 展開中 は 図 の 左 に 断面点 の 表 を 固定 する。 測点 を 選べば
-                  その 断面 の 中身 が そのまま 出る ので、別 の 呼び出し は 要らない。
-                  縦断図 / 横断図 の どちら の タブ でも 出し続ける。 */}
-              {profileChartExpanded && (
-              <div className="flex-1 min-h-0 flex">
-                <aside className="w-[290px] shrink-0 border-r p-2 overflow-hidden flex flex-col">
-                  {selectedStation ? (
-                    (() => {
-                      const t = sectionTargetOfEditTarget(editTarget)
-                      const key = sectionKeyOf(t)
-                      const pts =
-                        (selectedStation[key] as MeasuredCrossPoint[] | null | undefined) ?? []
-                      return (
-                        <SectionPointsEditor
-                          target={t}
-                          stationId={selectedStation.id}
-                          stationLabel={selectedStation.label}
-                          points={pts}
-                          autoPoints={t === 'current' ? autoCurrentSection : undefined}
-                          onChange={(next) =>
-                            handleReplaceStationSection(selectedStation.id, t, next)
-                          }
-                        />
-                      )
-                    })()
-                  ) : (
-                    <div className="text-[11px] text-slate-400">
-                      左メニュー 「横断」 で 測点 を 選ぶ と、その 断面 の 点 が ここ に 出ます。
-                    </div>
-                  )}
-                </aside>
-                <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-              {profileChartExpanded && bottomTab === 'profile' && (
-                <div className="flex-1 min-h-0 px-2 pb-2">
-                  <ProfileChart
-                    points={selected.profilePoints}
-                    totalLen={totalLen}
-                    spOffset={spOffset}
-                    currentGroundPoints={stations
-                      .filter((s) => s.currentGroundHeight != null)
-                      .map((s) => ({ distance: s.distance, z: s.currentGroundHeight as number }))}
-                  />
+              {profileChartExpanded ? (
+                <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
+              )}
+            </button>
+            <div className="flex gap-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setBottomTab('profile')
+                  if (!profileChartExpanded) toggleProfileChart()
+                }}
+                className={`px-2 py-0.5 text-xs rounded ${
+                  bottomTab === 'profile'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white border hover:bg-slate-100 text-slate-700'
+                }`}
+              >
+                縦断図
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBottomTab('crossSection')
+                  if (!profileChartExpanded) toggleProfileChart()
+                }}
+                className={`px-2 py-0.5 text-xs rounded ${
+                  bottomTab === 'crossSection'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white border hover:bg-slate-100 text-slate-700'
+                }`}
+              >
+                横断図
+              </button>
+            </div>
+            <span className="text-[11px] text-slate-500 truncate">
+              {bottomTab === 'profile'
+                ? '変化点 の 追加 / 編集 は 左サイドバー 「縦断」から'
+                : selectedStation
+                ? `${selectedStation.label} の 計画断面`
+                : '横断計画 (標準断面) — 中間点 で 計画 を 押すと 個別 に 編集 できます'}
+            </span>
+          </div>
+          {/* 展開中 は 図 の 左 に 断面点 の 表 を 固定 する。 測点 を 選べば
+              その 断面 の 中身 が そのまま 出る ので、別 の 呼び出し は 要らない。
+              縦断図 / 横断図 の どちら の タブ でも 出し続ける。 */}
+          {profileChartExpanded && (
+          <div className="flex-1 min-h-0 flex">
+            <aside className="w-[624px] shrink-0 border-r p-2 overflow-hidden flex flex-col">
+              {selectedStation ? (
+                (() => {
+                  const t = sectionTargetOfEditTarget(editTarget)
+                  const key = sectionKeyOf(t)
+                  const pts =
+                    (selectedStation[key] as MeasuredCrossPoint[] | null | undefined) ?? []
+                  return (
+                    <SectionPointsEditor
+                      target={t}
+                      stationId={selectedStation.id}
+                      stationLabel={selectedStation.label}
+                      points={pts}
+                      autoPoints={t === 'current' ? autoCurrentSection : undefined}
+                      onChange={(next) =>
+                        handleReplaceStationSection(selectedStation.id, t, next)
+                      }
+                    />
+                  )
+                })()
+              ) : (
+                <div className="text-[11px] text-slate-400">
+                  左メニュー 「横断」 で 測点 を 選ぶ と、その 断面 の 点 が ここ に 出ます。
                 </div>
               )}
-              {profileChartExpanded && bottomTab === 'crossSection' && (
-                <div className="flex-1 min-h-0 flex flex-col p-2 gap-2">
-                  {(() => {
-                    // 計画高 (中心設計高) の 優先順位:
-                    //   1. plannedCenterHeight (トレース由来 or 手入力)
-                    //   2. profilePoints から 内挿 (範囲外なら null → undefined 扱い)
-                    //   3. undefined (未取得)
-                    const centerZ = selectedStation
-                      ? (selectedStation.plannedCenterHeight ??
-                          interpolateProfileZOrNull(selected.profilePoints, selectedStation.distance) ??
-                          undefined)
-                      : undefined
-                    // 編集対象 = 選択測点 の 個別断面 (element or 点列 の いずれか) / なければ 標準断面。
-                    //   crossSection と plannedSectionRaw は handleUpdateStationCrossSection /
-                    //   handleReplaceStationSection('planned') で 常に 同期される 想定 だが、
-                    //   旧データ (片方 のみ) との 互換 の ため plannedSectionRaw を 逆変換 で フォールバック。
-                    const stationCs: StandardCrossSection | null = selectedStation
-                      ? selectedStation.crossSection
-                        ? selectedStation.crossSection
-                        : selectedStation.plannedSectionRaw &&
-                            selectedStation.plannedSectionRaw.length > 0
-                          ? measuredPointsToStandardCs(
-                              selectedStation.plannedSectionRaw,
-                              centerZ ?? 0,
-                            )
-                          : null
+            </aside>
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+          {profileChartExpanded && bottomTab === 'profile' && (
+            <div className="flex-1 min-h-0 px-2 pb-2">
+              <ProfileChart
+                points={selected.profilePoints}
+                totalLen={totalLen}
+                spOffset={spOffset}
+                currentGroundPoints={stations
+                  .filter((s) => s.currentGroundHeight != null)
+                  .map((s) => ({ distance: s.distance, z: s.currentGroundHeight as number }))}
+              />
+            </div>
+          )}
+          {profileChartExpanded && bottomTab === 'crossSection' && (
+            <div className="flex-1 min-h-0 flex flex-col p-2 gap-2">
+              {(() => {
+                // 計画高 (中心設計高) の 優先順位:
+                //   1. plannedCenterHeight (トレース由来 or 手入力)
+                //   2. profilePoints から 内挿 (範囲外なら null → undefined 扱い)
+                //   3. undefined (未取得)
+                const centerZ = selectedStation
+                  ? (selectedStation.plannedCenterHeight ??
+                      interpolateProfileZOrNull(selected.profilePoints, selectedStation.distance) ??
+                      undefined)
+                  : undefined
+                // 編集対象 = 選択測点 の 個別断面 (element or 点列 の いずれか) / なければ 標準断面。
+                //   crossSection と plannedSectionRaw は handleUpdateStationCrossSection /
+                //   handleReplaceStationSection('planned') で 常に 同期される 想定 だが、
+                //   旧データ (片方 のみ) との 互換 の ため plannedSectionRaw を 逆変換 で フォールバック。
+                const stationCs: StandardCrossSection | null = selectedStation
+                  ? selectedStation.crossSection
+                    ? selectedStation.crossSection
+                    : selectedStation.plannedSectionRaw &&
+                        selectedStation.plannedSectionRaw.length > 0
+                      ? measuredPointsToStandardCs(
+                          selectedStation.plannedSectionRaw,
+                          centerZ ?? 0,
+                        )
                       : null
-                    const editingStation = stationCs ? selectedStation : null
-                    const cs: StandardCrossSection = stationCs ?? selected.standardCrossSection
-                    const applyChange = (next: StandardCrossSection) => {
-                      if (editingStation) {
-                        handleUpdateStationCrossSection(editingStation.id, next)
-                      } else {
-                        updateChannel(selected.id, { standardCrossSection: next })
-                      }
-                    }
-                    return (
-                      <>
-                        {/* ヘッダー: 対象 表示 + 個別/標準 切替 */}
-                        <div className="flex items-center gap-2 flex-wrap text-xs shrink-0">
-                          {selectedStation ? (
+                  : null
+                const editingStation = stationCs ? selectedStation : null
+                const cs: StandardCrossSection = stationCs ?? selected.standardCrossSection
+                const applyChange = (next: StandardCrossSection) => {
+                  if (editingStation) {
+                    handleUpdateStationCrossSection(editingStation.id, next)
+                  } else {
+                    updateChannel(selected.id, { standardCrossSection: next })
+                  }
+                }
+                return (
+                  <>
+                    {/* ヘッダー: 対象 表示 + 個別/標準 切替 */}
+                    <div className="flex items-center gap-2 flex-wrap text-xs shrink-0">
+                      {selectedStation ? (
+                        <>
+                          <span className="font-mono font-semibold text-slate-700">
+                            {selectedStation.label}
+                          </span>
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded ${
+                              selectedStation.crossSection
+                                ? 'bg-amber-100 text-amber-700'
+                                : 'bg-slate-200 text-slate-600'
+                            }`}
+                          >
+                            {selectedStation.crossSection ? '個別設定' : '標準を継承'}
+                          </span>
+                          {centerZ !== undefined && (
                             <>
-                              <span className="font-mono font-semibold text-slate-700">
-                                {selectedStation.label}
-                              </span>
-                              <span
-                                className={`text-[10px] px-1.5 py-0.5 rounded ${
-                                  selectedStation.crossSection
-                                    ? 'bg-amber-100 text-amber-700'
-                                    : 'bg-slate-200 text-slate-600'
-                                }`}
-                              >
-                                {selectedStation.crossSection ? '個別設定' : '標準を継承'}
-                              </span>
-                              {centerZ !== undefined && (
-                                <>
-                                  <span className="text-[10px] text-slate-500">中心設計高</span>
-                                  <span className="font-mono font-semibold text-emerald-700 tabular-nums">
-                                    {centerZ.toFixed(3)}
-                                    <span className="text-[10px] text-slate-400 ml-0.5">m</span>
-                                  </span>
-                                </>
-                              )}
-                              {/* 横断幅: 中心線 沿い に この 範囲の 実測記録を
-                                  「この 断面上の 点」と みなす。既定 50cm */}
-                              <label
-                                className="flex items-center gap-1 text-[10px] text-slate-500"
-                                title="中心線沿いにこの範囲内の実測記録を、この断面上の点として自動で拾います"
-                              >
-                                <span>横断幅</span>
-                                <input
-                                  type="number"
-                                  step={0.1}
-                                  min={0.05}
-                                  value={crossBandM}
-                                  onChange={(e) => {
-                                    const n = parseFloat(e.target.value)
-                                    if (Number.isFinite(n) && n > 0) setCrossBandM(n)
-                                  }}
-                                  className="w-14 px-1 py-0.5 border rounded text-right text-[11px]"
-                                />
-                                <span>m</span>
-                                {autoCurrentSection.length > 0 && (
-                                  <span className="text-cyan-700">
-                                    実測 {autoCurrentSection.length} 点
-                                  </span>
-                                )}
-                              </label>
-                              {/* 編集対象 (現況 / 計画 / 出来形) は 左メニュー の 「横断」 タブ
-                                  で 選ぶ。 ここ は いま どれ を 編集 して いる か の 表示 だけ。 */}
-                              {(() => {
-                                const m = EDIT_TARGET_TABS.find((t) => t.key === editTarget)
-                                if (!m) return null
-                                return (
-                                  <div className="flex items-center gap-1 border-l pl-2 ml-1">
-                                    <span className="text-[10px] text-slate-500">編集</span>
-                                    <span
-                                      className={`px-2 py-0.5 text-[11px] border rounded ${m.act}`}
-                                      title="左メニュー の 「横断」 タブ で 切り替え"
-                                    >
-                                      {m.label}
-                                    </span>
-                                  </div>
-                                )
-                              })()}
-                              <div className="ml-auto flex gap-1">
-                                {selectedStation.crossSection ||
-                                (selectedStation.plannedSectionRaw?.length ?? 0) > 0 ? (
-                                  <button
-                                    onClick={() =>
-                                      handleUpdateStationCrossSection(selectedStation.id, null)
-                                    }
-                                    className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-600 hover:bg-slate-50"
-                                  >
-                                    標準に戻す
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() =>
-                                      handleUpdateStationCrossSection(
-                                        selectedStation.id,
-                                        cloneCrossSection(selected.standardCrossSection),
-                                      )
-                                    }
-                                    className="px-2 py-0.5 text-[11px] border rounded bg-blue-600 text-white hover:bg-blue-700"
-                                  >
-                                    個別設定（標準を取込）
-                                  </button>
-                                )}
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <span className="font-semibold text-slate-700">
-                                横断計画 (標準断面)
-                              </span>
-                              <span className="text-[11px] text-slate-500">
-                                左右計画線 の ボタン で 描画 開始。 中間点 の 計画 を 押すと 個別断面 を 編集 できます。
+                              <span className="text-[10px] text-slate-500">中心設計高</span>
+                              <span className="font-mono font-semibold text-emerald-700 tabular-nums">
+                                {centerZ.toFixed(3)}
+                                <span className="text-[10px] text-slate-400 ml-0.5">m</span>
                               </span>
                             </>
                           )}
-                        </div>
-
-                        {/* 現況 / 計画(トレース) / 出来形 モード の 補助 アクション バー。
-                            計画モード (editTarget='plan') は 対話型 element エディタが 主。
-                            editTarget='current' → target=current、'asbuilt' → target=asbuilt、
-                            'plan' → target=planned (トレース由来 plannedSectionRaw)。 */}
-                        {selectedStation && (() => {
-                          const target: SectionTarget = sectionTargetOfEditTarget(editTarget)
-                          const showAuxBar = editTarget === 'current' || editTarget === 'asbuilt' || editTarget === 'plan'
-                          if (!showAuxBar) return null
-                          const isMapMode = editTarget === 'current' || editTarget === 'asbuilt'
-                          const labelPrefix =
-                            editTarget === 'current' ? '現況断面: '
-                            : editTarget === 'asbuilt' ? '出来形: '
-                            : '計画 (トレース): '
-                          const pts = ((): MeasuredCrossPoint[] => {
-                            const key = target === 'current' ? 'currentSection' : target === 'asbuilt' ? 'asbuiltSection' : 'plannedSectionRaw'
-                            return (selectedStation[key] as MeasuredCrossPoint[] | null | undefined) ?? []
-                          })()
-                          return (
-                            <div className="flex items-center gap-1.5 flex-wrap text-xs shrink-0">
-                              <span className="text-slate-500 text-[11px]">{labelPrefix}</span>
-                              {isMapMode && (
-                                <button
-                                  onClick={() => {
-                                    if (mapCaptureTarget === target) {
-                                      setMapCaptureTarget(null)
-                                      return
-                                    }
-                                    // 現況 で まだ 何も 保存 して いない ときは、いま 断面図 に
-                                    // 出て いる 実測点 を そのまま 土台 に する。
-                                    // これ を しない と 1 点 拾った 途端 に 実測点 が 消えて
-                                    // 「反映 されない」 ように 見える。
-                                    if (
-                                      target === 'current' &&
-                                      !selectedStation.currentSection?.length &&
-                                      autoCurrentSection.length > 0
-                                    ) {
-                                      handleReplaceStationSection(
-                                        selectedStation.id,
-                                        'current',
-                                        autoCurrentSection,
-                                      )
-                                    }
-                                    setMapCaptureTarget(target)
-                                  }}
-                                  className={`px-2 py-0.5 text-[11px] border rounded ${
-                                    mapCaptureTarget === target
-                                      ? 'bg-purple-600 text-white border-purple-600'
-                                      : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50'
-                                  }`}
-                                  title="地図で 測点マーカーを クリック すると 中心線に 垂直投影 して 追加"
-                                >
-                                  {mapCaptureTarget === target ? '地図取得: 選択中' : '地図で追加'}
-                                </button>
-                              )}
-                              {selected?.dxfCrossSectionPath && (
-                                <button
-                                  onClick={() =>
-                                    setDxfTraceContext({ stationId: selectedStation.id, target })
-                                  }
-                                  className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
-                                  title="既存 DXF 横断図 から トレースして 点を 拾う"
-                                >
-                                  DXFから取込
-                                </button>
-                              )}
-                              <span className="text-[11px] text-slate-500">
-                                登録済 {pts.length} 点
+                          {/* 横断幅: 中心線 沿い に この 範囲の 実測記録を
+                              「この 断面上の 点」と みなす。既定 50cm */}
+                          <label
+                            className="flex items-center gap-1 text-[10px] text-slate-500"
+                            title="中心線沿いにこの範囲内の実測記録を、この断面上の点として自動で拾います"
+                          >
+                            <span>横断幅</span>
+                            <input
+                              type="number"
+                              step={0.1}
+                              min={0.05}
+                              value={crossBandM}
+                              onChange={(e) => {
+                                const n = parseFloat(e.target.value)
+                                if (Number.isFinite(n) && n > 0) setCrossBandM(n)
+                              }}
+                              className="w-14 px-1 py-0.5 border rounded text-right text-[11px]"
+                            />
+                            <span>m</span>
+                            {autoCurrentSection.length > 0 && (
+                              <span className="text-cyan-700">
+                                実測 {autoCurrentSection.length} 点
                               </span>
+                            )}
+                          </label>
+                          {/* 編集対象 (現況 / 計画 / 出来形) は 左メニュー の 「横断」 タブ
+                              で 選ぶ。 ここ は いま どれ を 編集 して いる か の 表示 だけ。 */}
+                          {(() => {
+                            const m = EDIT_TARGET_TABS.find((t) => t.key === editTarget)
+                            if (!m) return null
+                            return (
+                              <div className="flex items-center gap-1 border-l pl-2 ml-1">
+                                <span className="text-[10px] text-slate-500">編集</span>
+                                <span
+                                  className={`px-2 py-0.5 text-[11px] border rounded ${m.act}`}
+                                  title="左メニュー の 「横断」 タブ で 切り替え"
+                                >
+                                  {m.label}
+                                </span>
+                              </div>
+                            )
+                          })()}
+                          <div className="ml-auto flex gap-1">
+                            {selectedStation.crossSection ||
+                            (selectedStation.plannedSectionRaw?.length ?? 0) > 0 ? (
                               <button
-                                onClick={() => {
-                                  if (!window.confirm('この 測点の 全点を 削除します。')) return
-                                  handleReplaceStationSection(selectedStation.id, target, [])
-                                }}
-                                className="ml-auto px-2 py-0.5 text-[11px] border rounded text-red-600 hover:bg-red-50"
+                                onClick={() =>
+                                  handleUpdateStationCrossSection(selectedStation.id, null)
+                                }
+                                className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-600 hover:bg-slate-50"
                               >
-                                クリア
+                                標準に戻す
                               </button>
-                            </div>
-                          )
-                        })()}
+                            ) : (
+                              <button
+                                onClick={() =>
+                                  handleUpdateStationCrossSection(
+                                    selectedStation.id,
+                                    cloneCrossSection(selected.standardCrossSection),
+                                  )
+                                }
+                                className="px-2 py-0.5 text-[11px] border rounded bg-blue-600 text-white hover:bg-blue-700"
+                              >
+                                個別設定（標準を取込）
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-semibold text-slate-700">
+                            横断計画 (標準断面)
+                          </span>
+                          <span className="text-[11px] text-slate-500">
+                            左右計画線 の ボタン で 描画 開始。 中間点 の 計画 を 押すと 個別断面 を 編集 できます。
+                          </span>
+                        </>
+                      )}
+                    </div>
 
-                        {/* 対話 型 断面 エディタ
-                            prev/next は 現在 選択中の 測点の 前後の 測点に ジャンプ。
-                            標準断面 (selectedStation なし) の 時は 前=最終測点、次=先頭測点
-                            に フォールバック (どちらの 状態からも 巡回できる)。 */}
-                        {(() => {
-                          const currentIdx = selectedStation
-                            ? stations.findIndex((s) => s.id === selectedStation.id)
-                            : -1
-                          const prevStation = selectedStation
-                            ? currentIdx > 0
-                              ? stations[currentIdx - 1]
-                              : null
-                            : stations.length > 0
-                              ? stations[stations.length - 1]
-                              : null
-                          const nextStation = selectedStation
-                            ? currentIdx >= 0 && currentIdx < stations.length - 1
-                              ? stations[currentIdx + 1]
-                              : null
-                            : stations.length > 0
-                              ? stations[0]
-                              : null
-                          return (
-                            <div className="flex-1 min-h-0">
-                              <InteractiveCrossSectionEditor
-                                cs={cs}
-                                onChange={applyChange}
-                                centerHeight={centerZ}
-                                currentGroundHeight={selectedStation?.currentGroundHeight ?? null}
-                                // 保存済みが 無ければ、横断幅 以内の 実測点を
-                                // そのまま 出す (取込ボタンを 押さなくても 見える)
-                                currentSection={
-                                  selectedStation?.currentSection?.length
-                                    ? selectedStation.currentSection
-                                    : autoCurrentSection.length > 0
-                                      ? autoCurrentSection
-                                      : null
+                    {/* 現況 / 計画(トレース) / 出来形 モード の 補助 アクション バー。
+                        計画モード (editTarget='plan') は 対話型 element エディタが 主。
+                        editTarget='current' → target=current、'asbuilt' → target=asbuilt、
+                        'plan' → target=planned (トレース由来 plannedSectionRaw)。 */}
+                    {selectedStation && (() => {
+                      const target: SectionTarget = sectionTargetOfEditTarget(editTarget)
+                      const showAuxBar = editTarget === 'current' || editTarget === 'asbuilt' || editTarget === 'plan'
+                      if (!showAuxBar) return null
+                      const isMapMode = editTarget === 'current' || editTarget === 'asbuilt'
+                      const labelPrefix =
+                        editTarget === 'current' ? '現況断面: '
+                        : editTarget === 'asbuilt' ? '出来形: '
+                        : '計画 (トレース): '
+                      const pts = ((): MeasuredCrossPoint[] => {
+                        const key = target === 'current' ? 'currentSection' : target === 'asbuilt' ? 'asbuiltSection' : 'plannedSectionRaw'
+                        return (selectedStation[key] as MeasuredCrossPoint[] | null | undefined) ?? []
+                      })()
+                      return (
+                        <div className="flex items-center gap-1.5 flex-wrap text-xs shrink-0">
+                          <span className="text-slate-500 text-[11px]">{labelPrefix}</span>
+                          {isMapMode && (
+                            <button
+                              onClick={() => {
+                                if (mapCaptureTarget === target) {
+                                  setMapCaptureTarget(null)
+                                  return
                                 }
-                                asbuiltSection={selectedStation?.asbuiltSection ?? null}
-                                onPrevStation={
-                                  prevStation
-                                    ? () => setSelectedStationId(prevStation.id)
-                                    : undefined
+                                // 現況 で まだ 何も 保存 して いない ときは、いま 断面図 に
+                                // 出て いる 実測点 を そのまま 土台 に する。
+                                // これ を しない と 1 点 拾った 途端 に 実測点 が 消えて
+                                // 「反映 されない」 ように 見える。
+                                if (
+                                  target === 'current' &&
+                                  !selectedStation.currentSection?.length &&
+                                  autoCurrentSection.length > 0
+                                ) {
+                                  handleReplaceStationSection(
+                                    selectedStation.id,
+                                    'current',
+                                    autoCurrentSection,
+                                  )
                                 }
-                                onNextStation={
-                                  nextStation
-                                    ? () => setSelectedStationId(nextStation.id)
-                                    : undefined
-                                }
-                                canPrev={!!prevStation}
-                                canNext={!!nextStation}
-                                prevLabel={prevStation?.label}
-                                nextLabel={nextStation?.label}
-                              />
-                            </div>
-                          )
-                        })()}
-                      </>
-                    )
-                  })()}
-                </div>
-              )}
-                </div>
-              </div>
-              )}
+                                setMapCaptureTarget(target)
+                              }}
+                              className={`px-2 py-0.5 text-[11px] border rounded ${
+                                mapCaptureTarget === target
+                                  ? 'bg-purple-600 text-white border-purple-600'
+                                  : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50'
+                              }`}
+                              title="地図で 測点マーカーを クリック すると 中心線に 垂直投影 して 追加"
+                            >
+                              {mapCaptureTarget === target ? '地図取得: 選択中' : '地図で追加'}
+                            </button>
+                          )}
+                          {selected?.dxfCrossSectionPath && (
+                            <button
+                              onClick={() =>
+                                setDxfTraceContext({ stationId: selectedStation.id, target })
+                              }
+                              className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                              title="既存 DXF 横断図 から トレースして 点を 拾う"
+                            >
+                              DXFから取込
+                            </button>
+                          )}
+                          <span className="text-[11px] text-slate-500">
+                            登録済 {pts.length} 点
+                          </span>
+                          <button
+                            onClick={() => {
+                              if (!window.confirm('この 測点の 全点を 削除します。')) return
+                              handleReplaceStationSection(selectedStation.id, target, [])
+                            }}
+                            className="ml-auto px-2 py-0.5 text-[11px] border rounded text-red-600 hover:bg-red-50"
+                          >
+                            クリア
+                          </button>
+                        </div>
+                      )
+                    })()}
+
+                    {/* 対話 型 断面 エディタ
+                        prev/next は 現在 選択中の 測点の 前後の 測点に ジャンプ。
+                        標準断面 (selectedStation なし) の 時は 前=最終測点、次=先頭測点
+                        に フォールバック (どちらの 状態からも 巡回できる)。 */}
+                    {(() => {
+                      const currentIdx = selectedStation
+                        ? stations.findIndex((s) => s.id === selectedStation.id)
+                        : -1
+                      const prevStation = selectedStation
+                        ? currentIdx > 0
+                          ? stations[currentIdx - 1]
+                          : null
+                        : stations.length > 0
+                          ? stations[stations.length - 1]
+                          : null
+                      const nextStation = selectedStation
+                        ? currentIdx >= 0 && currentIdx < stations.length - 1
+                          ? stations[currentIdx + 1]
+                          : null
+                        : stations.length > 0
+                          ? stations[0]
+                          : null
+                      return (
+                        <div className="flex-1 min-h-0">
+                          <InteractiveCrossSectionEditor
+                            cs={cs}
+                            onChange={applyChange}
+                            centerHeight={centerZ}
+                            currentGroundHeight={selectedStation?.currentGroundHeight ?? null}
+                            // 保存済みが 無ければ、横断幅 以内の 実測点を
+                            // そのまま 出す (取込ボタンを 押さなくても 見える)
+                            currentSection={
+                              selectedStation?.currentSection?.length
+                                ? selectedStation.currentSection
+                                : autoCurrentSection.length > 0
+                                  ? autoCurrentSection
+                                  : null
+                            }
+                            asbuiltSection={selectedStation?.asbuiltSection ?? null}
+                            onPrevStation={
+                              prevStation
+                                ? () => setSelectedStationId(prevStation.id)
+                                : undefined
+                            }
+                            onNextStation={
+                              nextStation
+                                ? () => setSelectedStationId(nextStation.id)
+                                : undefined
+                            }
+                            canPrev={!!prevStation}
+                            canNext={!!nextStation}
+                            prevLabel={prevStation?.label}
+                            nextLabel={nextStation?.label}
+                          />
+                        </div>
+                      )
+                    })()}
+                  </>
+                )
+              })()}
             </div>
           )}
+            </div>
+          </div>
+          )}
         </div>
-      </div>
+      )}
 
       {/* DXF トレース モーダル */}
       {dxfTraceContext && selected && (() => {
