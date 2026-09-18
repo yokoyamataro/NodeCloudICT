@@ -99,7 +99,11 @@ import {
   type DrawingMode,
   type SelectMethod,
 } from '@/components/map/MapDrawingLayer'
-import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
+import {
+  MapDrawingAttributesMenu,
+  MapDrawingSnapControl,
+  MapDrawingToolbar,
+} from '@/components/map/MapDrawingToolbar'
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
 import { useLayerOrder } from '@/features/orthophoto/OverviewLayerPanel'
 import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
@@ -7557,6 +7561,39 @@ export function MobileStakingPage() {
                 >
                   <Redo2 className="h-4 w-4" />
                 </button>
+                {/* 作図要素 (レイヤ / 色 / 線種 / 太さ) と ピック も 道具の 列 では なく
+                    この 行 に。 道具を 選ぶ 手 と 設定を 変える 手 を 分ける */}
+                <MapDrawingAttributesMenu
+                  dropUp
+                  layer={drawLayer}
+                  onChangeLayer={(l) => {
+                    setDrawLayer(l)
+                    applyToSelection({ layer: l })
+                  }}
+                  existingLayers={existingLayers}
+                  color={drawingColor}
+                  onChangeColor={(c) => {
+                    setDrawingColor(c)
+                    applyToSelection({ color: c })
+                  }}
+                  lineStyle={drawingLineStyle}
+                  onChangeLineStyle={(v) => {
+                    setDrawingLineStyle(v)
+                    applyToSelection({ lineStyle: v })
+                  }}
+                  widthPx={drawingWidth}
+                  onChangeWidth={(px) => {
+                    setDrawingWidth(px)
+                    applyToSelection({ widthPx: px })
+                  }}
+                />
+                <MapDrawingSnapControl
+                  dropUp
+                  snapEnabled={snapEnabled}
+                  onToggleSnap={() => setSnapEnabled((v) => !v)}
+                  snapTypes={snapTypes}
+                  onToggleSnapType={toggleSnapType}
+                />
               </div>
               <button
                 onClick={() => {
@@ -7575,8 +7612,6 @@ export function MobileStakingPage() {
               <MapDrawingToolbar
                 // 画面の 下端に 置く ので、プルダウンは 上に 開かせる
                 dropUp
-                // 横幅 が 無い ので、レイヤ / 色 / 線種 / 太さ は 「属性」 に まとめる
-                attributesAsMenu
                 mode={drawingMode}
                 onChangeMode={(m) => {
                   setDrawingMode(m)
@@ -7608,18 +7643,10 @@ export function MobileStakingPage() {
                 // undo / redo は 上の タイトル行に 移した
                 showFrame={false}
                 showUndoRedo={false}
+                // 属性 (レイヤ / 色 / 線種 / 太さ) と ピック は 上の タイトル行 に 出す
+                showAttributes={false}
                 selectMethod={selectMethod}
                 onChangeSelectMethod={setSelectMethod}
-                snapEnabled={snapEnabled}
-                onToggleSnap={() => setSnapEnabled((v) => !v)}
-                snapTypes={snapTypes}
-                onToggleSnapType={toggleSnapType}
-                layer={drawLayer}
-                onChangeLayer={(l) => {
-                  setDrawLayer(l)
-                  applyToSelection({ layer: l })
-                }}
-                existingLayers={existingLayers}
                 // メモは 地図の 長押し から 残せる ので、道具の 列には 出さない
               />
             )}
