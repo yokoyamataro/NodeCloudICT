@@ -10,7 +10,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   ChevronDown,
   Circle as CircleIcon,
-  Eraser,
   Frame,
   MousePointer2,
   Pen,
@@ -609,20 +608,6 @@ export function MapDrawingToolbar({
           <StickyNote className="h-4 w-4" />
         </button>
       )}
-      {/* 消しゴム */}
-      <button
-        type="button"
-        onClick={() => onChangeMode(mode === 'eraser' ? 'off' : 'eraser')}
-        title="消しゴム — クリックした図形を消す"
-        className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
-          mode === 'eraser'
-            ? 'bg-red-500 text-white'
-            : 'text-slate-600 hover:bg-slate-100'
-        }`}
-      >
-        <Eraser className="h-4 w-4" />
-      </button>
-
       {/* ピック (スナップ)。本体で ON/OFF、▼ で 吸着させる種類を選ぶ */}
       {onToggleSnap && (
         <div className="relative shrink-0 flex items-stretch">

@@ -54,7 +54,6 @@
 //               交点が 複数のときは 青い候補点で 残す側を選ぶ。
 //               連続線と 円弧は 端部を 矢印 (なし / 始点 / 終点 / 両端) にもできる。
 //               操作ハンドルは 線より上のペインに出す (線の裏に回らないように)。
-//   ・'eraser'  アイテムをクリックで削除。
 //   ・'measure-dist' / 'measure-area' / 'measure-perp'
 //               計測。結果は保存せず、モードを抜けるまで地図上に表示する。
 //               距離は 2 点を指す / 既存の線をまるごと選ぶ の 2 通り。値は線の
@@ -128,7 +127,6 @@ export type DrawingMode =
   | 'frame'
   | 'point'
   | 'select'
-  | 'eraser'
   | 'measure-dist'
   | 'measure-area'
   | 'measure-perp'
@@ -1706,7 +1704,7 @@ export function MapDrawingLayer({
       map.scrollWheelZoom.enable()
       map.boxZoom.enable()
       container.style.cursor =
-        mode === 'eraser' ? 'not-allowed' : mode === 'select' ? 'pointer' : ''
+        mode === 'select' ? 'pointer' : ''
       container.style.touchAction = ''
     }
     return () => {
@@ -2789,7 +2787,6 @@ export function MapDrawingLayer({
         if (s.kind === 'text') {
           const pt = s.points[0]
           if (!pt) return null
-          const isEraser = mode === 'eraser'
           const isSelect = mode === 'select'
           return (
             <Marker
@@ -2799,18 +2796,13 @@ export function MapDrawingLayer({
                 s.text ?? '',
                 s.color,
                 s.width_px,
-                isEraser || isSelect,
+                isSelect,
                 s.font_size,
                 s.rotation_deg,
                 s.text_anchor,
                 s.text_align,
               )}
-              interactive={isEraser || isSelect}
-              eventHandlers={
-                isEraser
-                  ? { click: () => void deleteStroke(s.id) }
-                  : undefined
-              }
+              interactive={isSelect}
             />
           )
         }
@@ -2818,19 +2810,13 @@ export function MapDrawingLayer({
         if (s.kind === 'point') {
           const pt = s.points[0]
           if (!pt) return null
-          const isEraser = mode === 'eraser'
           const isSelect = mode === 'select'
           return (
             <Marker
               key={s.id}
               position={[pt.lat, pt.lng]}
               icon={makePointIcon(s.color, s.width_px, isSelect && selectedSet.has(s.id))}
-              interactive={isEraser || isSelect}
-              eventHandlers={
-                isEraser
-                  ? { click: () => void deleteStroke(s.id) }
-                  : undefined
-              }
+              interactive={isSelect}
             />
           )
         }
@@ -2843,13 +2829,6 @@ export function MapDrawingLayer({
           (s.line_style ?? 'solid') as LineStyle,
           s.width_px,
         )
-        const clickHandlers =
-          mode === 'eraser'
-            ? { click: () => void deleteStroke(s.id) }
-            : mode === 'select'
-              ? // 選択のクリックは 地図側で まとめて 扱う (重なりを 順に選ぶため)
-                undefined
-              : undefined
 
         if (s.kind === 'circle') {
           const center = pointsForRender[0]
@@ -2881,7 +2860,6 @@ export function MapDrawingLayer({
                   fill: false,
                   dashArray: dash,
                 }}
-                eventHandlers={clickHandlers}
               />
             </Fragment>
           )
@@ -2915,7 +2893,6 @@ export function MapDrawingLayer({
                   lineJoin: 'round',
                   dashArray: dash,
                 }}
-                eventHandlers={clickHandlers}
               />
               {/* 端部の矢印。円弧は 近似ポリラインの 端 2 点で 接線の向きを取る */}
               {arrowEnds(s.arrow).map((which) => {
@@ -2968,8 +2945,7 @@ export function MapDrawingLayer({
                       fill: false,
                       dashArray: dash,
                     }}
-                    eventHandlers={clickHandlers}
-                  />
+                      />
                 </Fragment>
               ))}
             </Fragment>
@@ -3004,7 +2980,6 @@ export function MapDrawingLayer({
                   fillOpacity: 0.2,
                   dashArray: dash,
                 }}
-                eventHandlers={clickHandlers}
               />
             </Fragment>
           )
@@ -3038,7 +3013,6 @@ export function MapDrawingLayer({
                 lineJoin: 'round',
                 dashArray: dash,
               }}
-              eventHandlers={clickHandlers}
             />
             {/* 端部の矢印。向きは その端の線分に 合わせる */}
             {arrowEnds(s.arrow).map((which) => {
@@ -3058,7 +3032,7 @@ export function MapDrawingLayer({
           </Fragment>
         )
     },
-    [mode, deleteStroke, selectedSet, dragPreview],
+    [mode, selectedSet, dragPreview],
   )
 
   /**
