@@ -957,29 +957,47 @@ function SectionRowTable({
 }
 
 /**
- * 現況/出来形 断面 の 点列 を 直接 入力 する モーダル。
- * 中心線からの 離れ (右+ / 左-) と 標高 の ペア を 行 単位で 追加・編集・削除。
- * 保存で 呼び元 の handleReplaceStationSection に 引き渡す。
+ * 断面 の 点列 を 直接 いじる 表 (縦断/横断図 の 左 に 常設)。
+ *
+ * 中心線からの 離れ (右+ / 左-) と 標高 の ペア を 行 単位 で 追加・編集・削除。
+ * 測点 を 選ぶ と そのまま この 表 が その 断面 の 中身 に なる ので、
+ * 「表で入力」 の ような 呼び出し は 要らない。
+ *
+ * 編集 は 即時 に onChange で 返す。 表示 は ローカル 状態 を 持ち、
+ * 測点 / 対象 が 変わった とき と 外 から 点数 が 変わった とき に 読み直す。
  */
-function MeasuredSectionTableModal({
+function SectionPointsEditor({
   target,
+  stationId,
   stationLabel,
-  initialPoints,
+  points,
   autoPoints,
-  onSave,
-  onClose,
+  onChange,
 }: {
   target: SectionTarget
+  stationId: string
   stationLabel: string
-  initialPoints: MeasuredCrossPoint[]
+  points: MeasuredCrossPoint[]
   /** 横断幅 以内 の 実測記録 (まだ 表 に 入って いない 分)。 現況 だけ */
   autoPoints?: MeasuredCrossPoint[]
-  onSave: (points: MeasuredCrossPoint[]) => void
-  onClose: () => void
+  onChange: (points: MeasuredCrossPoint[]) => void
 }) {
-  const [rows, setRows] = useState<MeasuredCrossPoint[]>(() =>
-    initialPoints.map((p) => ({ ...p })),
-  )
+  const [rows, setRows] = useState<MeasuredCrossPoint[]>(() => points.map((p) => ({ ...p })))
+  // 測点 / 対象 が 変わったら 読み直す (同じ 断面 を 編集 中 は 触らない)
+  useEffect(() => {
+    setRows(points.map((p) => ({ ...p })))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stationId, target])
+  // 外 (地図ピック / DXF トレース / LandXML 取込) から 点数 が 変わった 場合 も 追従
+  useEffect(() => {
+    setRows((prev) => (prev.length === points.length ? prev : points.map((p) => ({ ...p }))))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [points.length])
+
+  const commit = (next: MeasuredCrossPoint[]) => {
+    setRows(next)
+    onChange(next)
+  }
   const targetLabel =
     target === 'current' ? '現況断面' : target === 'asbuilt' ? '出来形' : '計画断面 (トレース)'
   /** 行 の id の 頭 で 出所 が 分かる (sr-=実測記録 / mp-=地図 / dxf-=トレース / tin-=LandXML) */
@@ -991,24 +1009,24 @@ function MeasuredSectionTableModal({
       : '手入力'
   const newId = () => `mp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
-  const addRow = () => {
-    setRows((r) => [...r, { id: newId(), offset: 0, elevation: 0 }])
-  }
+  const addRow = () => commit([...rows, { id: newId(), offset: 0, elevation: 0 }])
   /** 横断幅 以内 の 実測記録 を 表 に 入れる。 既に ある 分 は 足さない */
   const addFromRecords = () => {
     if (!autoPoints || autoPoints.length === 0) return
-    setRows((r) => {
-      const have = new Set(r.map((p) => p.id))
-      const add = autoPoints.filter((p) => !have.has(p.id))
-      return [...r, ...add].sort((a, b) => a.offset - b.offset)
-    })
+    const have = new Set(rows.map((p) => p.id))
+    const add = autoPoints.filter((p) => !have.has(p.id))
+    if (add.length === 0) return
+    commit([...rows, ...add].sort((a, b) => a.offset - b.offset))
   }
   const clearRows = () => {
     if (rows.length === 0) return
     if (!window.confirm(`${rows.length} 点 すべて を 消します。よろしいですか？`)) return
-    setRows([])
+    commit([])
   }
-  const sortRows = () => setRows((r) => [...r].sort((a, b) => a.offset - b.offset))
+  const sortRows = () => commit([...rows].sort((a, b) => a.offset - b.offset))
+  const removeRow = (id: string) => commit(rows.filter((p) => p.id !== id))
+  const updateRow = (id: string, patch: Partial<MeasuredCrossPoint>) =>
+    commit(rows.map((p) => (p.id === id ? { ...p, ...patch } : p)))
 
   // 中心 / 左 / 右。 左右 は 中心 に 近い 順 (|離れ| の 小さい 順)
   const center = rows.filter((r) => r.offset === 0)
@@ -1018,115 +1036,79 @@ function MeasuredSectionTableModal({
   const rightRows = rows
     .filter((r) => r.offset > 0)
     .sort((a, b) => Math.abs(a.offset) - Math.abs(b.offset))
-  const removeRow = (id: string) => {
-    setRows((r) => r.filter((p) => p.id !== id))
-  }
-  const updateRow = (id: string, patch: Partial<MeasuredCrossPoint>) => {
-    setRows((r) => r.map((p) => (p.id === id ? { ...p, ...patch } : p)))
-  }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3000] p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-4 max-h-[85vh] flex flex-col">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold">
-            {targetLabel} 入力 —{' '}
-            <span className="font-mono text-slate-600">{stationLabel}</span>
-          </h3>
-          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded" title="キャンセル">
-            <X className="h-4 w-4 text-slate-500" />
-          </button>
+    <div className="h-full flex flex-col gap-1.5">
+      <div className="shrink-0">
+        <div className="text-xs font-semibold text-slate-700">
+          {targetLabel}
+          <span className="ml-1 font-mono text-slate-500">{stationLabel}</span>
+          <span className="ml-1 text-[11px] font-normal text-slate-400">{rows.length} 点</span>
         </div>
-        <p className="text-[11px] text-slate-500 mb-2">
-          中心線からの 離れ (右+ / 左-) と 標高 [m]。 この 表 が この 断面 の すべて です。
-          地図 から 拾った 点、DXF から トレース した 点、実測記録 から 取り込んだ 点 を
-          ここ で まとめて 直せます。 保存 で 昇順 に 並び 替えられます。
-        </p>
-        <div className="flex items-center gap-1 mb-2 flex-wrap">
+        <div className="mt-1 flex items-center gap-1 flex-wrap">
+          <button
+            onClick={addRow}
+            className="flex items-center gap-0.5 px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50"
+          >
+            <Plus className="h-3 w-3" />
+            行を追加
+          </button>
           {autoPoints && autoPoints.length > 0 && (
             <button
               onClick={addFromRecords}
-              className="px-2 py-0.5 text-[11px] border rounded bg-cyan-50 text-cyan-800 border-cyan-300 hover:bg-cyan-100"
+              className="px-1.5 py-0.5 text-[11px] border rounded bg-cyan-50 text-cyan-800 border-cyan-300 hover:bg-cyan-100"
               title="中心線沿い の 横断幅 以内 に ある 実測記録 を 行 と して 取り込む"
             >
-              実測記録から取り込む ({autoPoints.length})
+              実測記録から ({autoPoints.length})
             </button>
           )}
           <button
             onClick={sortRows}
             disabled={rows.length < 2}
-            className="px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50 disabled:opacity-40"
+            className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50 disabled:opacity-40"
           >
-            離れ順に並べる
+            離れ順
           </button>
           <button
             onClick={clearRows}
             disabled={rows.length === 0}
-            className="ml-auto px-2 py-0.5 text-[11px] border rounded text-red-600 hover:bg-red-50 disabled:opacity-40"
+            className="ml-auto px-1.5 py-0.5 text-[11px] border rounded text-red-600 hover:bg-red-50 disabled:opacity-40"
           >
             全消去
           </button>
         </div>
-        {/* 中心 から 左 / 右 に 分けて 並べる。 上 が 中心 寄り で、下 に 行く ほど 外。
-            現場 で 読む 順 と 同じ に する ため。 */}
-        <div className="flex-1 overflow-auto space-y-2">
-          {center.length > 0 && (
-            <SectionRowTable
-              title="中心 (0)"
-              rows={center}
-              sourceOf={sourceOf}
-              onUpdate={updateRow}
-              onRemove={removeRow}
-            />
-          )}
-          <div className="grid grid-cols-2 gap-2">
-            <SectionRowTable
-              title="左 (L)"
-              rows={leftRows}
-              sourceOf={sourceOf}
-              onUpdate={updateRow}
-              onRemove={removeRow}
-            />
-            <SectionRowTable
-              title="右 (R)"
-              rows={rightRows}
-              sourceOf={sourceOf}
-              onUpdate={updateRow}
-              onRemove={removeRow}
-            />
+      </div>
+      {/* 中心 から 左 / 右 に 分けて 並べる。 上 が 中心 寄り で、下 に 行く ほど 外。
+          現場 で 読む 順 と 同じ に する ため。 */}
+      <div className="flex-1 min-h-0 overflow-auto space-y-1.5">
+        {center.length > 0 && (
+          <SectionRowTable
+            title="中心 (0)"
+            rows={center}
+            sourceOf={sourceOf}
+            onUpdate={updateRow}
+            onRemove={removeRow}
+          />
+        )}
+        <SectionRowTable
+          title="左 (L)"
+          rows={leftRows}
+          sourceOf={sourceOf}
+          onUpdate={updateRow}
+          onRemove={removeRow}
+        />
+        <SectionRowTable
+          title="右 (R)"
+          rows={rightRows}
+          sourceOf={sourceOf}
+          onUpdate={updateRow}
+          onRemove={removeRow}
+        />
+        {rows.length === 0 && (
+          <div className="px-2 py-4 text-center text-slate-400 text-[11px] border rounded">
+            まだ 点が ありません。 「行を追加」 や 地図 / DXF / 取込 から 入力 を 始めて ください。
           </div>
-          {rows.length === 0 && (
-            <div className="px-2 py-6 text-center text-slate-400 text-[11px] border rounded">
-              まだ 点が ありません。「+ 行を 追加」や 「実測記録から取り込む」で 入力を 始める
-            </div>
-          )}
-        </div>
-        <div className="flex items-center justify-between mt-3">
-          <button
-            onClick={addRow}
-            className="flex items-center gap-1 px-2 py-1 text-xs border rounded bg-white hover:bg-slate-50"
-          >
-            <Plus className="h-3 w-3" />
-            行を 追加
-          </button>
-          <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="px-3 py-1 text-xs border rounded hover:bg-slate-50"
-            >
-              キャンセル
-            </button>
-            <button
-              onClick={() => {
-                onSave(rows)
-                onClose()
-              }}
-              className="px-3 py-1 text-xs border rounded bg-blue-600 text-white hover:bg-blue-700"
-            >
-              保存
-            </button>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   )
@@ -3590,8 +3572,6 @@ export function OpenChannelAlignmentPage() {
     { key: 'x', label: 'X' },
     { key: 'y', label: 'Y' },
   ]
-  // 表モーダル (現況断面 / 出来形 / 計画 の 手入力) の 対象 種別。null で 閉じている
-  const [tableModalTarget, setTableModalTarget] = useState<SectionTarget | null>(null)
   // 地図から 現況/出来形/計画 点を 拾う モード。null で 通常
   const [mapCaptureTarget, setMapCaptureTarget] = useState<SectionTarget | null>(null)
 
@@ -6144,6 +6124,38 @@ export function OpenChannelAlignmentPage() {
                     : '横断計画 (標準断面) — 中間点 で 計画 を 押すと 個別 に 編集 できます'}
                 </span>
               </div>
+              {/* 展開中 は 図 の 左 に 断面点 の 表 を 固定 する。 測点 を 選べば
+                  その 断面 の 中身 が そのまま 出る ので、別 の 呼び出し は 要らない。
+                  縦断図 / 横断図 の どちら の タブ でも 出し続ける。 */}
+              {profileChartExpanded && (
+              <div className="flex-1 min-h-0 flex">
+                <aside className="w-[290px] shrink-0 border-r p-2 overflow-hidden flex flex-col">
+                  {selectedStation ? (
+                    (() => {
+                      const t = sectionTargetOfEditTarget(editTarget)
+                      const key = sectionKeyOf(t)
+                      const pts =
+                        (selectedStation[key] as MeasuredCrossPoint[] | null | undefined) ?? []
+                      return (
+                        <SectionPointsEditor
+                          target={t}
+                          stationId={selectedStation.id}
+                          stationLabel={selectedStation.label}
+                          points={pts}
+                          autoPoints={t === 'current' ? autoCurrentSection : undefined}
+                          onChange={(next) =>
+                            handleReplaceStationSection(selectedStation.id, t, next)
+                          }
+                        />
+                      )
+                    })()
+                  ) : (
+                    <div className="text-[11px] text-slate-400">
+                      左メニュー 「横断」 で 測点 を 選ぶ と、その 断面 の 点 が ここ に 出ます。
+                    </div>
+                  )}
+                </aside>
+                <div className="flex-1 min-w-0 min-h-0 flex flex-col">
               {profileChartExpanded && bottomTab === 'profile' && (
                 <div className="flex-1 min-h-0 px-2 pb-2">
                   <ProfileChart
@@ -6353,12 +6365,6 @@ export function OpenChannelAlignmentPage() {
                                   {mapCaptureTarget === target ? '地図取得: 選択中' : '地図で追加'}
                                 </button>
                               )}
-                              <button
-                                onClick={() => setTableModalTarget(target)}
-                                className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
-                              >
-                                表で入力
-                              </button>
                               {selected?.dxfCrossSectionPath && (
                                 <button
                                   onClick={() =>
@@ -6448,30 +6454,13 @@ export function OpenChannelAlignmentPage() {
                   })()}
                 </div>
               )}
+                </div>
+              </div>
+              )}
             </div>
           )}
         </div>
       </div>
-
-      {/* 現況/計画/出来形 手入力 モーダル */}
-      {tableModalTarget && selectedStation && (
-        <MeasuredSectionTableModal
-          target={tableModalTarget}
-          stationLabel={selectedStation.label}
-          initialPoints={
-            tableModalTarget === 'current'
-              ? (selectedStation.currentSection ?? [])
-              : tableModalTarget === 'asbuilt'
-                ? (selectedStation.asbuiltSection ?? [])
-                : (selectedStation.plannedSectionRaw ?? [])
-          }
-          autoPoints={tableModalTarget === 'current' ? autoCurrentSection : undefined}
-          onSave={(pts) =>
-            handleReplaceStationSection(selectedStation.id, tableModalTarget, pts)
-          }
-          onClose={() => setTableModalTarget(null)}
-        />
-      )}
 
       {/* DXF トレース モーダル */}
       {dxfTraceContext && selected && (() => {
