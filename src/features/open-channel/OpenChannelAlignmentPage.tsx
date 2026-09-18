@@ -3720,12 +3720,33 @@ export function OpenChannelAlignmentPage() {
   //   'asbuilt'— 出来形 (次ステップ 実装予定 — ボタンは 置く だけ)
   type EditTarget = 'plan' | 'current' | 'asbuilt'
   const [editTarget, setEditTarget] = useState<EditTarget>('plan')
+  /** 「横断」 セクション の タブ と 右下 横断図 の 編集対象 ボタン で 共用 */
+  const EDIT_TARGET_TABS: { key: EditTarget; label: string; act: string; idle: string }[] = [
+    {
+      key: 'current',
+      label: '現況',
+      act: 'bg-amber-500 text-white border-amber-500',
+      idle: 'bg-white text-amber-700 border-amber-300 hover:bg-amber-50',
+    },
+    {
+      key: 'plan',
+      label: '計画',
+      act: 'bg-blue-600 text-white border-blue-600',
+      idle: 'bg-white text-blue-700 border-blue-300 hover:bg-blue-50',
+    },
+    {
+      key: 'asbuilt',
+      label: '出来形',
+      act: 'bg-emerald-600 text-white border-emerald-600',
+      idle: 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50',
+    },
+  ]
 
-  // 中間点計算 表の 表示列 (任意で 非表示 に できる)。 SP / 距離 / X / Y / 計画高 / 現況高
-  // の 6 列 が トグル対象。 # と 断面 ボタン と 削除 は 常に 表示。
-  type StationCol = 'sp' | 'distance' | 'x' | 'y' | 'planZ' | 'currentZ'
+  // 中間点計算 表の 表示列 (任意で 非表示 に できる)。 SP / 距離 / X / Y の 4 列。
+  // # と 削除 は 常に 表示。 計画高 / 現況高 と 断面 の 編集 は 「横断」 セクション。
+  type StationCol = 'sp' | 'distance' | 'x' | 'y'
   const [visibleStationCols, setVisibleStationCols] = useState<Set<StationCol>>(
-    () => new Set<StationCol>(['sp', 'distance', 'x', 'y', 'planZ', 'currentZ']),
+    () => new Set<StationCol>(['sp', 'distance', 'x', 'y']),
   )
   const toggleStationCol = (col: StationCol) => {
     setVisibleStationCols((prev) => {
@@ -3740,8 +3761,6 @@ export function OpenChannelAlignmentPage() {
     { key: 'distance', label: '距離' },
     { key: 'x', label: 'X' },
     { key: 'y', label: 'Y' },
-    { key: 'planZ', label: '計画高' },
-    { key: 'currentZ', label: '現況高' },
   ]
   // 表モーダル (現況断面 / 出来形 / 計画 の 手入力) の 対象 種別。null で 閉じている
   const [tableModalTarget, setTableModalTarget] = useState<SectionTarget | null>(null)
@@ -4332,6 +4351,23 @@ export function OpenChannelAlignmentPage() {
     )
   }
   /** 現況高 (中心線上の 地盤高) の 手入力を 保存。空文字 / NaN は null に。 */
+  /**
+   * 「横断」 セクション の 「編集」。 測点 と 編集対象 を 選び、右下 の 横断図 を 開く。
+   * 計画 は 個別断面 が 無ければ 標準断面 を 複製 して から 開く (旧 「計画」 ボタン と 同じ)。
+   */
+  const openStationSection = (s: StationRow, t: EditTarget) => {
+    setSelectedStationId(s.id)
+    setEditTarget(t)
+    if (t === 'plan') {
+      const hasOverride = s.crossSection || (s.plannedSectionRaw?.length ?? 0) > 0
+      if (!hasOverride && selected) {
+        handleUpdateStationCrossSection(s.id, cloneCrossSection(selected.standardCrossSection))
+      }
+    }
+    setBottomTab('crossSection')
+    if (!profileChartExpanded) toggleProfileChart()
+  }
+
   const handleUpdateStationCurrentHeight = (id: string, raw: string) => {
     const trimmed = raw.trim()
     const parsed = trimmed === '' ? null : Number(trimmed)
@@ -4718,10 +4754,10 @@ export function OpenChannelAlignmentPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* 左: 一覧 + 編集 */}
         <div className="w-[624px] overflow-auto p-3 bg-slate-50 border-r space-y-3">
-          {/* 線形点 (BP → IP → EP) — 一番上、折りたたみ 可能。
+          {/* 路線線形 (BP → IP → EP) — 一番上、折りたたみ 可能。
               折りたたみ 中は 地図クリック による 追加が 抑止 される。 */}
           <CollapsibleSection
-            title={`線形点 (BP → IP → EP)${selected ? ` · ${selected.name}` : ''}`}
+            title={`路線線形${selected ? ` · ${selected.name}` : ''}`}
             storageKey="oc:section:linear-points"
             defaultOpen
             onOpenChange={setLinearPointsExpanded}
@@ -5167,8 +5203,7 @@ export function OpenChannelAlignmentPage() {
 
                 {stations.length > 0 && (
                   <>
-                    {/* 表示列 トグル (SP / 距離 / X / Y / 計画高 / 現況高)。
-                        # と 断面ボタン と 削除 は 常時 表示。 */}
+                    {/* 表示列 トグル (SP / 距離 / X / Y)。 # と 削除 は 常時 表示 */}
                     <div className="flex items-center gap-1 flex-wrap text-[11px]">
                       <span className="text-slate-500">表示列:</span>
                       {STATION_COL_DEFS.map((c) => {
@@ -5207,17 +5242,6 @@ export function OpenChannelAlignmentPage() {
                             {visibleStationCols.has('y') && (
                               <th className="px-2 py-1 text-right whitespace-nowrap">Y</th>
                             )}
-                            {visibleStationCols.has('planZ') && (
-                              <th className="px-2 py-1 w-24 text-right whitespace-nowrap" title="縦断線形から 自動取込">
-                                計画高 (m)
-                              </th>
-                            )}
-                            {visibleStationCols.has('currentZ') && (
-                              <th className="px-2 py-1 w-24 text-right whitespace-nowrap" title="現況地盤高 を 直接入力">
-                                現況高 (m)
-                              </th>
-                            )}
-                            <th className="px-2 py-1 w-32 text-center whitespace-nowrap">断面</th>
                             <th className="px-2 py-1 w-8"></th>
                           </tr>
                         </thead>
@@ -5254,96 +5278,6 @@ export function OpenChannelAlignmentPage() {
                                     {p ? p.y.toFixed(3) : '-'}
                                   </td>
                                 )}
-                                {/* 計画高: plannedCenterHeight (トレース由来 or 手入力) を 最優先、
-                                    無ければ 縦断線形から 内挿 (範囲外は null)。 どちらも 無ければ "-"。 */}
-                                {visibleStationCols.has('planZ') && (() => {
-                                  const fromPlanned = s.plannedCenterHeight ?? null
-                                  const fromProfile = selected
-                                    ? interpolateProfileZOrNull(selected.profilePoints, s.distance)
-                                    : null
-                                  const value = fromPlanned ?? fromProfile
-                                  const source = fromPlanned != null ? 'トレース/入力' : fromProfile != null ? '縦断線形' : null
-                                  return (
-                                    <td
-                                      className="px-2 py-1 text-right tabular-nums text-emerald-700 whitespace-nowrap"
-                                      title={source ? `出典: ${source}` : '計画高が 未取得'}
-                                    >
-                                      {value != null ? value.toFixed(3) : '-'}
-                                      {fromPlanned != null && (
-                                        <span className="text-[9px] text-amber-600 ml-0.5">*</span>
-                                      )}
-                                    </td>
-                                  )
-                                })()}
-                                {/* 現況高: 直接 入力。空 なら 未計測扱い */}
-                                {visibleStationCols.has('currentZ') && (
-                                  <td className="px-1 py-1 text-right whitespace-nowrap">
-                                    <input
-                                      type="number"
-                                      step={0.001}
-                                      defaultValue={s.currentGroundHeight ?? ''}
-                                      onClick={(e) => e.stopPropagation()}
-                                      onBlur={(e) => handleUpdateStationCurrentHeight(s.id, e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                          e.currentTarget.blur()
-                                        }
-                                      }}
-                                      placeholder="-"
-                                      className="w-full px-1 py-0.5 border rounded text-right tabular-nums text-amber-700 bg-amber-50/40"
-                                    />
-                                  </td>
-                                )}
-                                <td className="px-1 py-1 text-center">
-                                  {/* 現況 / 計画 / 出来形 — 計画 は 押下時 に 測点 を 選択 し、
-                                      横断計画 未取込 なら 標準断面 を 複製 して エディタ を 開く。
-                                      現況 / 出来形 は 現状 未実装 (今後 実測 データ を 参照 予定)。 */}
-                                  <div className="inline-flex gap-0.5">
-                                    <button
-                                      onClick={(e) => e.stopPropagation()}
-                                      title="現況 (未実装)"
-                                      className="px-1 py-0.5 text-[10px] border rounded bg-slate-50 hover:bg-slate-100 text-slate-700"
-                                    >
-                                      現況
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        setSelectedStationId(s.id)
-                                        // 個別断面 (element or 点列 の いずれか) が 既に あれば 初期化 しない。
-                                        // 無ければ 標準断面 を 複製 して エディタ を 開く。
-                                        const hasOverride =
-                                          s.crossSection ||
-                                          (s.plannedSectionRaw?.length ?? 0) > 0
-                                        if (!hasOverride && selected) {
-                                          handleUpdateStationCrossSection(
-                                            s.id,
-                                            cloneCrossSection(selected.standardCrossSection),
-                                          )
-                                        }
-                                        // 右下パネル を 横断図 タブ に 切替 + 展開
-                                        setBottomTab('crossSection')
-                                        if (!profileChartExpanded) toggleProfileChart()
-                                      }}
-                                      title="この測点の計画断面を編集"
-                                      className={`px-1 py-0.5 text-[10px] border rounded ${
-                                        s.crossSection ||
-                                        (s.plannedSectionRaw?.length ?? 0) > 0
-                                          ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
-                                          : 'bg-blue-50 hover:bg-blue-100 text-blue-700'
-                                      }`}
-                                    >
-                                      計画
-                                    </button>
-                                    <button
-                                      onClick={(e) => e.stopPropagation()}
-                                      title="出来形 (未実装)"
-                                      className="px-1 py-0.5 text-[10px] border rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700"
-                                    >
-                                      出来形
-                                    </button>
-                                  </div>
-                                </td>
                                 <td className="px-1 py-1 text-right">
                                   <button
                                     onClick={(e) => {
@@ -5415,10 +5349,183 @@ export function OpenChannelAlignmentPage() {
                         <span className="font-mono font-semibold text-slate-700">
                           {selectedStation.label}
                         </span>{' '}
-                        の 断面 編集 は 右下 の <span className="font-semibold">横断図</span>{' '}
-                        タブ で 行い ます (計画 ボタン で 切替)。
+                        の 断面 (現況・計画・出来形) は 下 の{' '}
+                        <span className="font-semibold">横断</span> セクション から 開き ます。
                       </div>
                     )}
+                  </>
+                )}
+              </CollapsibleSection>
+
+              {/* 横断 (現況・計画・出来形)。 中間点 の 表 に 並んで いた
+                  現況 / 計画 / 出来形 の ボタン と 計画高 / 現況高 を ここ に 移した。
+                  タブ は 右下 の 横断図 パネル の 編集対象 と 同じ state を 見る ので、
+                  ここ で 切り替える と 下 の エディタ も 一緒 に 切り替わる。 */}
+              <CollapsibleSection title="横断 (現況・計画・出来形)" storageKey="oc:section:cross">
+                <div className="flex gap-1">
+                  {EDIT_TARGET_TABS.map((t) => (
+                    <button
+                      key={t.key}
+                      onClick={() => {
+                        setEditTarget(t.key)
+                        // 対象を 切り替えたら 地図ピック モードは 解除 (下 の パネル と 同じ)
+                        setMapCaptureTarget(null)
+                      }}
+                      className={`px-3 py-1 text-xs border rounded ${
+                        editTarget === t.key ? t.act : t.idle
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                {stations.length === 0 ? (
+                  <div className="text-xs text-slate-500">
+                    中間点計算 で 測点 を 登録 する と、ここ で 測点 ごと の 断面 を 作れ ます。
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-[11px] text-slate-500">
+                      {editTarget === 'plan'
+                        ? '「編集」 で 右下 の 横断図 に 計画断面 を 開き ます。 個別断面 が 無い 測点 は 標準断面 を 複製 して 始め ます。'
+                        : editTarget === 'current'
+                          ? '「編集」 で 右下 の 横断図 に 現況断面 を 開き ます。 地図 の 実測点 / 表 / DXF から 点 を 拾え ます。'
+                          : '「編集」 で 右下 の 横断図 に 出来形断面 を 開き ます。'}
+                    </div>
+                    <div className="border rounded overflow-auto max-h-80">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
+                          <tr>
+                            <th className="px-2 py-1 w-10 text-center whitespace-nowrap">#</th>
+                            <th className="px-2 py-1 text-left whitespace-nowrap">SP</th>
+                            {editTarget === 'plan' && (
+                              <th
+                                className="px-2 py-1 w-24 text-right whitespace-nowrap"
+                                title="縦断線形から 自動取込 (トレース/入力 が あれば 優先)"
+                              >
+                                計画高 (m)
+                              </th>
+                            )}
+                            {editTarget === 'current' && (
+                              <th
+                                className="px-2 py-1 w-24 text-right whitespace-nowrap"
+                                title="現況地盤高 を 直接入力"
+                              >
+                                現況高 (m)
+                              </th>
+                            )}
+                            <th className="px-2 py-1 w-28 text-center whitespace-nowrap">状態</th>
+                            <th className="px-2 py-1 w-16 text-center whitespace-nowrap"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {stations.map((s, i) => {
+                            const isSel = s.id === selectedStationId
+                            return (
+                              <tr
+                                key={s.id}
+                                onClick={() => setSelectedStationId(isSel ? null : s.id)}
+                                className={`border-t cursor-pointer ${
+                                  isSel ? 'bg-blue-50' : 'hover:bg-slate-50'
+                                }`}
+                              >
+                                <td className="px-2 py-1 text-center text-slate-500 text-xs whitespace-nowrap">
+                                  {i + 1}
+                                </td>
+                                <td className="px-2 py-1 font-mono whitespace-nowrap">{s.label}</td>
+                                {/* 計画高: plannedCenterHeight (トレース由来 or 手入力) を 最優先、
+                                    無ければ 縦断線形から 内挿 (範囲外は null)。 どちらも 無ければ "-"。 */}
+                                {editTarget === 'plan' && (() => {
+                                  const fromPlanned = s.plannedCenterHeight ?? null
+                                  const fromProfile = selected
+                                    ? interpolateProfileZOrNull(selected.profilePoints, s.distance)
+                                    : null
+                                  const value = fromPlanned ?? fromProfile
+                                  const source =
+                                    fromPlanned != null
+                                      ? 'トレース/入力'
+                                      : fromProfile != null
+                                        ? '縦断線形'
+                                        : null
+                                  return (
+                                    <td
+                                      className="px-2 py-1 text-right tabular-nums text-emerald-700 whitespace-nowrap"
+                                      title={source ? `出典: ${source}` : '計画高が 未取得'}
+                                    >
+                                      {value != null ? value.toFixed(3) : '-'}
+                                      {fromPlanned != null && (
+                                        <span className="text-[9px] text-amber-600 ml-0.5">*</span>
+                                      )}
+                                    </td>
+                                  )
+                                })()}
+                                {/* 現況高: 直接 入力。空 なら 未計測扱い */}
+                                {editTarget === 'current' && (
+                                  <td className="px-1 py-1 text-right whitespace-nowrap">
+                                    <input
+                                      type="number"
+                                      step={0.001}
+                                      defaultValue={s.currentGroundHeight ?? ''}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onBlur={(e) =>
+                                        handleUpdateStationCurrentHeight(s.id, e.target.value)
+                                      }
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') e.currentTarget.blur()
+                                      }}
+                                      placeholder="-"
+                                      className="w-full px-1 py-0.5 border rounded text-right tabular-nums text-amber-700 bg-amber-50/40"
+                                    />
+                                  </td>
+                                )}
+                                <td className="px-2 py-1 text-center text-[11px] whitespace-nowrap">
+                                  {(() => {
+                                    if (editTarget === 'plan') {
+                                      const n = s.plannedSectionRaw?.length ?? 0
+                                      if (s.crossSection)
+                                        return <span className="text-blue-700">個別設定</span>
+                                      if (n > 0)
+                                        return (
+                                          <span className="text-blue-700">トレース {n} 点</span>
+                                        )
+                                      return <span className="text-slate-400">標準を継承</span>
+                                    }
+                                    const n =
+                                      (editTarget === 'current'
+                                        ? s.currentSection?.length
+                                        : s.asbuiltSection?.length) ?? 0
+                                    if (n === 0) return <span className="text-slate-400">未作成</span>
+                                    return (
+                                      <span
+                                        className={
+                                          editTarget === 'current'
+                                            ? 'text-amber-700'
+                                            : 'text-emerald-700'
+                                        }
+                                      >
+                                        {n} 点
+                                      </span>
+                                    )
+                                  })()}
+                                </td>
+                                <td className="px-1 py-1 text-center">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      openStationSection(s, editTarget)
+                                    }}
+                                    className="px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50"
+                                    title="右下 の 横断図 で この 測点 の 断面 を 編集"
+                                  >
+                                    編集
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </>
                 )}
               </CollapsibleSection>
@@ -6142,11 +6249,7 @@ export function OpenChannelAlignmentPage() {
                                   出来形 = プレースホルダ (次ステップ) */}
                               <div className="flex items-center gap-0.5 border-l pl-2 ml-1">
                                 <span className="text-[10px] text-slate-500 mr-0.5">編集</span>
-                                {([
-                                  { key: 'current' as EditTarget, label: '現況', act: 'bg-amber-500 text-white border-amber-500', idle: 'bg-white text-amber-700 border-amber-300 hover:bg-amber-50' },
-                                  { key: 'plan' as EditTarget, label: '計画', act: 'bg-blue-600 text-white border-blue-600', idle: 'bg-white text-blue-700 border-blue-300 hover:bg-blue-50' },
-                                  { key: 'asbuilt' as EditTarget, label: '出来形', act: 'bg-emerald-600 text-white border-emerald-600', idle: 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50' },
-                                ]).map((b) => (
+                                {EDIT_TARGET_TABS.map((b) => (
                                   <button
                                     key={b.key}
                                     onClick={() => {
