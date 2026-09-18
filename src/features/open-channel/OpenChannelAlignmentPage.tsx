@@ -869,6 +869,88 @@ function formatWidthOnly(e: CrossSectionElement): string {
   return e.width.toFixed(2)
 }
 
+/** 断面点 の 表。 中心 / 左 / 右 の かたまり ごと に 出す */
+function SectionRowTable({
+  title,
+  rows,
+  sourceOf,
+  onUpdate,
+  onRemove,
+}: {
+  title: string
+  rows: MeasuredCrossPoint[]
+  sourceOf: (id: string) => string
+  onUpdate: (id: string, patch: Partial<MeasuredCrossPoint>) => void
+  onRemove: (id: string) => void
+}) {
+  return (
+    <div className="border rounded overflow-hidden">
+      <div className="px-2 py-1 bg-slate-100 text-[11px] font-semibold text-slate-600 flex items-center gap-1">
+        {title}
+        <span className="text-slate-400 font-normal">{rows.length} 点</span>
+      </div>
+      {rows.length === 0 ? (
+        <div className="px-2 py-3 text-center text-[11px] text-slate-400">なし</div>
+      ) : (
+        <table className="w-full text-xs">
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="px-1 py-1 text-right">離れ (m)</th>
+              <th className="px-1 py-1 text-right">標高 (m)</th>
+              <th className="px-1 py-1 text-left">点名</th>
+              <th className="px-1 py-1 w-7" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} className="border-t">
+                <td className="px-1 py-1">
+                  <input
+                    type="number"
+                    step={0.01}
+                    value={r.offset}
+                    onChange={(e) => onUpdate(r.id, { offset: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
+                  />
+                </td>
+                <td className="px-1 py-1">
+                  <input
+                    type="number"
+                    step={0.001}
+                    value={r.elevation}
+                    onChange={(e) =>
+                      onUpdate(r.id, { elevation: parseFloat(e.target.value) || 0 })
+                    }
+                    className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
+                  />
+                </td>
+                <td className="px-1 py-1">
+                  <input
+                    type="text"
+                    value={r.note ?? ''}
+                    onChange={(e) => onUpdate(r.id, { note: e.target.value || undefined })}
+                    placeholder={sourceOf(r.id)}
+                    className="w-full px-1 py-0.5 border rounded"
+                  />
+                </td>
+                <td className="px-1 py-1 text-center">
+                  <button
+                    onClick={() => onRemove(r.id)}
+                    className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                    title="この点を削除"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
 /**
  * 現況/出来形 断面 の 点列 を 直接 入力 する モーダル。
  * 中心線からの 離れ (右+ / 左-) と 標高 の ペア を 行 単位で 追加・編集・削除。
@@ -922,6 +1004,15 @@ function MeasuredSectionTableModal({
     setRows([])
   }
   const sortRows = () => setRows((r) => [...r].sort((a, b) => a.offset - b.offset))
+
+  // 中心 / 左 / 右。 左右 は 中心 に 近い 順 (|離れ| の 小さい 順)
+  const center = rows.filter((r) => r.offset === 0)
+  const leftRows = rows
+    .filter((r) => r.offset < 0)
+    .sort((a, b) => Math.abs(a.offset) - Math.abs(b.offset))
+  const rightRows = rows
+    .filter((r) => r.offset > 0)
+    .sort((a, b) => Math.abs(a.offset) - Math.abs(b.offset))
   const removeRow = (id: string) => {
     setRows((r) => r.filter((p) => p.id !== id))
   }
@@ -971,72 +1062,39 @@ function MeasuredSectionTableModal({
             全消去
           </button>
         </div>
-        <div className="border rounded overflow-auto flex-1">
-          <table className="w-full text-xs">
-            <thead className="bg-slate-50 text-slate-600 sticky top-0">
-              <tr>
-                <th className="px-2 py-1 w-8 text-center">#</th>
-                <th className="px-2 py-1 text-right">中心からの離れ (m)</th>
-                <th className="px-2 py-1 text-right">標高 (m)</th>
-                <th className="px-2 py-1 text-left">出所 / 点名</th>
-                <th className="px-2 py-1 w-8"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-2 py-4 text-center text-slate-400 text-[11px]">
-                    まだ 点が ありません。「+ 行を 追加」で 入力を 始める
-                  </td>
-                </tr>
-              ) : (
-                rows.map((r, i) => (
-                  <tr key={r.id} className="border-t">
-                    <td className="px-2 py-1 text-center text-slate-500">{i + 1}</td>
-                    <td className="px-1 py-1">
-                      <input
-                        type="number"
-                        step={0.01}
-                        value={r.offset}
-                        onChange={(e) =>
-                          updateRow(r.id, { offset: parseFloat(e.target.value) || 0 })
-                        }
-                        className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
-                      />
-                    </td>
-                    <td className="px-1 py-1">
-                      <input
-                        type="number"
-                        step={0.001}
-                        value={r.elevation}
-                        onChange={(e) =>
-                          updateRow(r.id, { elevation: parseFloat(e.target.value) || 0 })
-                        }
-                        className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
-                      />
-                    </td>
-                    <td className="px-1 py-1">
-                      <input
-                        type="text"
-                        value={r.note ?? ''}
-                        onChange={(e) => updateRow(r.id, { note: e.target.value || undefined })}
-                        placeholder={sourceOf(r.id)}
-                        className="w-full px-1 py-0.5 border rounded"
-                      />
-                    </td>
-                    <td className="px-1 py-1 text-center">
-                      <button
-                        onClick={() => removeRow(r.id)}
-                        className="p-0.5 border rounded hover:bg-red-50 text-red-600"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        {/* 中心 から 左 / 右 に 分けて 並べる。 上 が 中心 寄り で、下 に 行く ほど 外。
+            現場 で 読む 順 と 同じ に する ため。 */}
+        <div className="flex-1 overflow-auto space-y-2">
+          {center.length > 0 && (
+            <SectionRowTable
+              title="中心 (0)"
+              rows={center}
+              sourceOf={sourceOf}
+              onUpdate={updateRow}
+              onRemove={removeRow}
+            />
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <SectionRowTable
+              title="左 (L)"
+              rows={leftRows}
+              sourceOf={sourceOf}
+              onUpdate={updateRow}
+              onRemove={removeRow}
+            />
+            <SectionRowTable
+              title="右 (R)"
+              rows={rightRows}
+              sourceOf={sourceOf}
+              onUpdate={updateRow}
+              onRemove={removeRow}
+            />
+          </div>
+          {rows.length === 0 && (
+            <div className="px-2 py-6 text-center text-slate-400 text-[11px] border rounded">
+              まだ 点が ありません。「+ 行を 追加」や 「実測記録から取り込む」で 入力を 始める
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-between mt-3">
           <button
@@ -1779,6 +1837,28 @@ function InteractiveCrossSectionEditor({
                     onMouseLeave={() => setHoverPoint(null)}
                   />
                 ))}
+                {/* 点名 (note) を 点 の 上 に 添える。 重なって 読めなく なる のを
+                    避ける ため、隣 と 近い 点 は 一段 上げて 互い違い に する。 */}
+                {currentSection.map((p, i) => {
+                  if (!p.note) return null
+                  const px = tx(p.offset)
+                  const prev = currentSection[i - 1]
+                  const tight = prev != null && Math.abs(px - tx(prev.offset)) < 34
+                  return (
+                    <text
+                      key={`csl-${p.id ?? i}`}
+                      x={px}
+                      y={ty(p.elevation - centerHeight) - (tight ? 18 : 8)}
+                      fontSize={10}
+                      textAnchor="middle"
+                      fill="#a16207"
+                      pointerEvents="none"
+                      style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}
+                    >
+                      {p.note}
+                    </text>
+                  )
+                })}
               </g>
             )
           })()}
@@ -1813,6 +1893,28 @@ function InteractiveCrossSectionEditor({
                     onMouseLeave={() => setHoverPoint(null)}
                   />
                 ))}
+                {/* 点名 (note) を 点 の 上 に 添える。 重なって 読めなく なる のを
+                    避ける ため、隣 と 近い 点 は 一段 上げて 互い違い に する。 */}
+                {asbuiltSection.map((p, i) => {
+                  if (!p.note) return null
+                  const px = tx(p.offset)
+                  const prev = asbuiltSection[i - 1]
+                  const tight = prev != null && Math.abs(px - tx(prev.offset)) < 34
+                  return (
+                    <text
+                      key={`asl-${p.id ?? i}`}
+                      x={px}
+                      y={ty(p.elevation - centerHeight) - (tight ? 18 : 8)}
+                      fontSize={10}
+                      textAnchor="middle"
+                      fill="#059669"
+                      pointerEvents="none"
+                      style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}
+                    >
+                      {p.note}
+                    </text>
+                  )
+                })}
               </g>
             )
           })()}
