@@ -1186,6 +1186,10 @@ export function CoordinateMap({
       {overlapPicker && (
         <Popup
           position={[overlapPicker.lat, overlapPicker.lng]}
+          // 吹き出し を 入れる ため に 地図 を 動かさない。
+          // 点 を 選ぶ ため に 開く もの な ので、勝手 に スクロール されると
+          // 狙って いた 点 が 画面 から 逃げる。
+          autoPan={false}
           eventHandlers={{ remove: () => setOverlapPicker(null) }}
         >
           <div className="text-xs">

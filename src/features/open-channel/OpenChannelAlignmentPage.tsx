@@ -5400,6 +5400,30 @@ export function OpenChannelAlignmentPage() {
         {/* 右: 地図 (上) + 縦断図 (下) */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
           <div className="flex-1 min-h-0 relative overflow-hidden isolate">
+            {/* 地図 から 断面点 を 拾って いる 間 の 帯。
+                どの 断面 に 入る のか、今 効いて いるのか が 地図 を 見て いる
+                だけ で 分かる ように する。 */}
+            {mapCaptureTarget && (
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1200] flex items-center gap-2 px-3 py-1.5 rounded bg-purple-600 text-white text-xs shadow-lg">
+                <span>
+                  地図から
+                  {mapCaptureTarget === 'current' ? '現況' : mapCaptureTarget === 'asbuilt' ? '出来形' : '計画'}
+                  断面に追加中
+                </span>
+                {selectedStation ? (
+                  <span className="font-mono opacity-90">{selectedStation.label}</span>
+                ) : (
+                  <span className="text-amber-200">測点が未選択です</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setMapCaptureTarget(null)}
+                  className="ml-1 px-2 py-0.5 rounded bg-white/20 hover:bg-white/30"
+                >
+                  やめる
+                </button>
+              </div>
+            )}
             <CoordinateMap
               farmId={farmId ?? null}
               showLabels
