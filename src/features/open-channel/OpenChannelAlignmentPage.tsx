@@ -878,12 +878,15 @@ function MeasuredSectionTableModal({
   target,
   stationLabel,
   initialPoints,
+  autoPoints,
   onSave,
   onClose,
 }: {
   target: SectionTarget
   stationLabel: string
   initialPoints: MeasuredCrossPoint[]
+  /** 横断幅 以内 の 実測記録 (まだ 表 に 入って いない 分)。 現況 だけ */
+  autoPoints?: MeasuredCrossPoint[]
   onSave: (points: MeasuredCrossPoint[]) => void
   onClose: () => void
 }) {
@@ -892,11 +895,33 @@ function MeasuredSectionTableModal({
   )
   const targetLabel =
     target === 'current' ? '現況断面' : target === 'asbuilt' ? '出来形' : '計画断面 (トレース)'
+  /** 行 の id の 頭 で 出所 が 分かる (sr-=実測記録 / mp-=地図 / dxf-=トレース / tin-=LandXML) */
+  const sourceOf = (id: string): string =>
+    id.startsWith('sr-') ? '実測記録'
+      : id.startsWith('tin-') ? 'LandXML'
+      : id.startsWith('dxf-') ? 'DXF'
+      : id.startsWith('mp-') ? '地図'
+      : '手入力'
   const newId = () => `mp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
   const addRow = () => {
     setRows((r) => [...r, { id: newId(), offset: 0, elevation: 0 }])
   }
+  /** 横断幅 以内 の 実測記録 を 表 に 入れる。 既に ある 分 は 足さない */
+  const addFromRecords = () => {
+    if (!autoPoints || autoPoints.length === 0) return
+    setRows((r) => {
+      const have = new Set(r.map((p) => p.id))
+      const add = autoPoints.filter((p) => !have.has(p.id))
+      return [...r, ...add].sort((a, b) => a.offset - b.offset)
+    })
+  }
+  const clearRows = () => {
+    if (rows.length === 0) return
+    if (!window.confirm(`${rows.length} 点 すべて を 消します。よろしいですか？`)) return
+    setRows([])
+  }
+  const sortRows = () => setRows((r) => [...r].sort((a, b) => a.offset - b.offset))
   const removeRow = (id: string) => {
     setRows((r) => r.filter((p) => p.id !== id))
   }
@@ -917,8 +942,35 @@ function MeasuredSectionTableModal({
           </button>
         </div>
         <p className="text-[11px] text-slate-500 mb-2">
-          中心線からの 離れ (右+ / 左-) と 標高 [m] を 入力。保存 で 昇順 に 並び 替えられます。
+          中心線からの 離れ (右+ / 左-) と 標高 [m]。 この 表 が この 断面 の すべて です。
+          地図 から 拾った 点、DXF から トレース した 点、実測記録 から 取り込んだ 点 を
+          ここ で まとめて 直せます。 保存 で 昇順 に 並び 替えられます。
         </p>
+        <div className="flex items-center gap-1 mb-2 flex-wrap">
+          {autoPoints && autoPoints.length > 0 && (
+            <button
+              onClick={addFromRecords}
+              className="px-2 py-0.5 text-[11px] border rounded bg-cyan-50 text-cyan-800 border-cyan-300 hover:bg-cyan-100"
+              title="中心線沿い の 横断幅 以内 に ある 実測記録 を 行 と して 取り込む"
+            >
+              実測記録から取り込む ({autoPoints.length})
+            </button>
+          )}
+          <button
+            onClick={sortRows}
+            disabled={rows.length < 2}
+            className="px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50 disabled:opacity-40"
+          >
+            離れ順に並べる
+          </button>
+          <button
+            onClick={clearRows}
+            disabled={rows.length === 0}
+            className="ml-auto px-2 py-0.5 text-[11px] border rounded text-red-600 hover:bg-red-50 disabled:opacity-40"
+          >
+            全消去
+          </button>
+        </div>
         <div className="border rounded overflow-auto flex-1">
           <table className="w-full text-xs">
             <thead className="bg-slate-50 text-slate-600 sticky top-0">
@@ -926,13 +978,14 @@ function MeasuredSectionTableModal({
                 <th className="px-2 py-1 w-8 text-center">#</th>
                 <th className="px-2 py-1 text-right">中心からの離れ (m)</th>
                 <th className="px-2 py-1 text-right">標高 (m)</th>
+                <th className="px-2 py-1 text-left">出所 / 点名</th>
                 <th className="px-2 py-1 w-8"></th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-2 py-4 text-center text-slate-400 text-[11px]">
+                  <td colSpan={5} className="px-2 py-4 text-center text-slate-400 text-[11px]">
                     まだ 点が ありません。「+ 行を 追加」で 入力を 始める
                   </td>
                 </tr>
@@ -960,6 +1013,15 @@ function MeasuredSectionTableModal({
                           updateRow(r.id, { elevation: parseFloat(e.target.value) || 0 })
                         }
                         className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
+                      />
+                    </td>
+                    <td className="px-1 py-1">
+                      <input
+                        type="text"
+                        value={r.note ?? ''}
+                        onChange={(e) => updateRow(r.id, { note: e.target.value || undefined })}
+                        placeholder={sourceOf(r.id)}
+                        className="w-full px-1 py-0.5 border rounded"
                       />
                     </td>
                     <td className="px-1 py-1 text-center">
@@ -1703,7 +1765,7 @@ function InteractiveCrossSectionEditor({
                     fill="#a16207"
                     stroke="#fff"
                     strokeWidth={1.5}
-                    style={{ cursor: 'help' }}
+                    style={{ cursor: 'pointer' }}
                     onMouseEnter={() =>
                       setHoverPoint({
                         x: tx(p.offset),
@@ -1737,7 +1799,7 @@ function InteractiveCrossSectionEditor({
                     fill="#059669"
                     stroke="#fff"
                     strokeWidth={1.5}
-                    style={{ cursor: 'help' }}
+                    style={{ cursor: 'pointer' }}
                     onMouseEnter={() =>
                       setHoverPoint({
                         x: tx(p.offset),
@@ -6029,6 +6091,7 @@ export function OpenChannelAlignmentPage() {
                 ? (selectedStation.asbuiltSection ?? [])
                 : (selectedStation.plannedSectionRaw ?? [])
           }
+          autoPoints={tableModalTarget === 'current' ? autoCurrentSection : undefined}
           onSave={(pts) =>
             handleReplaceStationSection(selectedStation.id, tableModalTarget, pts)
           }

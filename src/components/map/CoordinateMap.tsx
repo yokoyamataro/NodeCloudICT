@@ -1087,6 +1087,10 @@ export function CoordinateMap({
             key={coord.id}
             position={[coord.lat, coord.lng]}
             icon={createColoredIcon(iconColor, isHighlighted, isChecked, isDimmed)}
+            // keyboard:true (既定) だと マーカー に tabindex が 付き、押した ときに
+            // ブラウザ が 「焦点 を 画面 に 入れる」 ため 地図 が 少し ずれる。
+            // 点 を 拾う 用途 では 邪魔 な ので 切る。
+            keyboard={false}
             // ハイライト中 / チェック中のマーカーを必ず最前面に出して、
             // 後ろに隠れて見えなくなる現象を防ぐ。dim 中 は 逆に 後ろ に 送る。
             zIndexOffset={isDimmed ? -500 : isHighlighted || isChecked ? 1000 : 0}
