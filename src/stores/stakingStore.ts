@@ -39,6 +39,12 @@ export interface StakingRecord {
   /** true = まだ Supabase に 送れていない ローカル退避分 (iOS オフライン計測)。
    *  UI は これを 見て 「未送信」表示 + 写真操作の 抑止を 行う。 */
   pending?: boolean
+  /**
+   * 記録セット (survey_record_sets)。 スライド量 は セット ごと に 持つ ので、
+   * この 記録 を どの セット の 土俵 で 見る か を 決める 鍵 に なる。
+   * null は 未振り分け (工区 の 既定 セット と して 扱う)。
+   */
+  recordSetId?: string | null
 }
 
 interface StakingRecordRow {
@@ -61,6 +67,7 @@ interface StakingRecordRow {
   recorded_at: string
   notes: string | null
   paired_with_id: string | null
+  record_set_id?: string | null
 }
 
 function rowToRecord(r: StakingRecordRow): StakingRecord {
@@ -84,6 +91,7 @@ function rowToRecord(r: StakingRecordRow): StakingRecord {
     recordedAt: r.recorded_at,
     notes: r.notes,
     pairedWithId: r.paired_with_id,
+    recordSetId: r.record_set_id ?? null,
   }
 }
 
@@ -216,6 +224,11 @@ interface StakingState {
   unpairRecord: (id: string) => Promise<void>
   /** 実測点名 (target_name) のみ を 更新。 座標 (measured_*) は 変更 しない。 */
   updateRecordName: (id: string, name: string | null) => Promise<void>
+  /**
+   * 記録 を 別 の 記録セット へ 移す。 点 ごと に でも まとめて でも。
+   * スライド量 は セット ごと な ので、移す と 補正 の 土俵 も 変わる。
+   */
+  moveRecordsToSet: (ids: string[], setId: string | null) => Promise<void>
 }
 
 export const useStakingStore = create<StakingState>()((set, get) => ({
@@ -295,6 +308,7 @@ export const useStakingStore = create<StakingState>()((set, get) => ({
         sample_count: rec.sampleCount,
         duration_seconds: rec.durationSeconds,
         notes: rec.notes,
+        ...(rec.recordSetId ? { record_set_id: rec.recordSetId } : {}),
       }
       const { data, error } = await supabase
         .from('staking_records')
@@ -646,6 +660,29 @@ export const useStakingStore = create<StakingState>()((set, get) => ({
       set({
         saving: false,
         error: err instanceof Error ? err.message : '実測点名 の 更新 に 失敗',
+      })
+    }
+  },
+
+  moveRecordsToSet: async (ids, setId) => {
+    if (ids.length === 0) return
+    set({ saving: true, error: null })
+    // 画面 の 反応 を 待たせない
+    set((s) => ({
+      records: s.records.map((r) => (ids.includes(r.id) ? { ...r, recordSetId: setId } : r)),
+    }))
+    try {
+      const { error } = await supabase
+        .from('staking_records')
+        .update({ record_set_id: setId } as never)
+        .in('id', ids)
+      if (error) throw error
+      set({ saving: false })
+    } catch (err) {
+      console.error('[stakingStore] moveRecordsToSet failed', err, { ids, setId })
+      set({
+        saving: false,
+        error: err instanceof Error ? err.message : '記録セット の 変更 に 失敗',
       })
     }
   },

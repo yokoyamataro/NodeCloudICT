@@ -9,6 +9,8 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { CoordinateConverter, COORDINATE_TYPE_NAMES, type CoordinateType } from '@/lib/coordinates'
 import { supabase } from '@/lib/supabase'
+import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
+import { SurveyRecordSetsPanel } from './SurveyRecordSetsPanel'
 
 // 実測点 用 の 円形 divIcon を 生成。 Marker (HTML) として markerPane に
 // 描画 する ので、SVG の CircleMarker と 違って クリック 受け取り が 安定。
@@ -511,6 +513,15 @@ export function StakingRecordsPage() {
   // 永続化して PC / スマホ間 で 共有 する。 Z 補正 は 従来 localStorage の
   // フォールバック も 参照 (旧環境 互換)。X/Y 補正 は 追加 したての ため
   // DB 直接。
+  // 記録セット。 スライド量 は セット ごと に 持つ。
+  // 工区 単位 の 値 (下 の xOffset 等) は セット が 無い 記録 の 受け皿 と して 残す。
+  const sets = useSurveySetStore((st) => st.sets)
+  const fetchSets = useSurveySetStore((st) => st.fetchByFarm)
+  useEffect(() => {
+    if (currentFarm) void fetchSets(currentFarm.id)
+  }, [currentFarm, fetchSets])
+  const moveRecordsToSet = useStakingStore((st) => st.moveRecordsToSet)
+
   const zOffsetKey = currentFarm ? `staking:zOffset:${currentFarm.id}` : null
   const [xOffset, setXOffset] = useState<number>(0)
   const [yOffset, setYOffset] = useState<number>(0)
@@ -635,6 +646,27 @@ export function StakingRecordsPage() {
     m1: StakingRecord | null
     m2: StakingRecord | null
   }
+  /** セット id → スライド量。 セット が 無い 記録 は 工区 単位 の 値 に 落とす */
+  const slideOfSet = useMemo(() => {
+    const m = new Map<string, { dx: number; dy: number; dz: number }>()
+    for (const s of sets) m.set(s.id, s.slide)
+    return m
+  }, [sets])
+  const slideOfRecord = (r: StakingRecord | null) => {
+    const hit = r?.recordSetId ? slideOfSet.get(r.recordSetId) : undefined
+    return hit ?? { dx: xOffset, dy: yOffset, dz: zOffset }
+  }
+  /** セット ごと の 記録 の 数 (null = 未振り分け) */
+  const countBySet = useMemo(() => {
+    const m = new Map<string | null, number>()
+    for (const r of records) {
+      if (r.farmId !== currentFarm?.id) continue
+      const k = r.recordSetId ?? null
+      m.set(k, (m.get(k) ?? 0) + 1)
+    }
+    return m
+  }, [records, currentFarm?.id])
+
   const grouped = useMemo<StakingGroup[]>(() => {
     // (1) 設計座標 リンク済み: targetRefId で グループ化
     const byRef = new Map<string, StakingRecord[]>()
@@ -944,7 +976,8 @@ export function StakingRecordsPage() {
     }
 
     for (const g of grouped) {
-      const d = deriveRow(g, xOffset, yOffset, zOffset)
+      const sl = slideOfRecord(g.m1 ?? g.m2)
+      const d = deriveRow(g, sl.dx, sl.dy, sl.dz)
       const m1 = g.m1
       const m2 = g.m2
       const designName =
@@ -1272,6 +1305,24 @@ export function StakingRecordsPage() {
         </CoordinateMap>
       </div>
 
+      {/* 記録セット。 スライド量 は セット ごと に 持つ */}
+      <details className="border-b bg-slate-50">
+        <summary className="px-3 py-1.5 text-xs font-medium text-slate-700 cursor-pointer select-none">
+          記録セット
+          <span className="ml-2 text-[11px] text-slate-500 font-normal">
+            {sets.length} セット
+            {(countBySet.get(null) ?? 0) > 0 && (
+              <span className="ml-1 text-amber-700">
+                / 未振り分け {countBySet.get(null)} 点
+              </span>
+            )}
+          </span>
+        </summary>
+        <div className="px-3 pb-3">
+          <SurveyRecordSetsPanel farmId={currentFarm?.id ?? null} countBySet={countBySet} />
+        </div>
+      </details>
+
       {/* 選択行 の 座標管理 登録 バー。 左端 に スライド量 (X/Y/Z) 入力 を 配置 */}
       <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 text-xs flex-wrap">
         {/* スライド量: 実測値 に 加算 する 定数 オフセット (X / Y / Z 独立)。
@@ -1282,6 +1333,9 @@ export function StakingRecordsPage() {
           title="実測値 に この 値 (m) を 加算した 「補正 XYZ」を 表示。 表 の 平均 と 差 も 補正 後 の 値 で 計算"
         >
           スライド量 (m):
+        </span>
+        <span className="text-[10px] text-slate-400">
+          ※ セット未振り分けの点に使う既定値
         </span>
         <label className="flex items-center gap-1">
           <span className="text-slate-500">X</span>
@@ -1345,6 +1399,36 @@ export function StakingRecordsPage() {
         >
           {registering === 'rs' ? '登録中…' : '逆スライド後実測値 を 登録 (rs+点名)'}
         </button>
+        {/* 選んだ 点 を 別 の 記録セット へ 移す。 スライド量 は セット ごと な ので
+            移す と 補正 の 土俵 も 変わる。 */}
+        <span className="text-slate-400 mx-1">|</span>
+        <label className="flex items-center gap-1">
+          <span className="text-slate-500">セットへ移動</span>
+          <select
+            value=""
+            disabled={selectedGroupKeys.size === 0 || sets.length === 0}
+            onChange={(e) => {
+              const v = e.target.value
+              if (!v) return
+              const ids = grouped
+                .filter((g) => selectedGroupKeys.has(g.key))
+                .flatMap((g) => [g.m1?.id, g.m2?.id].filter((x): x is string => !!x))
+              if (ids.length === 0) return
+              void moveRecordsToSet(ids, v === '__none__' ? null : v)
+              e.currentTarget.value = ''
+            }}
+            className="px-1 py-1 border rounded bg-white disabled:opacity-40"
+            title="選択中の点の実測記録を、この記録セットへ移す"
+          >
+            <option value="">選択…</option>
+            {sets.map((st) => (
+              <option key={st.id} value={st.id}>
+                {setLabel(st)}
+              </option>
+            ))}
+            <option value="__none__">（未振り分けに戻す）</option>
+          </select>
+        </label>
         {selectedGroupKeys.size > 0 && (
           <button
             onClick={() => setSelectedGroupKeys(new Set())}
@@ -1491,7 +1575,10 @@ export function StakingRecordsPage() {
                   slidedDX, slidedDY, slidedDZ,
                   revSlideMX, revSlideMY, revSlideMZ,
                   acc,
-                } = deriveRow(g, xOffset, yOffset, zOffset)
+                } = deriveRow(g, ...(() => {
+                  const sl = slideOfRecord(g.m1 ?? g.m2)
+                  return [sl.dx, sl.dy, sl.dz] as const
+                })())
                 const clickId = m1?.id ?? null
                 return (
                   <tr

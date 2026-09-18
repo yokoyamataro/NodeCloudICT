@@ -48,6 +48,7 @@ import {
   elementStep,
 } from '@/stores/openChannelStore'
 import { useStakingStore } from '@/stores/stakingStore'
+import { useSurveySetStore } from '@/stores/surveySetStore'
 import { fetchSurveySlide, NO_SLIDE, type SurveySlide } from '@/lib/surveyCalibration'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
@@ -3055,6 +3056,9 @@ function StakingCurrentImportSection({
 }) {
   const records = useStakingStore((st) => st.records)
   const fetchRecords = useStakingStore((st) => st.fetchRecords)
+  // スライド量 は 記録セット ごと。 セット が 無い 記録 は 工区 単位 の 値
+  const sets = useSurveySetStore((st) => st.sets)
+  const fetchSets = useSurveySetStore((st) => st.fetchByFarm)
   const [slide, setSlide] = useState<SurveySlide>(NO_SLIDE)
   const [useSlide, setUseSlide] = useState(true)
   /** 横断幅。中心線 沿い に この 範囲内 の 記録だけ 対象に する [m] */
@@ -3066,8 +3070,9 @@ function StakingCurrentImportSection({
   useEffect(() => {
     if (!farmId) return
     void fetchRecords(farmId)
+    void fetchSets(farmId)
     void fetchSurveySlide(farmId).then(setSlide)
-  }, [farmId, fetchRecords])
+  }, [farmId, fetchRecords, fetchSets])
 
   const targetRecords = records.filter((r) => r.farmId === farmId && r.measuredZ != null)
 
@@ -3088,10 +3093,14 @@ function StakingCurrentImportSection({
         const pts: MeasuredCrossPoint[] = []
         for (const r of targetRecords) {
           if (r.measuredZ == null) continue
-          // 逆スライド: 実測 − スライド量 で 設計の 土俵に 乗せる
-          const x = useSlide ? r.measuredX - slide.dx : r.measuredX
-          const y = useSlide ? r.measuredY - slide.dy : r.measuredY
-          const z = useSlide ? r.measuredZ - slide.dz : r.measuredZ
+          // 逆スライド: 実測 − スライド量 で 設計の 土俵に 乗せる。
+          // スライド量 は その 記録 の セット の 値 を 使う
+          const sl = r.recordSetId
+            ? (sets.find((st2) => st2.id === r.recordSetId)?.slide ?? slide)
+            : slide
+          const x = useSlide ? r.measuredX - sl.dx : r.measuredX
+          const y = useSlide ? r.measuredY - sl.dy : r.measuredY
+          const z = useSlide ? r.measuredZ - sl.dz : r.measuredZ
           const dx = x - center.x
           const dy = y - center.y
           // 中心線 沿い の ずれ。断面から 外れて いる 記録は 拾わない
@@ -3116,7 +3125,7 @@ function StakingCurrentImportSection({
       setStatus(
         `完了: ${hit}/${stations.length} 測点 に ${used} 点 を 取込` +
           (useSlide
-            ? ` (逆スライド dx=${slide.dx} dy=${slide.dy} dz=${slide.dz})`
+            ? ` (逆スライド。 記録セット ${sets.length} 件 の 値 を 点ごと に 適用)`
             : ' (スライド適用なし)'),
       )
     } finally {
@@ -3138,7 +3147,8 @@ function StakingCurrentImportSection({
         <span>逆スライドを かける (実測 − スライド量)</span>
       </label>
       <div className="text-[11px] text-slate-500 pl-6">
-        スライド量 dx={slide.dx} / dy={slide.dy} / dz={slide.dz}
+        スライド量 は 記録セット ごと。 未振り分け の 記録 は dx={slide.dx} / dy={slide.dy} /
+        dz={slide.dz}
         <span className="ml-1">(測設記録の画面で設定)</span>
       </div>
       <div className="flex items-center gap-3">
@@ -3611,8 +3621,21 @@ export function OpenChannelAlignmentPage() {
     if (farmId) void fetchStakingRecords(farmId)
   }, [farmId, fetchStakingRecords])
 
-  /** 実測記録に かける スライド量 (逆スライドで 設計の 土俵に 乗せる) */
+  /**
+   * 実測記録に かける スライド量 (逆スライドで 設計の 土俵に 乗せる)。
+   * 記録セット ごと に 持つ ので、記録 の セット の 値 を 引く。
+   * セット が 無い 記録 は 工区 単位 の 値 (surveySlide) に 落ちる。
+   */
+  const surveySets = useSurveySetStore((st) => st.sets)
+  const fetchSurveySets = useSurveySetStore((st) => st.fetchByFarm)
+  useEffect(() => {
+    if (farmId) void fetchSurveySets(farmId)
+  }, [farmId, fetchSurveySets])
   const [surveySlide, setSurveySlide] = useState<SurveySlide>(NO_SLIDE)
+  const slideOfRecord = (r: { recordSetId?: string | null }): SurveySlide => {
+    if (!r.recordSetId) return surveySlide
+    return surveySets.find((s) => s.id === r.recordSetId)?.slide ?? surveySlide
+  }
   useEffect(() => {
     if (!farmId) {
       setSurveySlide(NO_SLIDE)
@@ -3899,10 +3922,13 @@ export function OpenChannelAlignmentPage() {
     const out: MeasuredCrossPoint[] = []
     for (const r of stakingRecords) {
       if (r.farmId !== farmId || r.measuredZ == null) continue
-      // 逆スライド: 実測 − スライド量 で 設計の 土俵に 乗せる
-      const x = r.measuredX - surveySlide.dx
-      const y = r.measuredY - surveySlide.dy
-      const z = r.measuredZ - surveySlide.dz
+      // 逆スライド: 実測 − スライド量 で 設計の 土俵に 乗せる。
+      // スライド量 は 記録セット ごと に 持つ ので、その 記録 の セット の 値 を 引く。
+      // セット が 無い 記録 は 工区 単位 の 値 に 落ちる。
+      const sl = slideOfRecord(r)
+      const x = r.measuredX - sl.dx
+      const y = r.measuredY - sl.dy
+      const z = r.measuredZ - sl.dz
       const dx = x - center.x
       const dy = y - center.y
       // 中心線 沿い の ずれが 横断幅 に 収まる もの だけ
@@ -3916,7 +3942,8 @@ export function OpenChannelAlignmentPage() {
     }
     out.sort((a, b) => a.offset - b.offset)
     return out
-  }, [selectedStation, farmId, segments, selected?.sideOrientation, stakingRecords, surveySlide, crossBandM])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStation, farmId, segments, selected?.sideOrientation, stakingRecords, surveySlide, surveySets, crossBandM])
 
   // 「横断を 切替中は 図面の 断面方向 (左右=画面 左右) が 水平に なる ように 地図を 回転」
   // する 用の bearing (度)。 CoordinateMap の mapBearingDeg (setBearing 経由) に 渡す。
