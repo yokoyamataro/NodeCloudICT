@@ -5767,26 +5767,6 @@ export function OpenChannelAlignmentPage() {
                     )}
                   </>
                 )}
-                {/* LandXML 取込。 開いて いる タブ の 断面 を TIN から 一括 生成 する。
-                    種別 は タブ に 対応 (現況=ground / 計画=design / 出来形=asbuilt)。 */}
-                {stations.length > 0 && (
-                  <div className="pt-1 border-t">
-                    <LandxmlSectionImport
-                      farmId={farmId ?? null}
-                      channelName={selected?.name ?? null}
-                      target={sectionTargetOfEditTarget(editTarget)}
-                      stations={stations}
-                      segments={segments}
-                      sideOrientation={selected?.sideOrientation ?? 'forward'}
-                      onImported={(rows) =>
-                        handleReplaceStationSectionsBulk(
-                          sectionTargetOfEditTarget(editTarget),
-                          rows,
-                        )
-                      }
-                    />
-                  </div>
-                )}
               </CollapsibleSection>
 
               {/* 断面 の 編集 は 右下 パネル の 横断図 タブ。 横断 セクション の
@@ -6101,7 +6081,81 @@ export function OpenChannelAlignmentPage() {
               縦断図 / 横断図 の どちら の タブ でも 出し続ける。 */}
           {profileChartExpanded && (
           <div className="flex-1 min-h-0 flex">
-            <aside className="w-[624px] shrink-0 border-r p-2 overflow-hidden flex flex-col">
+            <aside className="w-[624px] shrink-0 border-r p-2 overflow-hidden flex flex-col gap-1.5">
+              {/* 取込 の 入口 は 表 の 上 に まとめる。
+                  LandXML は 全測点 一括、地図 / DXF は 選んで いる 測点 に 対して。 */}
+              {stations.length > 0 && (
+                <div className="shrink-0 space-y-1">
+                  <LandxmlSectionImport
+                    farmId={farmId ?? null}
+                    channelName={selected?.name ?? null}
+                    target={sectionTargetOfEditTarget(editTarget)}
+                    stations={stations}
+                    segments={segments}
+                    sideOrientation={selected?.sideOrientation ?? 'forward'}
+                    onImported={(rows) =>
+                      handleReplaceStationSectionsBulk(
+                        sectionTargetOfEditTarget(editTarget),
+                        rows,
+                      )
+                    }
+                  />
+                  {selectedStation && (() => {
+                    const t = sectionTargetOfEditTarget(editTarget)
+                    const isMapMode = editTarget === 'current' || editTarget === 'asbuilt'
+                    return (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {isMapMode && (
+                          <button
+                            onClick={() => {
+                              if (mapCaptureTarget === t) {
+                                setMapCaptureTarget(null)
+                                return
+                              }
+                              // 現況 で まだ 何も 保存 して いない ときは、いま 断面図 に
+                              // 出て いる 実測点 を そのまま 土台 に する。
+                              // これ を しない と 1 点 拾った 途端 に 実測点 が 消えて
+                              // 「反映 されない」 ように 見える。
+                              if (
+                                t === 'current' &&
+                                !selectedStation.currentSection?.length &&
+                                autoCurrentSection.length > 0
+                              ) {
+                                handleReplaceStationSection(
+                                  selectedStation.id,
+                                  'current',
+                                  autoCurrentSection,
+                                )
+                              }
+                              setMapCaptureTarget(t)
+                            }}
+                            className={`px-2 py-0.5 text-[11px] border rounded ${
+                              mapCaptureTarget === t
+                                ? 'bg-purple-600 text-white border-purple-600'
+                                : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50'
+                            }`}
+                            title="地図で 測点マーカーを クリック すると 中心線に 垂直投影 して 追加"
+                          >
+                            {mapCaptureTarget === t ? '地図取得: 選択中' : '地図から追加'}
+                          </button>
+                        )}
+                        {/* DXF が 未登録 でも 出す。 トレース モーダル 側 で
+                            登録 できる ので、ここ が 入口 に なる。 */}
+                        <button
+                          onClick={() =>
+                            setDxfTraceContext({ stationId: selectedStation.id, target: t })
+                          }
+                          className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                          title="既存 DXF 横断図 から トレースして 点を 拾う (DXF の 登録 も ここ から)"
+                        >
+                          DXFから取込
+                        </button>
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
+              <div className="flex-1 min-h-0">
               {selectedStation ? (
                 (() => {
                   const t = sectionTargetOfEditTarget(editTarget)
@@ -6126,6 +6180,7 @@ export function OpenChannelAlignmentPage() {
                   左メニュー 「横断」 で 測点 を 選ぶ と、その 断面 の 点 が ここ に 出ます。
                 </div>
               )}
+              </div>
             </aside>
             <div className="flex-1 min-w-0 min-h-0 flex flex-col">
           {profileChartExpanded && bottomTab === 'profile' && (
@@ -6313,87 +6368,6 @@ export function OpenChannelAlignmentPage() {
                         </>
                       )}
                     </div>
-
-                    {/* 現況 / 計画(トレース) / 出来形 モード の 補助 アクション バー。
-                        計画モード (editTarget='plan') は 対話型 element エディタが 主。
-                        editTarget='current' → target=current、'asbuilt' → target=asbuilt、
-                        'plan' → target=planned (トレース由来 plannedSectionRaw)。 */}
-                    {selectedStation && (() => {
-                      const target: SectionTarget = sectionTargetOfEditTarget(editTarget)
-                      const showAuxBar = editTarget === 'current' || editTarget === 'asbuilt' || editTarget === 'plan'
-                      if (!showAuxBar) return null
-                      const isMapMode = editTarget === 'current' || editTarget === 'asbuilt'
-                      const labelPrefix =
-                        editTarget === 'current' ? '現況断面: '
-                        : editTarget === 'asbuilt' ? '出来形: '
-                        : '計画 (トレース): '
-                      const pts = ((): MeasuredCrossPoint[] => {
-                        const key = target === 'current' ? 'currentSection' : target === 'asbuilt' ? 'asbuiltSection' : 'plannedSectionRaw'
-                        return (selectedStation[key] as MeasuredCrossPoint[] | null | undefined) ?? []
-                      })()
-                      return (
-                        <div className="flex items-center gap-1.5 flex-wrap text-xs shrink-0">
-                          <span className="text-slate-500 text-[11px]">{labelPrefix}</span>
-                          {isMapMode && (
-                            <button
-                              onClick={() => {
-                                if (mapCaptureTarget === target) {
-                                  setMapCaptureTarget(null)
-                                  return
-                                }
-                                // 現況 で まだ 何も 保存 して いない ときは、いま 断面図 に
-                                // 出て いる 実測点 を そのまま 土台 に する。
-                                // これ を しない と 1 点 拾った 途端 に 実測点 が 消えて
-                                // 「反映 されない」 ように 見える。
-                                if (
-                                  target === 'current' &&
-                                  !selectedStation.currentSection?.length &&
-                                  autoCurrentSection.length > 0
-                                ) {
-                                  handleReplaceStationSection(
-                                    selectedStation.id,
-                                    'current',
-                                    autoCurrentSection,
-                                  )
-                                }
-                                setMapCaptureTarget(target)
-                              }}
-                              className={`px-2 py-0.5 text-[11px] border rounded ${
-                                mapCaptureTarget === target
-                                  ? 'bg-purple-600 text-white border-purple-600'
-                                  : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50'
-                              }`}
-                              title="地図で 測点マーカーを クリック すると 中心線に 垂直投影 して 追加"
-                            >
-                              {mapCaptureTarget === target ? '地図取得: 選択中' : '地図で追加'}
-                            </button>
-                          )}
-                          {selected?.dxfCrossSectionPath && (
-                            <button
-                              onClick={() =>
-                                setDxfTraceContext({ stationId: selectedStation.id, target })
-                              }
-                              className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
-                              title="既存 DXF 横断図 から トレースして 点を 拾う"
-                            >
-                              DXFから取込
-                            </button>
-                          )}
-                          <span className="text-[11px] text-slate-500">
-                            登録済 {pts.length} 点
-                          </span>
-                          <button
-                            onClick={() => {
-                              if (!window.confirm('この 測点の 全点を 削除します。')) return
-                              handleReplaceStationSection(selectedStation.id, target, [])
-                            }}
-                            className="ml-auto px-2 py-0.5 text-[11px] border rounded text-red-600 hover:bg-red-50"
-                          >
-                            クリア
-                          </button>
-                        </div>
-                      )
-                    })()}
 
                     {/* 対話 型 断面 エディタ
                         測点 の 切替 は 表題 の 測点名 の 右 の ◀ 手前 / 次 ▶。 */}
