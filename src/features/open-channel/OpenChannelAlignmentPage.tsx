@@ -827,32 +827,14 @@ function ProfileChart({
 
 
 /**
- * 断面 を SVG 上 で 直接 描画 する 対話 型 エディタ。
+ * 断面図 (表示 専用)。
  *
- * ワークフロー:
- *   1. [左計画線] / [右計画線] ボタン で 描画 モード を 開始 (drawSide 選択)。
- *   2. 勾配 表記 モード を 切替:
- *      - フリーハンド : マウス 位置 の (dx, dy) を そのまま 使い、勾配 % を 算出。
- *      - %           : 入力値 (符号 有 で 上下 決定) を 勾配 % に。 幅 は マウス X。
- *      - 1:i          : 入力値 を ratio 単位 で 勾配 に。 幅 は マウス X。
- *      - 直高         : 幅 0、マウス Y 分 だけ 垂直 移動 (dW=0, dH=dy)。
- *   3. マウス 移動 で プレビュー、クリック で 区間 追加。 描画 中 の 側 の 末尾 に 追加 される。
+ * 断面 の 入力 は 左 の 断面入力欄 (SectionPointsEditor) と
+ * LandXML / 地図 / DXF から の 取込 に 一本化 した ので、ここ は
+ * 計画線 / 現況 / 出来形 の 表示 と パン / ズーム だけ を 受け持つ。
  *
  * 座標系: 中心 (0,0) を 基準 に 右 +x / 左 -x、上 +y (計画高 基準)。
  */
-type DrawMode = 'freehand' | 'percent' | 'ratio' | 'vertical' | 'dxdy'
-type DrawSide = 'right' | 'left' | null
-
-/** モード 順 (Space キー サイクル) と 表示ラベル */
-const DRAW_MODES: DrawMode[] = ['freehand', 'percent', 'ratio', 'vertical', 'dxdy']
-const DRAW_MODE_LABEL: Record<DrawMode, string> = {
-  freehand: 'フリーハンド',
-  percent: '%',
-  ratio: '1:i',
-  vertical: '直高',
-  dxdy: '相対距離 (縦横)',
-}
-
 /** 断面 区間 の 勾配 部分 だけ を 短い 文字列 に。 直高 は 高さ (符号 付) を 返す。 */
 function formatSlopeOnly(e: CrossSectionElement): string {
   if (e.slopeUnit === 'vertical') {
@@ -874,27 +856,62 @@ function formatWidthOnly(e: CrossSectionElement): string {
   return e.width.toFixed(2)
 }
 
-/** 断面点 の 表。 中心 / 左 / 右 の かたまり ごと に 出す */
+/**
+ * 断面点 の 表。 中心 / 左 / 右 の かたまり ごと に 出す。
+ * 左 / 右 は 末尾 に 空白行 を 持ち、そこ に 直接 打つ と 1 点 増える
+ * (幅杭 / 縦断 の 表 と 同じ 入力 の しかた)。
+ */
 function SectionRowTable({
   title,
+  side,
   rows,
   sourceOf,
   onUpdate,
   onRemove,
+  onAdd,
 }: {
   title: string
+  /** 空白行 で 追加 する とき の 符号。 center は 追加行 を 出さない */
+  side: 'center' | 'left' | 'right'
   rows: MeasuredCrossPoint[]
   sourceOf: (id: string) => string
   onUpdate: (id: string, patch: Partial<MeasuredCrossPoint>) => void
   onRemove: (id: string) => void
+  onAdd?: (p: { offset: number; elevation: number; note?: string }) => void
 }) {
+  // 末尾 の 空白行 の 下書き。 離れ と 標高 が 揃った 時点 で 1 点 に する
+  const [dOffset, setDOffset] = useState('')
+  const [dElevation, setDElevation] = useState('')
+  const [dNote, setDNote] = useState('')
+  const canAdd = side !== 'center' && !!onAdd
+  const commitDraft = () => {
+    if (!canAdd || !onAdd) return
+    const o = parseFloat(dOffset)
+    const e = parseFloat(dElevation)
+    if (!Number.isFinite(o) || o === 0 || !Number.isFinite(e)) return
+    onAdd({
+      // 左 の 表 に 打った 値 は 左 (負) に 寄せる。 符号 は 気にしなくて よい
+      offset: side === 'left' ? -Math.abs(o) : Math.abs(o),
+      elevation: e,
+      note: dNote.trim() || undefined,
+    })
+    setDOffset('')
+    setDElevation('')
+    setDNote('')
+  }
+  const onDraftKey = (ev: React.KeyboardEvent) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault()
+      commitDraft()
+    }
+  }
   return (
     <div className="border rounded overflow-hidden">
       <div className="px-2 py-1 bg-slate-100 text-[11px] font-semibold text-slate-600 flex items-center gap-1">
         {title}
         <span className="text-slate-400 font-normal">{rows.length} 点</span>
       </div>
-      {rows.length === 0 ? (
+      {rows.length === 0 && !canAdd ? (
         <div className="px-2 py-3 text-center text-[11px] text-slate-400">なし</div>
       ) : (
         <table className="w-full text-xs">
@@ -949,6 +966,57 @@ function SectionRowTable({
                 </td>
               </tr>
             ))}
+            {/* 末尾 の 空白行。 離れ と 標高 を 入れて Enter (か + ) で 1 点 追加 */}
+            {canAdd && (
+              <tr className="border-t bg-slate-50/60">
+                <td className="px-1 py-1">
+                  <input
+                    type="number"
+                    step={0.01}
+                    value={dOffset}
+                    onChange={(e) => setDOffset(e.target.value)}
+                    onKeyDown={onDraftKey}
+                    placeholder={side === 'left' ? '左へ m' : '右へ m'}
+                    className="w-full px-1 py-0.5 border rounded text-right tabular-nums bg-white"
+                  />
+                </td>
+                <td className="px-1 py-1">
+                  <input
+                    type="number"
+                    step={0.001}
+                    value={dElevation}
+                    onChange={(e) => setDElevation(e.target.value)}
+                    onKeyDown={onDraftKey}
+                    onBlur={commitDraft}
+                    placeholder="標高 m"
+                    className="w-full px-1 py-0.5 border rounded text-right tabular-nums bg-white"
+                  />
+                </td>
+                <td className="px-1 py-1">
+                  <input
+                    type="text"
+                    value={dNote}
+                    onChange={(e) => setDNote(e.target.value)}
+                    onKeyDown={onDraftKey}
+                    placeholder="点名"
+                    className="w-full px-1 py-0.5 border rounded bg-white"
+                  />
+                </td>
+                <td className="px-1 py-1 text-center">
+                  <button
+                    onClick={commitDraft}
+                    disabled={
+                      !Number.isFinite(parseFloat(dOffset)) ||
+                      !Number.isFinite(parseFloat(dElevation))
+                    }
+                    className="p-0.5 border rounded hover:bg-blue-50 text-blue-600 disabled:opacity-30"
+                    title="この行を追加"
+                  >
+                    <Plus className="h-3 w-3" />
+                  </button>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       )}
@@ -1009,7 +1077,9 @@ function SectionPointsEditor({
       : '手入力'
   const newId = () => `mp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
-  const addRow = () => commit([...rows, { id: newId(), offset: 0, elevation: 0 }])
+  /** 空白行 から の 追加。 離れ 順 に 入れて おく */
+  const addPoint = (p: { offset: number; elevation: number; note?: string }) =>
+    commit([...rows, { id: newId(), ...p }].sort((a, b) => a.offset - b.offset))
   /** 横断幅 以内 の 実測記録 を 表 に 入れる。 既に ある 分 は 足さない */
   const addFromRecords = () => {
     if (!autoPoints || autoPoints.length === 0) return
@@ -1046,13 +1116,6 @@ function SectionPointsEditor({
           <span className="ml-1 text-[11px] font-normal text-slate-400">{rows.length} 点</span>
         </div>
         <div className="mt-1 flex items-center gap-1 flex-wrap">
-          <button
-            onClick={addRow}
-            className="flex items-center gap-0.5 px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50"
-          >
-            <Plus className="h-3 w-3" />
-            行を追加
-          </button>
           {autoPoints && autoPoints.length > 0 && (
             <button
               onClick={addFromRecords}
@@ -1084,6 +1147,7 @@ function SectionPointsEditor({
         {center.length > 0 && (
           <SectionRowTable
             title="中心 (0)"
+            side="center"
             rows={center}
             sourceOf={sourceOf}
             onUpdate={updateRow}
@@ -1093,22 +1157,26 @@ function SectionPointsEditor({
         <div className="grid grid-cols-2 gap-1.5">
           <SectionRowTable
             title="左 (L)"
+            side="left"
             rows={leftRows}
             sourceOf={sourceOf}
             onUpdate={updateRow}
             onRemove={removeRow}
+            onAdd={addPoint}
           />
           <SectionRowTable
             title="右 (R)"
+            side="right"
             rows={rightRows}
             sourceOf={sourceOf}
             onUpdate={updateRow}
             onRemove={removeRow}
+            onAdd={addPoint}
           />
         </div>
         {rows.length === 0 && (
           <div className="px-2 py-4 text-center text-slate-400 text-[11px] border rounded">
-            まだ 点が ありません。 「行を追加」 や 地図 / DXF / 取込 から 入力 を 始めて ください。
+            まだ 点が ありません。 左 / 右 の 空白行 に 打つ か、上 の 取込 から 始めて ください。
           </div>
         )}
       </div>
@@ -1116,16 +1184,14 @@ function SectionPointsEditor({
   )
 }
 
-function InteractiveCrossSectionEditor({
+function CrossSectionView({
   cs,
-  onChange,
   centerHeight,
   currentGroundHeight,
   currentSection,
   asbuiltSection,
 }: {
   cs: StandardCrossSection
-  onChange: (next: StandardCrossSection) => void
   centerHeight?: number
   /** 現況高 (中心線上の 地盤高) [m]。undefined / null は 未入力扱い。
    *  横線 + ラベルで 上書き表示し、計画高との 差分 (切/盛) も 併記 */
@@ -1138,16 +1204,8 @@ function InteractiveCrossSectionEditor({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 720, h: 340 })
 
-  const [drawSide, setDrawSide] = useState<DrawSide>(null)
-  const [drawMode, setDrawMode] = useState<DrawMode>('freehand')
-  const [slopeText, setSlopeText] = useState<string>('2')
-  // dW / dH の 手動 入力。 空 なら カーソル 位置 を 使い、値 が あれば その値 を 優先。
-  //  - percent / ratio モード: dW が 空 で dH が あれば 勾配 から dW を 逆算。
-  //  - vertical モード: dH の みず 使用。
-  //  - dxdy モード: dW / dH の どちらか (両方) を 直接 指定。
-  const [dWText, setDWText] = useState<string>('')
-  const [dHText, setDHText] = useState<string>('')
-  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null)
+  // 断面 の 入力 は 左 の 断面入力欄 (表) に 一本化 した ので、
+  // ここ は 表示 (パン / ズーム) だけ を 持つ。
 
   // 表示側の パン (SVG ピクセル) と ズーム 倍率。 自動フィット (scale / offset) の 上に
   // 重ねる 「ユーザー操作 の 視点」。 データ を 変えても 保持し、リセットボタンで 戻す。
@@ -1199,33 +1257,7 @@ function InteractiveCrossSectionEditor({
   // 描画済 の 折れ線 (左端 → 中心 → 右端)
   const points = useMemo(() => buildCrossSectionPath(cs), [cs])
 
-  // 各側 の 末尾点 (次 区間 の 起点)
-  const lastRight = useMemo(() => {
-    let x = 0
-    let y = 0
-    for (const e of cs.right) {
-      const s = elementStep(e, 1)
-      x += s.dx
-      y += s.dy
-    }
-    return { x, y }
-  }, [cs.right])
-  const lastLeft = useMemo(() => {
-    let x = 0
-    let y = 0
-    for (const e of cs.left) {
-      const s = elementStep(e, -1)
-      x += s.dx
-      y += s.dy
-    }
-    return { x, y }
-  }, [cs.left])
-  const drawOrigin =
-    drawSide === 'right' ? lastRight : drawSide === 'left' ? lastLeft : { x: 0, y: 0 }
-
-  // SVG スケール。 描画中 (プレビュー) に 拡縮 が 揺れる の を 避ける ため、
-  // カーソル 位置 は 範囲 に 含めない。 区間 を 確定 (onChange) した タイミング で
-  // cs.right / cs.left が 変わり、その とき に 再フィット する。
+  // SVG スケール。 cs / 現況 / 出来形 が 変わった とき に 再フィット する。
   const padding = { top: 30, right: 20, bottom: 40, left: 20 }
   const innerW = size.w - padding.left - padding.right
   const innerH = size.h - padding.top - padding.bottom
@@ -1258,40 +1290,9 @@ function InteractiveCrossSectionEditor({
     kind: '現況' | '出来形' | '計画'
   } | null>(null)
 
-  // ピクセル → 世界 座標: 表示側の パン/ズーム を 逆に かけて から 自動フィット を 剥がす
-  const ix = (px: number) => ((px - viewPan.x) / viewZoom - offsetX) / scale
-  const iy = (py: number) => (offsetY - (py - viewPan.y) / viewZoom) / scale
   // 世界 座標 → 画面 ピクセル (パン/ズーム 込み)。参照線 の 位置 決定 等 に 使う
   const vx = (x: number) => viewPan.x + viewZoom * tx(x)
   const vy = (y: number) => viewPan.y + viewZoom * ty(y)
-
-  /**
-   * 現在 の モード + 入力値 + カーソル 位置 から 新 区間 を 算出。
-   *  - dWText / dHText が 埋まっている 場合 は カーソル より 優先。
-   *  - percent / ratio モード で dW/dH の 片方 が 埋まっていて 勾配 も
-   *    ある 場合 は もう 片方 を 逆算 する。
-   * カーソル も 入力 も 無い / 内向き の 場合 は null (追加不可)。
-   */
-  const computeSegment = (
-    cursorOverride?: { x: number; y: number } | null,
-  ): {
-    element: CrossSectionElement
-    endPoint: { x: number; y: number }
-  } | null => {
-    if (!drawSide) return null
-    const effCursor = cursorOverride === undefined ? cursor : cursorOverride
-    return computeSegmentCore({
-      drawSide,
-      drawOrigin,
-      cursor: effCursor,
-      drawMode,
-      slopeText,
-      dWText,
-      dHText,
-    })
-  }
-
-  const preview = drawSide ? computeSegment() : null
 
   const onSvgMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
     // 左ボタン のみ pan 候補。右クリックは 通常メニュー を 出す (何もしない)
@@ -1321,183 +1322,24 @@ function InteractiveCrossSectionEditor({
         })
       }
     }
-    if (!drawSide) return
-    setCursor({ x: ix(px), y: iy(py) })
   }
   const onSvgMouseLeave = () => {
-    setCursor(null)
     panStartRef.current = null
   }
   const onSvgMouseUp = () => {
     panStartRef.current = null
     // wasDraggingRef は 直後の onClick で 読まれる。次の mouseDown で リセット される
   }
-  const onSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
-    // ドラッグ 直後の click は 抑止 (pan の 終了 で 区間追加 されない ように)
-    if (wasDraggingRef.current) return
-    if (!drawSide) return
-    // カーソル 位置 を 最新化 して から 計算
-    const rect = e.currentTarget.getBoundingClientRect()
-    const c = { x: ix(e.clientX - rect.left), y: iy(e.clientY - rect.top) }
-    setCursor(c)
-    const seg = computeSegment(c)
-    if (!seg) return
-    const nextSide = [...cs[drawSide], seg.element]
-    onChange({ ...cs, [drawSide]: nextSide })
-  }
-
   /** 表示 リセット: パン (0,0) / ズーム 1.0 に 戻す (自動フィット 状態) */
   const resetView = () => {
     setViewPan({ x: 0, y: 0 })
     setViewZoom(1)
   }
-  const addManually = () => {
-    if (!drawSide) return
-    // dW/dH に 手動 入力 が 必要 (少なくとも 片方) — 空 だと mouse を 使う モード に なる
-    const seg = computeSegment(null)
-    if (!seg) return
-    const nextSide = [...cs[drawSide], seg.element]
-    onChange({ ...cs, [drawSide]: nextSide })
-    // 追加後 は dW/dH をクリア (勾配は次入力の再利用のため保持)
-    setDWText('')
-    setDHText('')
-  }
-
-  const removeLast = () => {
-    if (!drawSide) return
-    if (cs[drawSide].length === 0) return
-    const nextSide = cs[drawSide].slice(0, -1)
-    onChange({ ...cs, [drawSide]: nextSide })
-  }
-
-  // キー操作:
-  //   BS       — 直近区間 を 取消 (dW/dH/勾配 入力欄には 干渉しない)
-  //   Space    — モード を 順に 切替 (freehand → % → 1:i → 直高 → 相対距離 → …)
-  useEffect(() => {
-    if (!drawSide) return
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null
-      const tag = t?.tagName
-      const inTextInput =
-        tag === 'INPUT' || tag === 'TEXTAREA' || (t !== null && t.isContentEditable)
-      if (e.key === 'Backspace') {
-        if (inTextInput) return
-        e.preventDefault()
-        removeLast()
-      } else if (e.key === ' ' || e.code === 'Space') {
-        if (inTextInput) return
-        e.preventDefault()
-        setDrawMode((cur) => {
-          const idx = DRAW_MODES.indexOf(cur)
-          return DRAW_MODES[(idx + 1) % DRAW_MODES.length]
-        })
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [drawSide, cs, onChange])
-  const clearSide = (side: 'right' | 'left') => {
-    if (!window.confirm(`${side === 'right' ? '右' : '左'} 側 の 区間 を すべて 削除 します。`)) return
-    onChange({ ...cs, [side]: [] })
-  }
-
-  const modeButton = (m: DrawMode, label: string) => (
-    <button
-      key={m}
-      onClick={() => setDrawMode(m)}
-      disabled={!drawSide}
-      className={`px-2 py-0.5 text-[11px] border rounded ${
-        drawMode === m
-          ? 'bg-blue-600 text-white border-blue-600'
-          : 'bg-white hover:bg-slate-100 text-slate-700 disabled:opacity-40'
-      }`}
-    >
-      {label}
-    </button>
-  )
-
   return (
     <div className="flex flex-col gap-2 h-full">
-      {/* ツールバー (左右計画線 ボタンは SVG 上に 移動、勾配モード等は ここに 残す) */}
+      {/* ツールバー。 断面 の 入力 は 左 の 断面入力欄 (表) に 一本化 した ので、
+          ここ に 残る のは 表示 まわり だけ。 */}
       <div className="flex items-center gap-1.5 flex-wrap text-xs shrink-0">
-        <span className="text-slate-500 text-[11px]">モード (Space で 切替)</span>
-        {DRAW_MODES.map((m) => modeButton(m, DRAW_MODE_LABEL[m]))}
-        {(drawMode === 'percent' || drawMode === 'ratio') && drawSide && (
-          <input
-            type="text"
-            value={slopeText}
-            onChange={(e) => setSlopeText(e.target.value)}
-            placeholder={drawMode === 'percent' ? '例: 2 / -2' : '例: 1.5'}
-            className="w-16 px-1 py-0.5 border rounded text-xs font-mono text-right"
-            title="勾配 (符号 有 で 上下 決定、無 なら dH/カーソル に 合わせる)"
-          />
-        )}
-
-        {/* 幅 / 高 の 手動入力 (percent / ratio / vertical / dxdy モード)。
-            空 なら カーソル 位置 で 決定、埋めれば その値 で 追加 ボタン から 確定。 */}
-        {drawSide && drawMode !== 'freehand' && (
-          <>
-            {(drawMode === 'percent' || drawMode === 'ratio' || drawMode === 'dxdy') && (
-              <label className="flex items-center gap-1 text-slate-500 text-[11px]">
-                dW
-                <input
-                  type="text"
-                  value={dWText}
-                  onChange={(e) => setDWText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') addManually()
-                  }}
-                  placeholder="幅m"
-                  className="w-14 px-1 py-0.5 border rounded text-xs font-mono text-right"
-                />
-              </label>
-            )}
-            <label className="flex items-center gap-1 text-slate-500 text-[11px]">
-              dH
-              <input
-                type="text"
-                value={dHText}
-                onChange={(e) => setDHText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') addManually()
-                }}
-                placeholder="高m"
-                className="w-14 px-1 py-0.5 border rounded text-xs font-mono text-right"
-              />
-            </label>
-            <button
-              onClick={addManually}
-              disabled={dWText.trim() === '' && dHText.trim() === ''}
-              className="px-2 py-0.5 text-[11px] border rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:bg-slate-300"
-              title="入力した dW / dH で 区間 を 追加"
-            >
-              + 追加
-            </button>
-          </>
-        )}
-
-        <span className="text-slate-400 mx-1">|</span>
-        <button
-          onClick={removeLast}
-          disabled={!drawSide || cs[drawSide].length === 0}
-          className="px-2 py-1 text-xs border rounded bg-white hover:bg-slate-100 disabled:opacity-40"
-          title="直近 の 区間 を 取り消し (BS キー でも 可)"
-        >
-          <ArrowUp className="h-3 w-3 inline -mt-0.5" /> 戻す (BS)
-        </button>
-        <button
-          onClick={() => clearSide('left')}
-          className="px-2 py-1 text-xs border rounded text-red-600 hover:bg-red-50"
-        >
-          左クリア
-        </button>
-        <button
-          onClick={() => clearSide('right')}
-          className="px-2 py-1 text-xs border rounded text-red-600 hover:bg-red-50"
-        >
-          右クリア
-        </button>
-        <span className="text-slate-400 mx-1">|</span>
         <button
           onClick={resetView}
           className="px-2 py-1 text-xs border rounded bg-white hover:bg-slate-100"
@@ -1510,40 +1352,12 @@ function InteractiveCrossSectionEditor({
         </span>
       </div>
 
-      {/* 描画キャンバス
-          左右計画線 の 開始ボタンは 断面図の 左右端に 絶対配置。
-          「右計画線」ボタンを 押したら 右側から 描く、「左計画線」を 押したら 左側から
-          描くという 対応を 位置で 直感的に 見せる。 */}
+      {/* 断面図。 点 の 入力 は 左 の 断面入力欄 (表) で 行う。
+          ここ は 表示 と パン / ズーム だけ。 */}
       <div
         ref={containerRef}
         className="flex-1 min-h-0 border rounded bg-slate-50 relative overflow-hidden"
       >
-        {/* 上部 中央 の ツールバー: 左右計画線。 測点 の 切替 は 表題 の
-            測点名 の 右 に 置いて いる。 */}
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1">
-          <button
-            onClick={() => setDrawSide(drawSide === 'left' ? null : 'left')}
-            className={`px-2 py-1 text-xs border rounded shadow-sm ${
-              drawSide === 'left'
-                ? 'bg-amber-500 text-white border-amber-500'
-                : 'bg-white/95 hover:bg-slate-100 text-slate-700'
-            }`}
-            title="左側 の 断面 を 描画"
-          >
-            ← 左計画線
-          </button>
-          <button
-            onClick={() => setDrawSide(drawSide === 'right' ? null : 'right')}
-            className={`px-2 py-1 text-xs border rounded shadow-sm ${
-              drawSide === 'right'
-                ? 'bg-emerald-500 text-white border-emerald-500'
-                : 'bg-white/95 hover:bg-slate-100 text-slate-700'
-            }`}
-            title="右側 の 断面 を 描画"
-          >
-            右計画線 →
-          </button>
-        </div>
         <svg
           width={size.w}
           height={size.h}
@@ -1551,14 +1365,7 @@ function InteractiveCrossSectionEditor({
           onMouseMove={onSvgMouseMove}
           onMouseLeave={onSvgMouseLeave}
           onMouseUp={onSvgMouseUp}
-          onClick={onSvgClick}
-          style={{
-            cursor: wasDraggingRef.current
-              ? 'grabbing'
-              : drawSide
-                ? 'crosshair'
-                : 'grab',
-          }}
+          style={{ cursor: wasDraggingRef.current ? 'grabbing' : 'grab' }}
         >
           {/* 中心線 (縦) は 画面 端まで 伸ばす (パン/ズームで 端が 見切れないよう、
               transform の 外で 位置を 手計算)。 中心設計高 は 横線で なく 中心線上の
@@ -1678,88 +1485,6 @@ function InteractiveCrossSectionEditor({
             })
           })()}
 
-          {/* プレビュー 区間 (未確定) — ラベル も 併記 */}
-          {preview && (
-            <>
-              <line
-                x1={tx(drawOrigin.x)}
-                y1={ty(drawOrigin.y)}
-                x2={tx(preview.endPoint.x)}
-                y2={ty(preview.endPoint.y)}
-                stroke={drawSide === 'right' ? '#059669' : '#d97706'}
-                strokeWidth={2}
-                strokeDasharray="5,3"
-              />
-              <circle
-                cx={tx(preview.endPoint.x)}
-                cy={ty(preview.endPoint.y)}
-                r={4}
-                fill={drawSide === 'right' ? '#059669' : '#d97706'}
-                stroke="#fff"
-                strokeWidth={1.5}
-              />
-              {(() => {
-                const midX = (tx(drawOrigin.x) + tx(preview.endPoint.x)) / 2
-                const midY = (ty(drawOrigin.y) + ty(preview.endPoint.y)) / 2
-                const dxSvg = tx(preview.endPoint.x) - tx(drawOrigin.x)
-                const dySvg = ty(preview.endPoint.y) - ty(drawOrigin.y)
-                const len = Math.hypot(dxSvg, dySvg) || 1
-                let nUpX = -dySvg / len
-                let nUpY = dxSvg / len
-                if (nUpY > 0) {
-                  nUpX = -nUpX
-                  nUpY = -nUpY
-                }
-                const offset = 12
-                const color = drawSide === 'right' ? '#059669' : '#d97706'
-                const slope = formatSlopeOnly(preview.element)
-                const width = formatWidthOnly(preview.element)
-                return (
-                  <>
-                    {slope && (
-                      <text
-                        x={midX + nUpX * offset}
-                        y={midY + nUpY * offset}
-                        fontSize={13}
-                        fill={color}
-                        textAnchor="middle"
-                        fontWeight={600}
-                        style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
-                      >
-                        {slope}
-                      </text>
-                    )}
-                    {width && (
-                      <text
-                        x={midX - nUpX * offset}
-                        y={midY - nUpY * offset + 4}
-                        fontSize={13}
-                        fill={color}
-                        textAnchor="middle"
-                        fontWeight={600}
-                        style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
-                      >
-                        {width}
-                      </text>
-                    )}
-                  </>
-                )
-              })()}
-            </>
-          )}
-
-          {/* 描画 起点 マーカー */}
-          {drawSide && (
-            <circle
-              cx={tx(drawOrigin.x)}
-              cy={ty(drawOrigin.y)}
-              r={5}
-              fill="none"
-              stroke={drawSide === 'right' ? '#059669' : '#d97706'}
-              strokeWidth={2}
-              strokeDasharray="2,2"
-            />
-          )}
           {/* 現況断面: offset を x に、elevation - centerHeight を y に。
               計画高 (y=0) 基準で 折れ線 (茶) + 点マーカー を 描画。
               測定点は 中心軸 (x=0) から 見て 右+ / 左- (WidthStake 同じ 慣習)。
@@ -1938,35 +1663,6 @@ function InteractiveCrossSectionEditor({
             右
           </text>
 
-          {/* ステータス表示 */}
-          {drawSide && cursor && (
-            <text
-              x={size.w - padding.right}
-              y={size.h - 8}
-              fontSize={11}
-              fill="#334155"
-              textAnchor="end"
-              style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
-            >
-              {preview
-                ? `dW=${(preview.endPoint.x - drawOrigin.x).toFixed(2)}m, dH=${(
-                    preview.endPoint.y - drawOrigin.y
-                  ).toFixed(3)}m`
-                : 'カーソルを外側へ動かしてください'}
-            </text>
-          )}
-          {drawSide && (
-            <text
-              x={padding.left}
-              y={size.h - 8}
-              fontSize={11}
-              fill="#334155"
-              style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
-            >
-              描画中: {drawSide === 'right' ? '右計画線' : '左計画線'} / {DRAW_MODE_LABEL[drawMode]}
-            </text>
-          )}
-
           {/* 断面点 の 吹き出し。 点名 / 地盤高 / 幅 を 出す。
               枠 から はみ出す 側 は 反対 に 回す。 */}
           {hoverPoint && (() => {
@@ -2021,146 +1717,6 @@ function InteractiveCrossSectionEditor({
   )
 }
 
-/**
- * 描画 モード + 入力 + カーソル 位置 から 1 区間 を 算出 する 共通 ロジック。
- *
- * 優先順位:
- *   - dWText / dHText が 埋まっている 場合 は カーソル より 優先。
- *   - percent / ratio モード で dH のみ 埋めた 場合 は 勾配 から dW を 逆算。
- *   - vertical モード は dH の みず 使用 (dW=0)。
- *   - 何も 無い / 内向き の 場合 は null。
- *
- * 勾配 の 符号 決定:
- *   - slopeText に 明示 符号 (+ / -) が あれば その 通り。
- *   - なければ dH (または カーソル Y 差分) の 符号 に 合わせる。
- */
-function computeSegmentCore(input: {
-  drawSide: 'right' | 'left'
-  drawOrigin: { x: number; y: number }
-  cursor: { x: number; y: number } | null
-  drawMode: DrawMode
-  slopeText: string
-  dWText: string
-  dHText: string
-}): { element: CrossSectionElement; endPoint: { x: number; y: number } } | null {
-  const { drawSide, drawOrigin, cursor, drawMode, slopeText, dWText, dHText } = input
-  const sideSign: 1 | -1 = drawSide === 'right' ? 1 : -1
-  const newId = () => `e${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
-
-  const parseNum = (s: string): number | null => {
-    const t = s.trim()
-    if (t === '') return null
-    const v = parseFloat(t)
-    return Number.isFinite(v) ? v : null
-  }
-  const dWIn = parseNum(dWText)
-  const dHIn = parseNum(dHText)
-
-  // カーソル 由来 の 生 (dx, dy)。 override が 効く 前 の 値。
-  const cursorDx = cursor ? cursor.x - drawOrigin.x : 0
-  const cursorDy = cursor ? cursor.y - drawOrigin.y : 0
-
-  // ------ 直高 モード ------
-  if (drawMode === 'vertical') {
-    const dh = dHIn !== null ? dHIn : cursor ? cursorDy : null
-    if (dh === null) return null
-    if (Math.abs(dh) < 1e-4) return null
-    const el: CrossSectionElement = {
-      id: newId(),
-      name: '',
-      width: 0,
-      slopeValue: Math.round(dh * 1000) / 1000,
-      slopeUnit: 'vertical',
-    }
-    return { element: el, endPoint: { x: drawOrigin.x, y: drawOrigin.y + el.slopeValue } }
-  }
-
-  // ------ 相対距離 モード (dW / dH を 直接 指定) ------
-  //   両方 入力あれば その値で 追加、片方 空なら カーソル で 補完。
-  //   保存形式は 「幅 + 勾配%」(=フリーハンドと 同じ) — 後で 編集する 時も 破綻しない。
-  if (drawMode === 'dxdy') {
-    const dw = dWIn !== null ? Math.abs(dWIn) : cursor ? Math.abs(cursorDx) : null
-    const dh = dHIn !== null ? dHIn : cursor ? cursorDy : null
-    if (dw === null || dh === null) return null
-    if (dw < 1e-3) return null
-    const wRounded = Math.round(dw * 1000) / 1000
-    const pct = Math.round((dh / dw) * 100 * 100) / 100
-    const el: CrossSectionElement = {
-      id: newId(),
-      name: '',
-      width: wRounded,
-      slopeValue: pct,
-      slopeUnit: 'percent',
-    }
-    const step = elementStep(el, sideSign)
-    return { element: el, endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy } }
-  }
-
-  // ------ フリーハンド (勾配 % を 位置から 算出) ------
-  if (drawMode === 'freehand') {
-    // カーソル 必須 (dW/dH 手動 入力 は %/ratio 用)
-    if (!cursor) return null
-    const outwardDx = cursorDx * sideSign
-    if (outwardDx < 1e-3) return null
-    const width = Math.round(outwardDx * 1000) / 1000
-    const pct = Math.round((cursorDy / outwardDx) * 100 * 100) / 100
-    const el: CrossSectionElement = {
-      id: newId(),
-      name: '',
-      width,
-      slopeValue: pct,
-      slopeUnit: 'percent',
-    }
-    const step = elementStep(el, sideSign)
-    return { element: el, endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy } }
-  }
-
-  // ------ percent / ratio モード ------
-  const rawInput = parseFloat(slopeText)
-  if (!Number.isFinite(rawInput)) return null
-  const hasExplicitSign = /^[+-]/.test(slopeText.trim())
-
-  // dW を 決定: 手動 dW 最優先 → dH + 勾配 で 逆算 → カーソル X
-  let width: number | null = null
-  let signedSlope = rawInput
-  const dhSignSource = dHIn !== null ? dHIn : cursorDy
-  const dirSign = dhSignSource > 0 ? 1 : dhSignSource < 0 ? -1 : 1
-  if (!hasExplicitSign) signedSlope = dirSign * Math.abs(rawInput)
-
-  if (dWIn !== null && dWIn > 1e-6) {
-    width = Math.abs(dWIn)
-  } else if (dHIn !== null) {
-    // 勾配 と dH から dW を 逆算 (dH = dW * slopeFactor)
-    const slopeFactor =
-      drawMode === 'percent'
-        ? signedSlope / 100
-        : Math.abs(signedSlope) < 1e-6
-        ? 0
-        : Math.sign(signedSlope) / Math.abs(signedSlope)
-    if (Math.abs(slopeFactor) < 1e-9) return null
-    width = Math.abs(dHIn / slopeFactor)
-  } else if (cursor) {
-    const outwardDx = cursorDx * sideSign
-    if (outwardDx < 1e-3) return null
-    width = outwardDx
-  } else {
-    return null
-  }
-  const wRounded = Math.round(width * 1000) / 1000
-  if (wRounded < 1e-6) return null
-
-  if (drawMode === 'ratio' && Math.abs(signedSlope) < 1e-6) return null
-
-  const el: CrossSectionElement = {
-    id: newId(),
-    name: '',
-    width: wRounded,
-    slopeValue: signedSlope,
-    slopeUnit: drawMode === 'percent' ? 'percent' : 'ratio',
-  }
-  const step = elementStep(el, sideSign)
-  return { element: el, endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy } }
-}
 
 /**
  * 3 桁精度で 数値 → 文字列 化 (float 誤差 の 末尾 桁を 落とす)。
@@ -6222,15 +5778,7 @@ export function OpenChannelAlignmentPage() {
                         )
                       : null
                   : null
-                const editingStation = stationCs ? selectedStation : null
                 const cs: StandardCrossSection = stationCs ?? selected.standardCrossSection
-                const applyChange = (next: StandardCrossSection) => {
-                  if (editingStation) {
-                    handleUpdateStationCrossSection(editingStation.id, next)
-                  } else {
-                    updateChannel(selected.id, { standardCrossSection: next })
-                  }
-                }
                 return (
                   <>
                     {/* ヘッダー: 対象 表示 + 個別/標準 切替 */}
@@ -6369,25 +5917,24 @@ export function OpenChannelAlignmentPage() {
                       )}
                     </div>
 
-                    {/* 対話 型 断面 エディタ
-                        測点 の 切替 は 表題 の 測点名 の 右 の ◀ 手前 / 次 ▶。 */}
+                    {/* 断面図 (表示)。 測点 の 切替 は 表題 の 測点名 の 右 の
+                        ◀ 手前 / 次 ▶。 入力 は 左 の 断面入力欄 (表) で。 */}
                     <div className="flex-1 min-h-0">
-                          <InteractiveCrossSectionEditor
-                            cs={cs}
-                            onChange={applyChange}
-                            centerHeight={centerZ}
-                            currentGroundHeight={selectedStation?.currentGroundHeight ?? null}
-                            // 保存済みが 無ければ、横断幅 以内の 実測点を
-                            // そのまま 出す (取込ボタンを 押さなくても 見える)
-                            currentSection={
-                              selectedStation?.currentSection?.length
-                                ? selectedStation.currentSection
-                                : autoCurrentSection.length > 0
-                                  ? autoCurrentSection
-                                  : null
-                            }
-                            asbuiltSection={selectedStation?.asbuiltSection ?? null}
-                          />
+                      <CrossSectionView
+                        cs={cs}
+                        centerHeight={centerZ}
+                        currentGroundHeight={selectedStation?.currentGroundHeight ?? null}
+                        // 保存済みが 無ければ、横断幅 以内の 実測点を
+                        // そのまま 出す (取込ボタンを 押さなくても 見える)
+                        currentSection={
+                          selectedStation?.currentSection?.length
+                            ? selectedStation.currentSection
+                            : autoCurrentSection.length > 0
+                              ? autoCurrentSection
+                              : null
+                        }
+                        asbuiltSection={selectedStation?.asbuiltSection ?? null}
+                      />
                     </div>
                   </>
                 )
