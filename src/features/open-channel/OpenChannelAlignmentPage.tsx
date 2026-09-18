@@ -204,12 +204,15 @@ function CollapsibleSection({
   defaultOpen = true,
   storageKey,
   onOpenChange,
+  actions,
   children,
 }: {
   title: string
   defaultOpen?: boolean
   storageKey?: string
   onOpenChange?: (open: boolean) => void
+  /** タイトル行 の 右端 に 置く 操作 (開閉 ボタン の 外 に 出す) */
+  actions?: React.ReactNode
   children: React.ReactNode
 }) {
   const [open, setOpen] = useState<boolean>(() => {
@@ -235,18 +238,21 @@ function CollapsibleSection({
   }
   return (
     <section className="bg-white rounded-lg border">
-      <button
-        type="button"
-        onClick={toggle}
-        className="w-full px-3 py-2 flex items-center font-semibold text-slate-800 text-sm hover:bg-slate-50 rounded-t-lg"
-      >
-        {open ? (
-          <ChevronDown className="h-4 w-4 mr-1 text-slate-500" />
-        ) : (
-          <ChevronRight className="h-4 w-4 mr-1 text-slate-500" />
-        )}
-        <span>{title}</span>
-      </button>
+      <div className="flex items-center">
+        <button
+          type="button"
+          onClick={toggle}
+          className="flex-1 min-w-0 px-3 py-2 flex items-center font-semibold text-slate-800 text-sm hover:bg-slate-50 rounded-tl-lg"
+        >
+          {open ? (
+            <ChevronDown className="h-4 w-4 mr-1 text-slate-500" />
+          ) : (
+            <ChevronRight className="h-4 w-4 mr-1 text-slate-500" />
+          )}
+          <span className="truncate">{title}</span>
+        </button>
+        {actions && <div className="pr-3 shrink-0">{actions}</div>}
+      </div>
       {open && <div className="px-3 pb-3 space-y-2">{children}</div>}
     </section>
   )
@@ -3968,6 +3974,33 @@ export function OpenChannelAlignmentPage() {
   /** 直近 の 取込 結果 (「横断 > 現況」 の 表 の 下 に 出す) */
   const [stationImportMsg, setStationImportMsg] = useState<string | null>(null)
 
+  /** 横断 の 表 を 管理測点 だけ に 絞る */
+  const [controlOnly, setControlOnly] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('oc:controlOnly') === '1'
+    } catch {
+      return false
+    }
+  })
+  const toggleControlOnly = () => {
+    setControlOnly((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('oc:controlOnly', next ? '1' : '0')
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }
+  /** 管理測点 フラグ の 切替 */
+  const handleToggleControlStation = (id: string) => {
+    setStations(
+      stations.map((s) => (s.id === id ? { ...s, isControlStation: !s.isControlStation } : s)),
+    )
+  }
+  const controlStationCount = stations.filter((s) => s.isControlStation).length
+
   /**
    * 1 測点 分 の 現況 を 実測記録 から 取込む。
    * 一括 では なく 行 ごと に 押す 形 に して いる のは、手入力 済み の 現況 を
@@ -5512,7 +5545,25 @@ export function OpenChannelAlignmentPage() {
                   現況 / 計画 / 出来形 の ボタン と 計画高 / 現況高 を ここ に 移した。
                   タブ は 右下 の 横断図 パネル の 編集対象 と 同じ state を 見る ので、
                   ここ で 切り替える と 下 の エディタ も 一緒 に 切り替わる。 */}
-              <CollapsibleSection title="横断 (現況・計画・出来形)" storageKey="oc:section:cross">
+              <CollapsibleSection
+                title="横断 (現況・計画・出来形)"
+                storageKey="oc:section:cross"
+                actions={
+                  <button
+                    type="button"
+                    onClick={toggleControlOnly}
+                    className={`px-2 py-0.5 text-[11px] border rounded ${
+                      controlOnly
+                        ? 'bg-slate-700 text-white border-slate-700'
+                        : 'bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                    title="管理測点 に チェック を 付けた 測点 だけ を 表示"
+                  >
+                    管理測点のみ表示
+                    <span className="ml-1 opacity-70">{controlStationCount}</span>
+                  </button>
+                }
+              >
                 <div className="flex items-center gap-1 flex-wrap">
                   {EDIT_TARGET_TABS.map((t) => (
                     <button
@@ -5559,10 +5610,10 @@ export function OpenChannelAlignmentPage() {
                   <>
                     <div className="text-[11px] text-slate-500">
                       {editTarget === 'plan'
-                        ? '「編集」 で 右下 の 横断図 に 計画断面 を 開き ます。 個別断面 が 無い 測点 は 標準断面 を 複製 して 始め ます。'
+                        ? '行 を 選ぶ と 右下 の 横断図 で 計画断面 の 編集 に 入り ます。 個別断面 が 無い 測点 は 標準断面 を 複製 して 始め ます。'
                         : editTarget === 'current'
-                          ? '「取込」 で その 測点 の 現況 を 実測記録 から 取り込み ます (手入力 済み の 現況 は その 測点 だけ 上書き)。 「編集」 で 右下 の 横断図 を 開く と 地図 / 表 / DXF から も 拾え ます。'
-                          : '「編集」 で 右下 の 横断図 に 出来形断面 を 開き ます。'}
+                          ? '行 を 選ぶ と 右下 の 横断図 で 現況 の 編集 に 入り ます (地図 / 表 / DXF から 拾える)。 「取込」 は その 測点 の 現況 を 実測記録 から 入れ 直し ます。'
+                          : '行 を 選ぶ と 右下 の 横断図 で 出来形 の 編集 に 入り ます。'}
                     </div>
                     <div className="border rounded overflow-auto max-h-80">
                       <table className="min-w-full text-sm">
@@ -5570,6 +5621,12 @@ export function OpenChannelAlignmentPage() {
                           <tr>
                             <th className="px-2 py-1 w-10 text-center whitespace-nowrap">#</th>
                             <th className="px-2 py-1 text-left whitespace-nowrap">SP</th>
+                            <th
+                              className="px-2 py-1 w-12 text-center whitespace-nowrap"
+                              title="出来形管理 の 対象 に する 測点"
+                            >
+                              管理
+                            </th>
                             {editTarget === 'plan' && (
                               <th
                                 className="px-2 py-1 w-24 text-right whitespace-nowrap"
@@ -5595,16 +5652,21 @@ export function OpenChannelAlignmentPage() {
                               </th>
                             )}
                             <th className="px-2 py-1 w-28 text-center whitespace-nowrap">状態</th>
-                            <th className="px-2 py-1 w-24 text-center whitespace-nowrap"></th>
+                            {editTarget === 'current' && (
+                              <th className="px-2 py-1 w-16 text-center whitespace-nowrap"></th>
+                            )}
                           </tr>
                         </thead>
                         <tbody>
-                          {stations.map((s, i) => {
+                          {stations
+                            .map((s, i) => ({ s, i }))
+                            .filter(({ s }) => !controlOnly || s.isControlStation)
+                            .map(({ s, i }) => {
                             const isSel = s.id === selectedStationId
                             return (
                               <tr
                                 key={s.id}
-                                onClick={() => setSelectedStationId(isSel ? null : s.id)}
+                                onClick={() => openStationSection(s, editTarget)}
                                 className={`border-t cursor-pointer ${
                                   isSel ? 'bg-blue-50' : 'hover:bg-slate-50'
                                 }`}
@@ -5613,6 +5675,17 @@ export function OpenChannelAlignmentPage() {
                                   {i + 1}
                                 </td>
                                 <td className="px-2 py-1 font-mono whitespace-nowrap">{s.label}</td>
+                                {/* 管理測点。 行クリック (= 編集) に 巻き込まれない ように 止める */}
+                                <td className="px-2 py-1 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={s.isControlStation === true}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={() => handleToggleControlStation(s.id)}
+                                    className="cursor-pointer"
+                                    title="管理測点 に する"
+                                  />
+                                </td>
                                 {/* 計画高: plannedCenterHeight (トレース由来 or 手入力) を 最優先、
                                     無ければ 縦断線形から 内挿 (範囲外は null)。 どちらも 無ければ "-"。 */}
                                 {editTarget === 'plan' && (() => {
@@ -5700,39 +5773,33 @@ export function OpenChannelAlignmentPage() {
                                     )
                                   })()}
                                 </td>
-                                <td className="px-1 py-1 text-center whitespace-nowrap">
-                                  <div className="inline-flex gap-0.5">
-                                    {editTarget === 'current' && (
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          handleImportStationCurrent(s)
-                                        }}
-                                        disabled={(measuredCountByStation.get(s.id) ?? 0) === 0}
-                                        className="px-1.5 py-0.5 text-[11px] border rounded bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100 disabled:opacity-40"
-                                        title="この 測点 の 現況 を 実測記録 から 取込 (逆スライド 済み)"
-                                      >
-                                        取込
-                                      </button>
-                                    )}
+                                {editTarget === 'current' && (
+                                  <td className="px-1 py-1 text-center whitespace-nowrap">
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        openStationSection(s, editTarget)
+                                        handleImportStationCurrent(s)
                                       }}
-                                      className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50"
-                                      title="右下 の 横断図 で この 測点 の 断面 を 編集"
+                                      disabled={(measuredCountByStation.get(s.id) ?? 0) === 0}
+                                      className="px-1.5 py-0.5 text-[11px] border rounded bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100 disabled:opacity-40"
+                                      title="この 測点 の 現況 を 実測記録 から 取込 (逆スライド 済み)"
                                     >
-                                      編集
+                                      取込
                                     </button>
-                                  </div>
-                                </td>
+                                  </td>
+                                )}
                               </tr>
                             )
                           })}
                         </tbody>
                       </table>
                     </div>
+                    {controlOnly && controlStationCount === 0 && (
+                      <div className="text-[11px] text-amber-700">
+                        管理測点 が まだ ありません。 「管理測点のみ表示」 を 解除 して
+                        「管理」 に チェック を 付けて ください。
+                      </div>
+                    )}
                     {editTarget === 'current' && stationImportMsg && (
                       <div className="text-[11px] text-emerald-700">{stationImportMsg}</div>
                     )}

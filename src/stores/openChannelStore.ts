@@ -153,6 +153,12 @@ export interface StationRow {
    * 未指定は 「先頭 の DXF」or「同一 channel に 1 本しか 無い場合は それ」を 想定。
    */
   dxfCrossSectionId?: string | null
+  /**
+   * 管理測点。 出来形管理 の 対象 に する 測点 に 立てる フラグ。
+   * 中間点 は ピッチ割 で 大量 に 作る ので、実際 に 管理 する 断面 だけ を
+   * 絞り込む ため の 目印。 未指定 / false は 通常 の 測点。
+   */
+  isControlStation?: boolean
 }
 
 /**
