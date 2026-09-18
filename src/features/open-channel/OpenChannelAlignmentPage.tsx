@@ -1150,6 +1150,20 @@ function InteractiveCrossSectionEditor({
   const offsetY = padding.top + (innerH - drawnH) / 2 + maxY * scale
   const tx = (x: number) => offsetX + x * scale
   const ty = (y: number) => offsetY - y * scale
+
+  /**
+   * 断面点 に マウス を 当てた とき に 出す 中身。
+   * 点名 (note) / 地盤高 (標高) / 幅 (中心 から の 離れ) を 見せる。
+   */
+  const [hoverPoint, setHoverPoint] = useState<{
+    x: number
+    y: number
+    name: string | null
+    elevation: number
+    offset: number
+    kind: '現況' | '出来形' | '計画'
+  } | null>(null)
+
   // ピクセル → 世界 座標: 表示側の パン/ズーム を 逆に かけて から 自動フィット を 剥がす
   const ix = (px: number) => ((px - viewPan.x) / viewZoom - offsetX) / scale
   const iy = (py: number) => (offsetY - (py - viewPan.y) / viewZoom) / scale
@@ -1689,6 +1703,18 @@ function InteractiveCrossSectionEditor({
                     fill="#a16207"
                     stroke="#fff"
                     strokeWidth={1.5}
+                    style={{ cursor: 'help' }}
+                    onMouseEnter={() =>
+                      setHoverPoint({
+                        x: tx(p.offset),
+                        y: ty(p.elevation - centerHeight),
+                        name: p.note ?? null,
+                        elevation: p.elevation,
+                        offset: p.offset,
+                        kind: '現況',
+                      })
+                    }
+                    onMouseLeave={() => setHoverPoint(null)}
                   />
                 ))}
               </g>
@@ -1711,6 +1737,18 @@ function InteractiveCrossSectionEditor({
                     fill="#059669"
                     stroke="#fff"
                     strokeWidth={1.5}
+                    style={{ cursor: 'help' }}
+                    onMouseEnter={() =>
+                      setHoverPoint({
+                        x: tx(p.offset),
+                        y: ty(p.elevation - centerHeight),
+                        name: p.note ?? null,
+                        elevation: p.elevation,
+                        offset: p.offset,
+                        kind: '出来形',
+                      })
+                    }
+                    onMouseLeave={() => setHoverPoint(null)}
                   />
                 ))}
               </g>
@@ -1807,6 +1845,55 @@ function InteractiveCrossSectionEditor({
               描画中: {drawSide === 'right' ? '右計画線' : '左計画線'} / {DRAW_MODE_LABEL[drawMode]}
             </text>
           )}
+
+          {/* 断面点 の 吹き出し。 点名 / 地盤高 / 幅 を 出す。
+              枠 から はみ出す 側 は 反対 に 回す。 */}
+          {hoverPoint && (() => {
+            const rows = [
+              hoverPoint.name ? `${hoverPoint.kind}  ${hoverPoint.name}` : hoverPoint.kind,
+              `地盤高 ${hoverPoint.elevation.toFixed(3)} m`,
+              `幅 ${hoverPoint.offset >= 0 ? 'R' : 'L'}${Math.abs(hoverPoint.offset).toFixed(3)} m`,
+            ]
+            const w = Math.max(...rows.map((t) => t.length)) * 6.6 + 14
+            const h = rows.length * 14 + 10
+            const flipX = hoverPoint.x + 12 + w > size.w
+            const flipY = hoverPoint.y - 12 - h < 0
+            const bx = flipX ? hoverPoint.x - 12 - w : hoverPoint.x + 12
+            const by = flipY ? hoverPoint.y + 12 : hoverPoint.y - 12 - h
+            return (
+              <g pointerEvents="none">
+                <rect
+                  x={bx}
+                  y={by}
+                  width={w}
+                  height={h}
+                  rx={3}
+                  fill="rgba(15,23,42,0.92)"
+                  stroke="#0f172a"
+                />
+                {rows.map((t, i) => (
+                  <text
+                    key={i}
+                    x={bx + 7}
+                    y={by + 16 + i * 14}
+                    fontSize={11}
+                    fill="#fff"
+                    fontFamily="ui-monospace, monospace"
+                  >
+                    {t}
+                  </text>
+                ))}
+                <circle
+                  cx={hoverPoint.x}
+                  cy={hoverPoint.y}
+                  r={6}
+                  fill="none"
+                  stroke="#0f172a"
+                  strokeWidth={1.5}
+                />
+              </g>
+            )
+          })()}
         </svg>
       </div>
     </div>
