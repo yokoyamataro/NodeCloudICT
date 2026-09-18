@@ -5357,6 +5357,286 @@ export function OpenChannelAlignmentPage() {
                 )}
               </CollapsibleSection>
 
+              {/* 幅杭計算 (中間点 の 直下 に 配置)。
+                  SP 値 と 中心線 から の 垂直方向 オフセット (右 +/左 -) を
+                  入力する と、平面 座標 XY が 算出される。 追加 は テーブル
+                  末尾 の 空行 に 直接 入力 (Enter or + ボタン で 確定)。 */}
+              <CollapsibleSection title="幅杭計算" storageKey="oc:section:width-stakes">
+                <div className="text-xs text-slate-500">
+                  SP 値 と 中心線 から の 垂直方向 オフセット (m) を 入力。
+                  <br />
+                  右 (
+                  {selected.sideOrientation === 'forward'
+                    ? '起点→終点視点'
+                    : '終点→起点視点'}
+                  ) が +、左が -。 末尾 の 空行 に 入力 → Enter or + ボタン で 追加。
+                </div>
+
+                <div className="border rounded overflow-auto max-h-56">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
+                      <tr>
+                        <th className="px-2 py-1 w-10 text-center">#</th>
+                        <th className="px-2 py-1 text-right">SP</th>
+                        <th className="px-2 py-1 text-right">オフセット (m)</th>
+                        <th className="px-2 py-1 text-right">X</th>
+                        <th className="px-2 py-1 text-right">Y</th>
+                        <th className="px-2 py-1 text-left">メモ</th>
+                        <th className="px-2 py-1 w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {widthStakesWithXY.map(({ stake, x, y }, i) => {
+                        const sp = stake.distance + spOffset
+                        return (
+                          <tr key={stake.id} className="border-t">
+                            <td className="px-2 py-1 text-center text-slate-500 text-xs">
+                              {i + 1}
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <input
+                                type="number"
+                                step={0.01}
+                                value={sp}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value)
+                                  if (Number.isFinite(v))
+                                    handleChangeWidthStake(stake.id, {
+                                      distance: v - spOffset,
+                                    })
+                                }}
+                                className="w-24 px-1 py-0.5 border rounded text-right text-sm"
+                              />
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <input
+                                type="number"
+                                step={0.01}
+                                value={stake.offset}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value)
+                                  if (Number.isFinite(v))
+                                    handleChangeWidthStake(stake.id, { offset: v })
+                                }}
+                                className="w-20 px-1 py-0.5 border rounded text-right text-sm"
+                              />
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums font-mono">
+                              {x != null ? x.toFixed(3) : '-'}
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums font-mono">
+                              {y != null ? y.toFixed(3) : '-'}
+                            </td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="text"
+                                value={stake.note ?? ''}
+                                placeholder="任意"
+                                onChange={(e) =>
+                                  handleChangeWidthStake(stake.id, {
+                                    note: e.target.value || undefined,
+                                  })
+                                }
+                                className="w-full px-1 py-0.5 border rounded text-sm"
+                              />
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <button
+                                onClick={() => handleRemoveWidthStake(stake.id)}
+                                className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                      {/* 末尾 の 空行: SP と オフセット を 入力 して Enter or + で 追加。 */}
+                      <tr className="border-t bg-blue-50/40">
+                        <td className="px-2 py-1 text-center text-slate-400 text-xs">
+                          {widthStakesWithXY.length + 1}
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <input
+                            type="number"
+                            step={0.01}
+                            value={newStakeSpText}
+                            placeholder="SP"
+                            onChange={(e) => setNewStakeSpText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitNewWidthStake()
+                            }}
+                            className="w-24 px-1 py-0.5 border rounded text-right text-sm bg-white"
+                          />
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <input
+                            type="number"
+                            step={0.01}
+                            value={newStakeOffsetText}
+                            placeholder="±m"
+                            onChange={(e) => setNewStakeOffsetText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitNewWidthStake()
+                            }}
+                            className="w-20 px-1 py-0.5 border rounded text-right text-sm bg-white"
+                          />
+                        </td>
+                        <td
+                          className="px-2 py-1 text-right text-slate-300 text-xs"
+                          colSpan={2}
+                        >
+                          追加前
+                        </td>
+                        <td className="px-2 py-1">
+                          <input
+                            type="text"
+                            value={newStakeNoteText}
+                            placeholder="任意"
+                            onChange={(e) => setNewStakeNoteText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitNewWidthStake()
+                            }}
+                            className="w-full px-1 py-0.5 border rounded text-sm bg-white"
+                          />
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <button
+                            onClick={commitNewWidthStake}
+                            disabled={
+                              !Number.isFinite(parseFloat(newStakeSpText)) ||
+                              !Number.isFinite(parseFloat(newStakeOffsetText))
+                            }
+                            title="幅杭 を 追加"
+                            className="p-0.5 border rounded text-blue-600 hover:bg-blue-50 disabled:opacity-30"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </CollapsibleSection>
+
+              {/* 縦断 (幅杭 と 横断 の 間 に 配置)。
+                  縦断図 の プロット は 地図の 下に 残す。ここでは 変化点 の
+                  追加 / 編集 / 削除 のみ。追加 は テーブル 末尾 の 空行 に
+                  直接 入力 (Enter or + ボタン で 確定)。 */}
+              <CollapsibleSection title="縦断" storageKey="oc:section:profile">
+                <div className="text-xs text-slate-500">
+                  SP 値 (中間点計算 と 同じ 座標系) と 計画高 (m) を 変化点 ごと に 登録。
+                  末尾 の 空行 に 入力 → Enter or + ボタン で 追加。
+                  中間 の 変化点 (PVI) に VCL (縦断曲線長 m) を 指定すると 放物線
+                  縦断曲線 を 割り付ける (M / VCR は 自動計算)。
+                  <br />
+                  内部保存 は BP からの 距離 (= SP − spOffset<span className="font-mono ml-1">{selected ? `= SP − ${(selected.spOffset ?? 0).toFixed(2)}` : ''}</span>)。
+                </div>
+
+                <div className="border rounded overflow-auto max-h-72">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
+                      <tr>
+                        <th className="px-2 py-1 w-10 text-center">#</th>
+                        <th className="px-2 py-1 text-right">SP (m)</th>
+                        <th className="px-2 py-1 text-right">計画高 (m)</th>
+                        <th className="px-2 py-1 text-right">勾配</th>
+                        <th
+                          className="px-2 py-1 text-right"
+                          title="縦断曲線長 (Vertical Curve Length) — 0 or 空 で 曲線 なし"
+                        >
+                          VCL (m)
+                        </th>
+                        <th className="px-2 py-1 text-right text-[10px]">M / VCR</th>
+                        <th className="px-2 py-1 w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedProfile.map((p, i) => {
+                        const realIdx = selected.profilePoints.indexOf(p)
+                        const prev = i > 0 ? sortedProfile[i - 1] : null
+                        const slope = prev
+                          ? (() => {
+                              const dx = p.distance - prev.distance
+                              const dy = p.floorHeight - prev.floorHeight
+                              if (Math.abs(dx) < 1e-6) return '-'
+                              if (Math.abs(dy) < 1e-9) return '水平'
+                              return `1/${Math.round(Math.abs(dx / dy))}`
+                            })()
+                          : '-'
+                        // 両端 (BP/EP) は VCL 適用外。中間点 のみ 入力可。
+                        const isMiddle = i > 0 && i < sortedProfile.length - 1
+                        const curve = profileCurvesByPviIndex.get(i)
+                        return (
+                          <ProfileRow
+                            key={realIdx}
+                            p={p}
+                            index={i}
+                            isMiddle={isMiddle}
+                            slopeText={slope}
+                            curve={curve}
+                            spOffset={selected?.spOffset ?? 0}
+                            onChangeCommit={(patch) => handleChangeProfile(realIdx, patch)}
+                            onRemove={() => handleRemoveProfile(realIdx)}
+                          />
+                        )
+                      })}
+                      {/* 末尾 の 空行: 両方 入力 して Enter or + で 追加。 */}
+                      <tr className="border-t bg-blue-50/40">
+                        <td className="px-2 py-1 text-center text-slate-400 text-xs">
+                          {sortedProfile.length + 1}
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <input
+                            type="number"
+                            step={0.1}
+                            value={newProfileDistText}
+                            placeholder="SP"
+                            onChange={(e) => setNewProfileDistText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitNewProfile()
+                            }}
+                            className="w-20 px-1 py-0.5 border rounded text-right text-sm bg-white"
+                          />
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <input
+                            type="number"
+                            step={0.001}
+                            value={newProfileHText}
+                            placeholder="計画高"
+                            onChange={(e) => setNewProfileHText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitNewProfile()
+                            }}
+                            className="w-20 px-1 py-0.5 border rounded text-right text-sm bg-white"
+                          />
+                        </td>
+                        <td
+                          className="px-2 py-1 text-right text-slate-300 text-xs"
+                          colSpan={3}
+                        >
+                          追加後 に VCL 設定
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <button
+                            onClick={commitNewProfile}
+                            disabled={
+                              !Number.isFinite(parseFloat(newProfileDistText)) ||
+                              !Number.isFinite(parseFloat(newProfileHText))
+                            }
+                            title="変化点 を 追加"
+                            className="p-0.5 border rounded text-blue-600 hover:bg-blue-50 disabled:opacity-30"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </CollapsibleSection>
+
               {/* 横断 (現況・計画・出来形)。 中間点 の 表 に 並んで いた
                   現況 / 計画 / 出来形 の ボタン と 計画高 / 現況高 を ここ に 移した。
                   タブ は 右下 の 横断図 パネル の 編集対象 と 同じ state を 見る ので、
@@ -5528,319 +5808,50 @@ export function OpenChannelAlignmentPage() {
                     </div>
                   </>
                 )}
+                {/* 現況 の 一括取込。 測点 ごと の 手作業 より 先に 効く ので
+                    タブ の 下 に 置く。 既定 は 畳んで おく。 */}
+                {editTarget === 'current' && (
+                  <div className="space-y-2 pt-1 border-t">
+                    {/* 現況取込 (実測記録): 測設記録の 実測点を 逆スライドして 現況横断に 入れる。
+                        既存横断図 (DXF) から の トレース は 右下 横断図 パネル の
+                        「DXF から 取込」 ボタン (トレース モーダル) から。 */}
+                    <CollapsibleSection
+                      title="現況取込 (実測記録)"
+                      storageKey="oc:section:staking"
+                      defaultOpen={false}
+                    >
+                      <StakingCurrentImportSection
+                        farmId={farmId ?? null}
+                        stations={stations}
+                        segments={segments}
+                        sideOrientation={selected?.sideOrientation ?? 'forward'}
+                        onImported={(next) => setStations(next)}
+                      />
+                    </CollapsibleSection>
+
+                    {/* 現況取込 (LandXML): 工区共有 の LandXML (kind='ground') の TIN から
+                        各測点 の 現況横断 (currentSection) + 現況地盤高 (currentGroundHeight)
+                        を 一括 サンプリング する。 */}
+                    <CollapsibleSection
+                      title="現況取込 (LandXML)"
+                      storageKey="oc:section:landxml"
+                      defaultOpen={false}
+                    >
+                      <LandxmlCurrentImportSection
+                        farmId={farmId ?? null}
+                        channelName={selected?.name ?? null}
+                        stations={stations}
+                        segments={segments}
+                        sideOrientation={selected?.sideOrientation ?? 'forward'}
+                        onImported={(next) => setStations(next)}
+                      />
+                    </CollapsibleSection>
+                  </div>
+                )}
               </CollapsibleSection>
 
-              {/* 幅杭計算 (中間点 と 縦断線形 の 間 に 配置)。
-                  SP 値 と 中心線 から の 垂直方向 オフセット (右 +/左 -) を
-                  入力する と、平面 座標 XY が 算出される。 追加 は テーブル
-                  末尾 の 空行 に 直接 入力 (Enter or + ボタン で 確定)。 */}
-              <CollapsibleSection title="幅杭計算" storageKey="oc:section:width-stakes">
-                <div className="text-xs text-slate-500">
-                  SP 値 と 中心線 から の 垂直方向 オフセット (m) を 入力。
-                  <br />
-                  右 (
-                  {selected.sideOrientation === 'forward'
-                    ? '起点→終点視点'
-                    : '終点→起点視点'}
-                  ) が +、左が -。 末尾 の 空行 に 入力 → Enter or + ボタン で 追加。
-                </div>
-
-                <div className="border rounded overflow-auto max-h-56">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
-                      <tr>
-                        <th className="px-2 py-1 w-10 text-center">#</th>
-                        <th className="px-2 py-1 text-right">SP</th>
-                        <th className="px-2 py-1 text-right">オフセット (m)</th>
-                        <th className="px-2 py-1 text-right">X</th>
-                        <th className="px-2 py-1 text-right">Y</th>
-                        <th className="px-2 py-1 text-left">メモ</th>
-                        <th className="px-2 py-1 w-10"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {widthStakesWithXY.map(({ stake, x, y }, i) => {
-                        const sp = stake.distance + spOffset
-                        return (
-                          <tr key={stake.id} className="border-t">
-                            <td className="px-2 py-1 text-center text-slate-500 text-xs">
-                              {i + 1}
-                            </td>
-                            <td className="px-2 py-1 text-right">
-                              <input
-                                type="number"
-                                step={0.01}
-                                value={sp}
-                                onChange={(e) => {
-                                  const v = parseFloat(e.target.value)
-                                  if (Number.isFinite(v))
-                                    handleChangeWidthStake(stake.id, {
-                                      distance: v - spOffset,
-                                    })
-                                }}
-                                className="w-24 px-1 py-0.5 border rounded text-right text-sm"
-                              />
-                            </td>
-                            <td className="px-2 py-1 text-right">
-                              <input
-                                type="number"
-                                step={0.01}
-                                value={stake.offset}
-                                onChange={(e) => {
-                                  const v = parseFloat(e.target.value)
-                                  if (Number.isFinite(v))
-                                    handleChangeWidthStake(stake.id, { offset: v })
-                                }}
-                                className="w-20 px-1 py-0.5 border rounded text-right text-sm"
-                              />
-                            </td>
-                            <td className="px-2 py-1 text-right tabular-nums font-mono">
-                              {x != null ? x.toFixed(3) : '-'}
-                            </td>
-                            <td className="px-2 py-1 text-right tabular-nums font-mono">
-                              {y != null ? y.toFixed(3) : '-'}
-                            </td>
-                            <td className="px-2 py-1">
-                              <input
-                                type="text"
-                                value={stake.note ?? ''}
-                                placeholder="任意"
-                                onChange={(e) =>
-                                  handleChangeWidthStake(stake.id, {
-                                    note: e.target.value || undefined,
-                                  })
-                                }
-                                className="w-full px-1 py-0.5 border rounded text-sm"
-                              />
-                            </td>
-                            <td className="px-2 py-1 text-right">
-                              <button
-                                onClick={() => handleRemoveWidthStake(stake.id)}
-                                className="p-0.5 border rounded hover:bg-red-50 text-red-600"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                      {/* 末尾 の 空行: SP と オフセット を 入力 して Enter or + で 追加。 */}
-                      <tr className="border-t bg-blue-50/40">
-                        <td className="px-2 py-1 text-center text-slate-400 text-xs">
-                          {widthStakesWithXY.length + 1}
-                        </td>
-                        <td className="px-2 py-1 text-right">
-                          <input
-                            type="number"
-                            step={0.01}
-                            value={newStakeSpText}
-                            placeholder="SP"
-                            onChange={(e) => setNewStakeSpText(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') commitNewWidthStake()
-                            }}
-                            className="w-24 px-1 py-0.5 border rounded text-right text-sm bg-white"
-                          />
-                        </td>
-                        <td className="px-2 py-1 text-right">
-                          <input
-                            type="number"
-                            step={0.01}
-                            value={newStakeOffsetText}
-                            placeholder="±m"
-                            onChange={(e) => setNewStakeOffsetText(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') commitNewWidthStake()
-                            }}
-                            className="w-20 px-1 py-0.5 border rounded text-right text-sm bg-white"
-                          />
-                        </td>
-                        <td
-                          className="px-2 py-1 text-right text-slate-300 text-xs"
-                          colSpan={2}
-                        >
-                          追加前
-                        </td>
-                        <td className="px-2 py-1">
-                          <input
-                            type="text"
-                            value={newStakeNoteText}
-                            placeholder="任意"
-                            onChange={(e) => setNewStakeNoteText(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') commitNewWidthStake()
-                            }}
-                            className="w-full px-1 py-0.5 border rounded text-sm bg-white"
-                          />
-                        </td>
-                        <td className="px-2 py-1 text-right">
-                          <button
-                            onClick={commitNewWidthStake}
-                            disabled={
-                              !Number.isFinite(parseFloat(newStakeSpText)) ||
-                              !Number.isFinite(parseFloat(newStakeOffsetText))
-                            }
-                            title="幅杭 を 追加"
-                            className="p-0.5 border rounded text-blue-600 hover:bg-blue-50 disabled:opacity-30"
-                          >
-                            <Plus className="h-3 w-3" />
-                          </button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </CollapsibleSection>
-
-              {/* 既存横断図 (DXF) の 管理 UI は トレース モーダル 内に 移動 済み。
-                  中間点 セクション の 「DXF から 取込」 ボタン から 開く。 */}
-
-              {/* 現況取込 (LandXML): 工区共有 の LandXML (kind='ground') の TIN から
-                  各測点 の 現況横断 (currentSection) + 現況地盤高 (currentGroundHeight)
-                  を 一括 サンプリング する。 */}
-              {/* 現況取込 (実測記録): 測設記録の 実測点を 逆スライドして 現況横断に 入れる */}
-              <CollapsibleSection title="現況取込 (実測記録)" storageKey="oc:section:staking">
-                <StakingCurrentImportSection
-                  farmId={farmId ?? null}
-                  stations={stations}
-                  segments={segments}
-                  sideOrientation={selected?.sideOrientation ?? 'forward'}
-                  onImported={(next) => setStations(next)}
-                />
-              </CollapsibleSection>
-
-              <CollapsibleSection title="現況取込 (LandXML)" storageKey="oc:section:landxml">
-                <LandxmlCurrentImportSection
-                  farmId={farmId ?? null}
-                  channelName={selected?.name ?? null}
-                  stations={stations}
-                  segments={segments}
-                  sideOrientation={selected?.sideOrientation ?? 'forward'}
-                  onImported={(next) => setStations(next)}
-                />
-              </CollapsibleSection>
-
-              {/* 縦断線形 (中間点 と 標準断面 の 間 に 配置)。
-                  縦断図 の プロット は 地図の 下に 残す。ここでは 変化点 の
-                  追加 / 編集 / 削除 のみ。追加 は テーブル 末尾 の 空行 に
-                  直接 入力 (Enter or + ボタン で 確定)。 */}
-              <CollapsibleSection title="縦断線形" storageKey="oc:section:profile">
-                <div className="text-xs text-slate-500">
-                  SP 値 (中間点計算 と 同じ 座標系) と 計画高 (m) を 変化点 ごと に 登録。
-                  末尾 の 空行 に 入力 → Enter or + ボタン で 追加。
-                  中間 の 変化点 (PVI) に VCL (縦断曲線長 m) を 指定すると 放物線
-                  縦断曲線 を 割り付ける (M / VCR は 自動計算)。
-                  <br />
-                  内部保存 は BP からの 距離 (= SP − spOffset<span className="font-mono ml-1">{selected ? `= SP − ${(selected.spOffset ?? 0).toFixed(2)}` : ''}</span>)。
-                </div>
-
-                <div className="border rounded overflow-auto max-h-72">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
-                      <tr>
-                        <th className="px-2 py-1 w-10 text-center">#</th>
-                        <th className="px-2 py-1 text-right">SP (m)</th>
-                        <th className="px-2 py-1 text-right">計画高 (m)</th>
-                        <th className="px-2 py-1 text-right">勾配</th>
-                        <th
-                          className="px-2 py-1 text-right"
-                          title="縦断曲線長 (Vertical Curve Length) — 0 or 空 で 曲線 なし"
-                        >
-                          VCL (m)
-                        </th>
-                        <th className="px-2 py-1 text-right text-[10px]">M / VCR</th>
-                        <th className="px-2 py-1 w-10"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedProfile.map((p, i) => {
-                        const realIdx = selected.profilePoints.indexOf(p)
-                        const prev = i > 0 ? sortedProfile[i - 1] : null
-                        const slope = prev
-                          ? (() => {
-                              const dx = p.distance - prev.distance
-                              const dy = p.floorHeight - prev.floorHeight
-                              if (Math.abs(dx) < 1e-6) return '-'
-                              if (Math.abs(dy) < 1e-9) return '水平'
-                              return `1/${Math.round(Math.abs(dx / dy))}`
-                            })()
-                          : '-'
-                        // 両端 (BP/EP) は VCL 適用外。中間点 のみ 入力可。
-                        const isMiddle = i > 0 && i < sortedProfile.length - 1
-                        const curve = profileCurvesByPviIndex.get(i)
-                        return (
-                          <ProfileRow
-                            key={realIdx}
-                            p={p}
-                            index={i}
-                            isMiddle={isMiddle}
-                            slopeText={slope}
-                            curve={curve}
-                            spOffset={selected?.spOffset ?? 0}
-                            onChangeCommit={(patch) => handleChangeProfile(realIdx, patch)}
-                            onRemove={() => handleRemoveProfile(realIdx)}
-                          />
-                        )
-                      })}
-                      {/* 末尾 の 空行: 両方 入力 して Enter or + で 追加。 */}
-                      <tr className="border-t bg-blue-50/40">
-                        <td className="px-2 py-1 text-center text-slate-400 text-xs">
-                          {sortedProfile.length + 1}
-                        </td>
-                        <td className="px-2 py-1 text-right">
-                          <input
-                            type="number"
-                            step={0.1}
-                            value={newProfileDistText}
-                            placeholder="SP"
-                            onChange={(e) => setNewProfileDistText(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') commitNewProfile()
-                            }}
-                            className="w-20 px-1 py-0.5 border rounded text-right text-sm bg-white"
-                          />
-                        </td>
-                        <td className="px-2 py-1 text-right">
-                          <input
-                            type="number"
-                            step={0.001}
-                            value={newProfileHText}
-                            placeholder="計画高"
-                            onChange={(e) => setNewProfileHText(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') commitNewProfile()
-                            }}
-                            className="w-20 px-1 py-0.5 border rounded text-right text-sm bg-white"
-                          />
-                        </td>
-                        <td
-                          className="px-2 py-1 text-right text-slate-300 text-xs"
-                          colSpan={3}
-                        >
-                          追加後 に VCL 設定
-                        </td>
-                        <td className="px-2 py-1 text-right">
-                          <button
-                            onClick={commitNewProfile}
-                            disabled={
-                              !Number.isFinite(parseFloat(newProfileDistText)) ||
-                              !Number.isFinite(parseFloat(newProfileHText))
-                            }
-                            title="変化点 を 追加"
-                            className="p-0.5 border rounded text-blue-600 hover:bg-blue-50 disabled:opacity-30"
-                          >
-                            <Plus className="h-3 w-3" />
-                          </button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </CollapsibleSection>
-
-              {/* 横断計画 の 編集 は 右下 パネル の 横断図 タブ に 移動。
-                  中間点 の 計画 ボタン 押下 で 該当測点、選択なし の 場合 は
-                  標準断面 を 編集 する。 */}
+              {/* 断面 の 編集 は 右下 パネル の 横断図 タブ。 横断 セクション の
+                  「編集」 で 該当測点、選択なし の 場合 は 標準断面 を 編集 する。 */}
             </>
           )}
         </div>
@@ -6084,7 +6095,7 @@ export function OpenChannelAlignmentPage() {
           </div>
 
           {/* 地図下 の 二面パネル: 縦断図 / 横断図 を タブ で 切替。
-              - 縦断図: 変化点 の 編集 UI は 左サイドバー 「縦断線形」に。
+              - 縦断図: 変化点 の 編集 UI は 左サイドバー 「縦断」に。
               - 横断図: 中間点 選択 時 は その 測点 の 計画断面、
                        選択なし の 時 は 標準断面 (=横断計画) を 編集。
               計画 ボタン 押下 で 横断図 タブ に 自動切替。 */}
@@ -6138,7 +6149,7 @@ export function OpenChannelAlignmentPage() {
                 </div>
                 <span className="text-[11px] text-slate-500 truncate">
                   {bottomTab === 'profile'
-                    ? '変化点 の 追加 / 編集 は 左サイドバー 「縦断線形」から'
+                    ? '変化点 の 追加 / 編集 は 左サイドバー 「縦断」から'
                     : selectedStation
                     ? `${selectedStation.label} の 計画断面`
                     : '横断計画 (標準断面) — 中間点 で 計画 を 押すと 個別 に 編集 できます'}
