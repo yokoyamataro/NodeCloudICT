@@ -19,14 +19,12 @@ import {
   getActiveLandxmlFile,
   downloadLandxmlText,
   uploadLandxmlFile,
+  type LandxmlKind,
 } from '@/lib/landxmlFiles'
 import { useLandxmlEventsStore } from '@/stores/landxmlEventsStore'
 import { parseLandXml, type ParsedSurface } from '@/lib/landxml/parser'
 import { indexTin } from '@/lib/landxml/tinInterpolation'
-import {
-  sampleStationCrossSection,
-  sampleStationCenterZ,
-} from '@/lib/openChannel/tinCrossSection'
+import { sampleStationCrossSection } from '@/lib/openChannel/tinCrossSection'
 import { useFarmStore } from '@/stores/farmStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -3187,20 +3185,29 @@ function DxfTraceModal({
 }
 
 
+/** LandXML の 取込先 と 種別 の 対応。 kind は landxml_files.kind (自由文字列) */
+const LANDXML_TARGET_META: Record<SectionTarget, { kind: LandxmlKind; label: string }> = {
+  current: { kind: 'ground', label: '現況' },
+  planned: { kind: 'design', label: '計画' },
+  asbuilt: { kind: 'asbuilt', label: '出来形' },
+}
+
 /**
- * 現況取込 (LandXML) の サイドバー セクション。
- * 工区共有 の LandXML (kind='ground') を Storage から fetch し、
- * TIN から 各測点 の 現況横断 (currentSection) + 現況地盤高
- * (currentGroundHeight) を 一括 サンプリング する。
+ * LandXML 取込 (横断 セクション 内 の 1 行)。
  *
- * - LandXML 未登録: ファイル選択 → uploadLandxmlFile で active に する
- * - 登録済: ファイル名 表示 + 「置換」ボタン (別 の LandXML を 上げ直す)
- * - サンプリング: halfWidth (m) + step (m) を UI 入力、「全測点 の 現況を 取込」で 一括処理
- * - 進捗 / エラー / TIN 外 スキップ 件数 を 表示
+ * 工区共有 の LandXML を Storage から fetch し、TIN から 各測点 の 断面 を
+ * 一括 サンプリング して 現況 / 計画 / 出来形 の いずれか に 入れる。
+ * 取込先 は 開いて いる タブ (target) で 決まり、LandXML の 種別 も それ に
+ * 対応 する (現況=ground / 計画=design / 出来形=asbuilt)。
+ *
+ * - 未登録: ファイル選択 → uploadLandxmlFile で active に する
+ * - 登録済: ファイル名 表示 + 「置換」 (別 の LandXML を 上げ直す)
+ * - サンプリング: 幅 (半分) + 刻み を 指定 して 「取込」
  */
-function LandxmlCurrentImportSection({
+function LandxmlSectionImport({
   farmId,
   channelName,
+  target,
   stations,
   segments,
   sideOrientation,
@@ -3208,11 +3215,15 @@ function LandxmlCurrentImportSection({
 }: {
   farmId: string | null
   channelName: string | null
+  /** 取込先。 横断 セクション の タブ と 同じ */
+  target: SectionTarget
   stations: StationRow[]
   segments: AlignmentSegment[]
   sideOrientation: SideOrientation
-  onImported: (nextStations: StationRow[]) => void
+  /** 測点 ごと の 点列。 親 で 中心高 / 個別断面 の 同期 まで 行う */
+  onImported: (rows: { id: string; points: MeasuredCrossPoint[] }[]) => void
 }) {
+  const meta = LANDXML_TARGET_META[target]
   const [activeFile, setActiveFile] = useState<{
     id: string
     name: string
@@ -3226,16 +3237,18 @@ function LandxmlCurrentImportSection({
   const [error, setError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  // 工区の active な ground LandXML を 初回 に fetch。
-  // channel 側 では ない (工区共有) ので farmId 依存 の みで OK。
+  // 工区 の active な LandXML を fetch。 種別 は タブ に 対応 する ので
+  // タブ を 切り替える と 見に 行く ファイル も 変わる。
   useEffect(() => {
+    setStatus(null)
+    setError(null)
     if (!farmId) {
       setActiveFile(null)
       return
     }
     let cancelled = false
     setLoadingFile(true)
-    getActiveLandxmlFile(farmId, 'ground')
+    getActiveLandxmlFile(farmId, meta.kind)
       .then((row) => {
         if (cancelled) return
         setActiveFile(
@@ -3252,7 +3265,7 @@ function LandxmlCurrentImportSection({
     return () => {
       cancelled = true
     }
-  }, [farmId])
+  }, [farmId, meta.kind])
 
   const handleFileChosen = async (file: File | null) => {
     if (!file || !farmId) return
@@ -3270,7 +3283,7 @@ function LandxmlCurrentImportSection({
         farmId,
         fileName: file.name,
         content: text,
-        kind: 'ground',
+        kind: meta.kind,
         notes: channelName ? `open-channel: ${channelName}` : null,
       })
       // 全体図 側 で 自動 再フェッチ される よう version を bump
@@ -3280,7 +3293,7 @@ function LandxmlCurrentImportSection({
         name: uploaded.name,
         storagePath: uploaded.storagePath,
       })
-      setStatus(`「${file.name}」を 現況 として 登録 しました`)
+      setStatus(`「${file.name}」を ${meta.label} として 登録 しました`)
     } catch (e) {
       console.error('[landxml upload]', e)
       setError(e instanceof Error ? e.message : 'アップロード 失敗')
@@ -3292,7 +3305,7 @@ function LandxmlCurrentImportSection({
 
   const handleImport = async () => {
     if (!activeFile) {
-      setError('先に LandXML を 登録 して ください')
+      setError(`先に ${meta.label} の LandXML を 登録 して ください`)
       return
     }
     if (stations.length === 0) {
@@ -3300,7 +3313,7 @@ function LandxmlCurrentImportSection({
       return
     }
     if (segments.length === 0) {
-      setError('線形 が 未設定 です')
+      setError('路線線形 が 未設定 です')
       return
     }
     const halfWidth = Number(halfWidthText)
@@ -3323,16 +3336,15 @@ function LandxmlCurrentImportSection({
       if (parsed.surfaces.length === 0) {
         throw new Error('LandXML に 三角メッシュ が 含まれて いません')
       }
-      // 複数 Surface が あれば 三角形 数 が 最大 の もの を 採用 (現況 は 1 面 が 通例)
+      // 複数 Surface が あれば 三角形 数 が 最大 の もの を 採用 (1 面 が 通例)
       const surface: ParsedSurface = parsed.surfaces.reduce((best, s) =>
         s.triangles.length > best.triangles.length ? s : best,
       )
       const tinIdx = indexTin(surface)
 
       setStatus(`${stations.length} 測点 を サンプリング 中...`)
-      let sectionHit = 0
-      let centerHit = 0
-      const next = stations.map((s) => {
+      const rows: { id: string; points: MeasuredCrossPoint[] }[] = []
+      for (const s of stations) {
         const pts = sampleStationCrossSection(
           tinIdx,
           segments,
@@ -3342,20 +3354,13 @@ function LandxmlCurrentImportSection({
           step,
           s.id,
         )
-        const centerZ = sampleStationCenterZ(tinIdx, segments, s.distance)
-        if (pts.length > 0) sectionHit++
-        if (centerZ != null) centerHit++
-        return {
-          ...s,
-          currentSection: pts.length > 0 ? pts : s.currentSection ?? null,
-          currentGroundHeight: centerZ ?? s.currentGroundHeight ?? null,
-        }
-      })
-      onImported(next)
-      const skipped = stations.length - sectionHit
+        // TIN の 外 は 触らない (既存 の 断面 を 空 で 潰さない)
+        if (pts.length > 0) rows.push({ id: s.id, points: pts })
+      }
+      onImported(rows)
+      const skipped = stations.length - rows.length
       setStatus(
-        `完了: 現況横断 ${sectionHit}/${stations.length} 測点、` +
-          `現況地盤高 ${centerHit}/${stations.length} 測点 に セット` +
+        `完了: ${meta.label}断面 を ${rows.length}/${stations.length} 測点 に 作成` +
           (skipped > 0 ? ` (${skipped} 測点 は TIN 範囲外)` : ''),
       )
     } catch (e) {
@@ -3367,17 +3372,10 @@ function LandxmlCurrentImportSection({
     }
   }
 
-  if (!farmId) {
-    return <div className="text-xs text-slate-400">工区 を 選択 してください</div>
-  }
+  if (!farmId) return null
 
   return (
-    <div className="space-y-2 text-xs">
-      <div className="text-slate-500">
-        工区共有 の LandXML (種別 = ground) から TIN を 読み取り、各測点 の
-        現況横断 (offset × 標高) と 現況地盤高 を 一括 生成 します。
-        路線線形 (BP→EP) と 中間点 を 先に 登録 してから 実行 して ください。
-      </div>
+    <div className="space-y-1 text-[11px]">
       <input
         ref={fileInputRef}
         type="file"
@@ -3385,70 +3383,58 @@ function LandxmlCurrentImportSection({
         onChange={(e) => void handleFileChosen(e.target.files?.[0] ?? null)}
         className="hidden"
       />
-      <div className="flex items-center gap-2 border rounded px-2 py-1 bg-white">
-        <span className="text-slate-500 shrink-0">現況 LandXML:</span>
-        <span className="flex-1 font-mono text-[11px] truncate" title={activeFile?.name}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-slate-500 shrink-0">LandXML ({meta.label})</span>
+        <span
+          className="font-mono truncate max-w-[12rem] text-slate-700"
+          title={activeFile?.name}
+        >
           {loadingFile ? '確認中…' : activeFile ? activeFile.name : '未登録'}
         </span>
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={busy || loadingFile}
-          className="px-2 py-0.5 text-[11px] border rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+          className="px-2 py-0.5 border rounded bg-white hover:bg-slate-50 disabled:opacity-50"
         >
           {activeFile ? '置換' : '登録'}
         </button>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <label className="flex items-center gap-1">
-          <span className="text-slate-500">幅 (半分)</span>
+        <label className="flex items-center gap-1 text-slate-500">
+          <span>幅(半分)</span>
           <input
             type="number"
             step={0.5}
             min={0}
             value={halfWidthText}
             onChange={(e) => setHalfWidthText(e.target.value)}
-            className="w-16 px-1 py-0.5 border rounded font-mono text-right"
+            className="w-12 px-1 py-0.5 border rounded font-mono text-right"
           />
-          <span className="text-slate-500">m</span>
         </label>
-        <label className="flex items-center gap-1">
-          <span className="text-slate-500">刻み</span>
+        <label className="flex items-center gap-1 text-slate-500">
+          <span>刻み</span>
           <input
             type="number"
             step={0.1}
             min={0.05}
             value={stepText}
             onChange={(e) => setStepText(e.target.value)}
-            className="w-16 px-1 py-0.5 border rounded font-mono text-right"
+            className="w-12 px-1 py-0.5 border rounded font-mono text-right"
           />
-          <span className="text-slate-500">m</span>
         </label>
+        <button
+          onClick={() => void handleImport()}
+          disabled={busy || !activeFile || stations.length === 0}
+          className="ml-auto flex items-center gap-1 px-2 py-0.5 border rounded bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
+          title={`LandXML の TIN から 全測点 の ${meta.label}断面 を 作成`}
+        >
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+          LandXML から{meta.label}を取込
+        </button>
       </div>
-
-      <button
-        onClick={() => void handleImport()}
-        disabled={busy || !activeFile}
-        className="w-full flex items-center justify-center gap-1 px-2 py-1.5 text-xs border rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-      >
-        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-        全測点 の 現況を 取込 ({stations.length} 測点)
-      </button>
-
-      {status && (
-        <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
-          {status}
-        </div>
-      )}
-      {error && (
-        <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
-          {error}
-        </div>
-      )}
+      {status && <div className="text-emerald-700">{status}</div>}
+      {error && <div className="text-red-600">{error}</div>}
     </div>
   )
 }
-
 
 export function OpenChannelAlignmentPage() {
   const { currentFarm } = useFarmStore()
@@ -3559,6 +3545,9 @@ export function OpenChannelAlignmentPage() {
   //   'asbuilt'— 出来形 (次ステップ 実装予定 — ボタンは 置く だけ)
   type EditTarget = 'plan' | 'current' | 'asbuilt'
   const [editTarget, setEditTarget] = useState<EditTarget>('plan')
+  /** 編集対象 (タブ) を 断面 の 保存先 に マップ (plan → planned) */
+  const sectionTargetOfEditTarget = (t: EditTarget): SectionTarget =>
+    t === 'current' ? 'current' : t === 'asbuilt' ? 'asbuilt' : 'planned'
   /** 「横断」 セクション の タブ と 右下 横断図 の 編集対象 ボタン で 共用 */
   const EDIT_TARGET_TABS: { key: EditTarget; label: string; act: string; idle: string }[] = [
     {
@@ -4340,14 +4329,15 @@ export function OpenChannelAlignmentPage() {
    *   target='current' → currentGroundHeight を 中心補間値で 自動更新
    *   target='planned' → plannedCenterHeight を 中心補間値で 自動更新
    */
-  const handleReplaceStationSection = (
+  const replaceSectionIn = (
+    list: StationRow[],
     id: string,
     target: SectionTarget,
     points: MeasuredCrossPoint[],
-  ) => {
+  ): StationRow[] => {
     const key = sectionKeyOf(target)
     const kept = points.map((p) => ({ ...p }))
-    let next = stations.map((s) => (s.id === id ? { ...s, [key]: kept } : s))
+    let next = list.map((s) => (s.id === id ? { ...s, [key]: kept } : s))
     if (target === 'current') {
       next = applyCenterHeightFromSection(next, id, kept, 'currentGroundHeight')
     } else if (target === 'planned') {
@@ -4365,6 +4355,28 @@ export function OpenChannelAlignmentPage() {
         return { ...s, crossSection: measuredPointsToStandardCs(kept, centerZ) }
       })
     }
+    return next
+  }
+
+  const handleReplaceStationSection = (
+    id: string,
+    target: SectionTarget,
+    points: MeasuredCrossPoint[],
+  ) => {
+    setStations(replaceSectionIn(stations, id, target, points))
+  }
+
+  /**
+   * 複数 測点 を 一度 に 差替 (LandXML 取込 用)。 1 件 ずつ
+   * handleReplaceStationSection を 呼ぶ と 最後 の 1 件 しか 残らない ので、
+   * 同じ ロジック を リスト 上 で 畳み込む。
+   */
+  const handleReplaceStationSectionsBulk = (
+    target: SectionTarget,
+    rows: { id: string; points: MeasuredCrossPoint[] }[],
+  ) => {
+    let next = stations
+    for (const r of rows) next = replaceSectionIn(next, r.id, target, r.points)
     setStations(next)
   }
   /**
@@ -5805,27 +5817,24 @@ export function OpenChannelAlignmentPage() {
                     )}
                   </>
                 )}
-                {/* 現況 の 一括取込 (LandXML)。 実測記録 から の 取込 は 行 ごと の
-                    「取込」 ボタン に 移した。 既定 は 畳んで おく。 */}
-                {editTarget === 'current' && (
-                  <div className="space-y-2 pt-1 border-t">
-                    {/* 現況取込 (LandXML): 工区共有 の LandXML (kind='ground') の TIN から
-                        各測点 の 現況横断 (currentSection) + 現況地盤高 (currentGroundHeight)
-                        を 一括 サンプリング する。 */}
-                    <CollapsibleSection
-                      title="現況取込 (LandXML)"
-                      storageKey="oc:section:landxml"
-                      defaultOpen={false}
-                    >
-                      <LandxmlCurrentImportSection
-                        farmId={farmId ?? null}
-                        channelName={selected?.name ?? null}
-                        stations={stations}
-                        segments={segments}
-                        sideOrientation={selected?.sideOrientation ?? 'forward'}
-                        onImported={(next) => setStations(next)}
-                      />
-                    </CollapsibleSection>
+                {/* LandXML 取込。 開いて いる タブ の 断面 を TIN から 一括 生成 する。
+                    種別 は タブ に 対応 (現況=ground / 計画=design / 出来形=asbuilt)。 */}
+                {stations.length > 0 && (
+                  <div className="pt-1 border-t">
+                    <LandxmlSectionImport
+                      farmId={farmId ?? null}
+                      channelName={selected?.name ?? null}
+                      target={sectionTargetOfEditTarget(editTarget)}
+                      stations={stations}
+                      segments={segments}
+                      sideOrientation={selected?.sideOrientation ?? 'forward'}
+                      onImported={(rows) =>
+                        handleReplaceStationSectionsBulk(
+                          sectionTargetOfEditTarget(editTarget),
+                          rows,
+                        )
+                      }
+                    />
                   </div>
                 )}
               </CollapsibleSection>
@@ -6299,11 +6308,7 @@ export function OpenChannelAlignmentPage() {
                             editTarget='current' → target=current、'asbuilt' → target=asbuilt、
                             'plan' → target=planned (トレース由来 plannedSectionRaw)。 */}
                         {selectedStation && (() => {
-                          // editTarget を SectionTarget に マップ (plan → planned)
-                          const target: SectionTarget =
-                            editTarget === 'current' ? 'current'
-                            : editTarget === 'asbuilt' ? 'asbuilt'
-                            : 'planned'
+                          const target: SectionTarget = sectionTargetOfEditTarget(editTarget)
                           const showAuxBar = editTarget === 'current' || editTarget === 'asbuilt' || editTarget === 'plan'
                           if (!showAuxBar) return null
                           const isMapMode = editTarget === 'current' || editTarget === 'asbuilt'
