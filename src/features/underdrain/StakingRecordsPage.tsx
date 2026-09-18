@@ -10,6 +10,8 @@ import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { CoordinateConverter, COORDINATE_TYPE_NAMES, type CoordinateType } from '@/lib/coordinates'
 import { supabase } from '@/lib/supabase'
 import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
+import type { SurveySlide } from '@/lib/surveyCalibration'
+
 import { SurveyRecordSetsPanel } from './SurveyRecordSetsPanel'
 
 // 実測点 用 の 円形 divIcon を 生成。 Marker (HTML) として markerPane に
@@ -627,10 +629,36 @@ export function StakingRecordsPage() {
     }
   }
 
+  /**
+   * 見て いる 記録セット。 'all' は 全部、'none' は 未振り分け、
+   * それ以外 は セット の id。 セット を 分けた 以上、既定 は 1 つ ずつ 見る 方 が
+   * 分かり やすい ので、既定 の セット を 初期選択 に する。
+   */
+  const [setTab, setSetTab] = useState<string>('all')
+  const setTabFarmRef = useRef<string | null>(null)
+  useEffect(() => {
+    const farmId = currentFarm?.id ?? null
+    const farmChanged = setTabFarmRef.current !== farmId
+    setTabFarmRef.current = farmId
+    if (farmChanged) {
+      // 工区 を 変えた とき / 初回 は 既定 セット へ 寄せる
+      const def = sets.find((x) => x.isDefault)
+      setSetTab(def ? def.id : 'all')
+      return
+    }
+    // セット が 消えた ときだけ すべて に 戻す (選択中 の タブ は 保つ)
+    setSetTab((prev) =>
+      prev === 'all' || prev === 'none' || sets.some((x) => x.id === prev) ? prev : 'all',
+    )
+  }, [currentFarm?.id, sets])
+
   const filtered = useMemo(() => {
-    if (filter === 'all') return records
-    return records.filter((r) => r.surveyCategory === filter)
-  }, [records, filter])
+    let base = records
+    if (setTab === 'none') base = base.filter((r) => !r.recordSetId)
+    else if (setTab !== 'all') base = base.filter((r) => r.recordSetId === setTab)
+    if (filter === 'all') return base
+    return base.filter((r) => r.surveyCategory === filter)
+  }, [records, filter, setTab])
 
   // 同じ 設計座標 に リンク された 実測記録 を 「実測1 / 実測2」に ペアリング。
   // 3 件 以上 ある 場合 は 2 件 ごと に 追加行 を 生成。 フリー / 未リンク は
@@ -677,6 +705,12 @@ export function StakingRecordsPage() {
       : '未振り分け'
     setSetMoveStatus(`${ids.length} 件 を 「${label}」 に 移しました`)
   }
+
+  /** この 工区 の 記録 の 数 (タブ の 「すべて」) */
+  const totalCount = useMemo(
+    () => records.filter((r) => r.farmId === currentFarm?.id).length,
+    [records, currentFarm?.id],
+  )
 
   /** セット ごと の 記録 の 数 (null = 未振り分け) */
   const countBySet = useMemo(() => {
@@ -1327,6 +1361,46 @@ export function StakingRecordsPage() {
         </CoordinateMap>
       </div>
 
+      {/* 記録セット の タブ。 セット を 分けた 以上、1 つ ずつ 見る 方 が 分かり やすい */}
+      {(sets.length > 0 || (countBySet.get(null) ?? 0) > 0) && (
+        <div className="px-3 pt-1.5 border-b bg-white flex items-end gap-0 overflow-x-auto">
+          {[
+            { key: 'all', label: 'すべて', n: totalCount, slide: null as SurveySlide | null },
+            ...sets.map((st) => ({
+              key: st.id,
+              label: setLabel(st),
+              n: countBySet.get(st.id) ?? 0,
+              slide: st.slide,
+            })),
+            ...((countBySet.get(null) ?? 0) > 0
+              ? [{ key: 'none', label: '未振り分け', n: countBySet.get(null) ?? 0, slide: null }]
+              : []),
+          ].map((t) => {
+            const on = setTab === t.key
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setSetTab(t.key)}
+                className={`px-3 py-1.5 -mb-px border-b-2 text-xs whitespace-nowrap ${
+                  on
+                    ? 'border-blue-600 text-blue-700 font-medium'
+                    : 'border-transparent text-slate-600 hover:text-slate-800'
+                }`}
+                title={
+                  t.slide
+                    ? `スライド量 dX ${t.slide.dx} / dY ${t.slide.dy} / dZ ${t.slide.dz}`
+                    : undefined
+                }
+              >
+                {t.label}
+                <span className="ml-1 text-slate-400">{t.n}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {/* 記録セット。 スライド量 は セット ごと に 持つ */}
       <details className="border-b bg-slate-50">
         <summary className="px-3 py-1.5 text-xs font-medium text-slate-700 cursor-pointer select-none">
@@ -1525,7 +1599,9 @@ export function StakingRecordsPage() {
                     onClick={(e) => e.stopPropagation()}
                   />
                 </th>
-                <th className="px-2 py-2 border-b border-r text-left" rowSpan={2}>種別</th>
+                <th className="px-2 py-2 border-b border-r text-left whitespace-nowrap" rowSpan={2}>
+                  種別
+                </th>
                 {TABLE_SECTIONS.map((sec) => {
                   if (isHidden(sec.key)) {
                     return (
@@ -1634,7 +1710,7 @@ export function StakingRecordsPage() {
                         }}
                       />
                     </td>
-                    <td className="px-2 py-1.5 border-b border-r">
+                    <td className="px-2 py-1.5 border-b border-r whitespace-nowrap">
                       <span
                         className={`text-[10px] px-1.5 py-0.5 rounded ${
                           g.targetType === 'free'
@@ -1661,29 +1737,21 @@ export function StakingRecordsPage() {
                           ×2
                         </span>
                       )}
-                      {/* 記録セット。 ここ で 点 ごと に 移せる。
-                          スライド量 は セット ごと な ので 選び直す と 補正 も 変わる。 */}
-                      {sets.length > 0 && (
-                        <select
-                          value={(g.m1 ?? g.m2)?.recordSetId ?? ''}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => {
-                            e.stopPropagation()
-                            const ids = [g.m1?.id, g.m2?.id].filter((x): x is string => !!x)
-                            if (ids.length === 0) return
-                            void handleMoveToSet(ids, e.target.value || null)
-                          }}
-                          className="mt-0.5 block w-full max-w-[9rem] px-1 py-0.5 text-[10px] border rounded bg-white"
-                          title="この点の実測記録が属する記録セット"
-                        >
-                          <option value="">（未振り分け）</option>
-                          {sets.map((st) => (
-                            <option key={st.id} value={st.id}>
-                              {setLabel(st)}
-                            </option>
-                          ))}
-                        </select>
-                      )}
+                      {/* 行 の 高さ を 増やさない ため、選択欄 は 置かない。
+                          点 ごと の 移動 は 行 を 選んで 上 の 「セットへ移動」 から。
+                          どの セット か は タブ で 分かる ので、「すべて」 の ときだけ 添える。 */}
+                      {setTab === 'all' && sets.length > 0 && (() => {
+                        const sid = (g.m1 ?? g.m2)?.recordSetId ?? null
+                        const st = sid ? sets.find((x) => x.id === sid) : null
+                        return (
+                          <span
+                            className="ml-1 text-[10px] text-slate-500"
+                            title="記録セット"
+                          >
+                            {st ? setLabel(st) : '未振り分け'}
+                          </span>
+                        )
+                      })()}
                     </td>
                     {/* 設計 (点名 + XYZ + リンク 操作 ボタン) — 実測1 の record を 対象 */}
                     {!isHidden('design') && <>
