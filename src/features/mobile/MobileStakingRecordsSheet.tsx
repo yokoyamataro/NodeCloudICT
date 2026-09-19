@@ -12,7 +12,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
 import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
 import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
-import { fetchSurveySlide, NO_SLIDE, type SurveySlide } from '@/lib/surveyCalibration'
+import {
+  fetchSurveySlide,
+  saveSurveySlide,
+  NO_SLIDE,
+  type SurveySlide,
+} from '@/lib/surveyCalibration'
 
 /** 記録 が どの 設計点 を 狙った もの か を 短く */
 function targetKindLabel(r: StakingRecord): string {
@@ -23,6 +28,50 @@ function targetKindLabel(r: StakingRecord): string {
 }
 
 const f3 = (v: number | null | undefined): string => (v == null ? '—' : v.toFixed(3))
+
+/**
+ * スライド量 の 1 軸 ぶん の 入力。 触って いない 間 は mm 単位 (小数 3 桁)、
+ * フォーカス 中 だけ 生 の 文字列 を 持つ (末尾 の 0 が 邪魔 で 打てない の を 避ける)。
+ */
+function SlideField({
+  label,
+  value,
+  onCommit,
+  disabled,
+}: {
+  label: string
+  value: number
+  onCommit: (v: number) => void
+  disabled?: boolean
+}) {
+  const [buf, setBuf] = useState<string | null>(null)
+  return (
+    <label className="flex items-center gap-1">
+      <span className="text-slate-500">{label}</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        disabled={disabled}
+        value={buf ?? value.toFixed(3)}
+        onFocus={() => setBuf(String(value))}
+        onChange={(e) => setBuf(e.target.value)}
+        onBlur={() => {
+          const raw = buf
+          setBuf(null)
+          if (raw == null) return
+          const n = parseFloat(raw.trim())
+          if (!Number.isFinite(n)) return
+          const rounded = Math.round(n * 1000) / 1000
+          if (rounded !== value) onCommit(rounded)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+        }}
+        className="w-16 px-1 py-0.5 border rounded text-right tabular-nums bg-white disabled:bg-slate-100"
+      />
+    </label>
+  )
+}
 
 /** 設計 と 実測 の 差 (m)。 設計 が 無い 記録 は null */
 function deltaOf(r: StakingRecord, slide: SurveySlide) {
@@ -43,6 +92,7 @@ export function MobileStakingRecordsSheet({
   onClose: () => void
 }) {
   const records = useStakingStore((s) => s.records)
+  const updateSet = useSurveySetStore((s) => s.updateSet)
   const loading = useStakingStore((s) => s.loading)
   const fetchRecords = useStakingStore((s) => s.fetchRecords)
   const sets = useSurveySetStore((s) => s.sets)
@@ -84,11 +134,30 @@ export function MobileStakingRecordsSheet({
     return [...base].sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))
   }, [mine, tab])
 
-  /** タブ で 選んで いる セット の スライド量 (すべて / 未振り分け は 工区 の 値) */
-  const tabSlide: SurveySlide =
-    tab === 'all' || tab === 'none'
-      ? farmSlide
-      : (sets.find((s) => s.id === tab)?.slide ?? farmSlide)
+  /** タブ で 選んで いる セット (すべて / 未振り分け は null = 工区 の 既定) */
+  const tabSet = tab === 'all' || tab === 'none' ? null : (sets.find((s) => s.id === tab) ?? null)
+  const tabSlide: SurveySlide = tabSet?.slide ?? farmSlide
+
+  const [slideSaving, setSlideSaving] = useState(false)
+  const [slideError, setSlideError] = useState<string | null>(null)
+  /** スライド量 を 保存。 セット を 選んで いれば セット、それ 以外 は 工区 の 既定 */
+  const commitSlide = async (next: SurveySlide) => {
+    setSlideSaving(true)
+    setSlideError(null)
+    try {
+      if (tabSet) {
+        await updateSet(tabSet.id, { slide: next })
+      } else {
+        await saveSurveySlide(farmId, next)
+        setFarmSlide(next)
+      }
+    } catch (e) {
+      console.error('[mobile slide]', e)
+      setSlideError(e instanceof Error ? e.message : 'スライド量 の 保存 に 失敗')
+    } finally {
+      setSlideSaving(false)
+    }
+  }
 
   return (
     <div className="absolute inset-x-0 bottom-0 z-[1000] bg-white border-t shadow-xl max-h-[70%] flex flex-col">
@@ -134,15 +203,32 @@ export function MobileStakingRecordsSheet({
             </button>
           ))}
         </div>
-        <div className="py-1 text-[11px] text-slate-500 font-mono">
-          スライド量 dX {tabSlide.dx.toFixed(3)} / dY {tabSlide.dy.toFixed(3)} / dZ{' '}
-          {tabSlide.dz.toFixed(3)}
-          {tab === 'all' && sets.length > 0 && (
-            <span className="ml-1 font-sans text-slate-400">
-              (すべて は 工区 の 値。 差 は 記録 ごと の セット で 補正)
+        {/* スライド量。 セット を 選んで いれば その セット、それ 以外 は 工区 の 既定。
+            現場 で 基準局 を 立て 直した 直後 に 入れ たい ので ここ で 直せる ように する。 */}
+        <div className="py-1 flex items-center gap-2 text-[11px] flex-wrap">
+          <span className="text-slate-500">
+            スライド量
+            <span className="ml-1 text-slate-400">
+              ({tabSet ? setLabel(tabSet) : '工区の既定'})
             </span>
-          )}
+          </span>
+          {slideSaving && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+          {(['dx', 'dy', 'dz'] as const).map((axis) => (
+            <SlideField
+              key={axis}
+              label={axis === 'dx' ? 'dX' : axis === 'dy' ? 'dY' : 'dZ'}
+              value={tabSlide[axis]}
+              disabled={slideSaving}
+              onCommit={(v) => void commitSlide({ ...tabSlide, [axis]: v })}
+            />
+          ))}
         </div>
+        {tab === 'all' && sets.length > 0 && (
+          <div className="pb-1 text-[10px] text-slate-400">
+            「すべて」 は 工区 の 既定 を 直します。 差 の 計算 は 記録 ごと の セット の 値。
+          </div>
+        )}
+        {slideError && <div className="pb-1 text-[11px] text-red-600">{slideError}</div>}
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto">

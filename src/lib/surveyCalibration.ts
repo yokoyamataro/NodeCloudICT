@@ -67,6 +67,33 @@ export async function fetchSurveySlide(farmId: string): Promise<SurveySlide> {
   return { dx, dy, dz }
 }
 
+/**
+ * 工区 の スライド量 を 保存 する。 記録セット に 属さない 記録 (未振り分け) の
+ * 土俵 に なる 値。 セット ごと の 値 は survey_record_sets 側 に 持つ。
+ *
+ * Z だけ は 旧 localStorage も 併せて 更新 する (読み側 が そちら に 落ちる ため)。
+ */
+export async function saveSurveySlide(farmId: string, slide: SurveySlide): Promise<void> {
+  const { error } = await supabase.from('design_survey_calibration').upsert(
+    {
+      farm_id: farmId,
+      is_enabled: true,
+      dx_offset: slide.dx,
+      dy_offset: slide.dy,
+      dz_offset: slide.dz,
+    } as never,
+    { onConflict: 'farm_id' },
+  )
+  if (error) throw error
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(`staking:zOffset:${farmId}`, String(slide.dz))
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 /** 実測値を 設計の 土俵に 乗せる (実測 − スライド量) */
 export function applyReverseSlide(
   p: { x: number; y: number; z: number },
