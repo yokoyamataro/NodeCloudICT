@@ -1,7 +1,10 @@
 // GPS 設定モーダル。バッジ (GPS設定ボタン) から開かれる 3 タブの統合 UI:
-//   1. GPS接続  — Drogger BT 接続状態 / Fix品質 / 再接続
+//   1. GPS接続   — Drogger BT 接続状態 / Fix品質 / 再接続 + スカイマップ / 受信状況
 //   2. NTRIP接続 — NTRIP キャスター プロファイル管理 + 接続
-//   3. 衛星状況 — スカイマップ + SNR バー
+//   3. 計測設定  — 音声ガイダンス / 平均秒数 / アンテナ高 / ジオイド補正
+//
+// 「今 どんな 電波 を 掴んで いる か」 は 接続 の 話 な ので GPS接続 に 寄せ、
+// 測り方 の 設定 は 独立 した タブ に する。
 //
 // これまで DroggerStatusBadge の 隣にあった NTRIP 歯車ボタンを 廃止し、
 // 全ての GNSS 関連設定を ここに集約する。
@@ -53,7 +56,7 @@ import {
 } from '@/lib/ntripPrefs'
 import { SkyMap } from '@/features/ntrip/SkyMap'
 
-type Tab = 'gps' | 'ntrip' | 'sky'
+type Tab = 'gps' | 'ntrip' | 'measure'
 
 interface Props {
   open: boolean
@@ -127,13 +130,13 @@ export function GpsSettingsModal({ open, onClose }: Props) {
         <div className="flex border-b bg-slate-50 text-[11px]">
           <TabButton active={tab === 'gps'} onClick={() => setTab('gps')} icon={<Wifi className="h-3 w-3" />} label="GPS接続" />
           <TabButton active={tab === 'ntrip'} onClick={() => setTab('ntrip')} icon={<Radio className="h-3 w-3" />} label="NTRIP接続" />
-          <TabButton active={tab === 'sky'} onClick={() => setTab('sky')} icon={<Satellite className="h-3 w-3" />} label="衛星状況" />
+          <TabButton active={tab === 'measure'} onClick={() => setTab('measure')} icon={<Satellite className="h-3 w-3" />} label="計測設定" />
         </div>
 
         <div className="p-4">
           {tab === 'gps' && <GpsConnectionTab />}
           {tab === 'ntrip' && <NtripTab />}
-          {tab === 'sky' && <SkyMap />}
+          {tab === 'measure' && <GnssSettingsSection />}
         </div>
       </div>
     </div>
@@ -475,8 +478,10 @@ function GpsConnectionTab() {
         </div>
       )}
 
-      {/* ---- 端末側 GNSS 設定 (音声 / 平均秒数 / アンテナ高 / ジオイド) ---- */}
-      <GnssSettingsSection />
+      {/* ---- 今 掴んで いる 衛星 (スカイマップ + 受信状況) ---- */}
+      <div className="border-t pt-3">
+        <SkyMap />
+      </div>
     </div>
   )
 }
@@ -533,6 +538,7 @@ function AntennaHeightInput({
   )
 }
 
+/** 計測設定 タブ の 中身。 測り方 に 関わる 端末側 の 設定 */
 function GnssSettingsSection() {
   const {
     avgSeconds,
@@ -548,8 +554,7 @@ function GnssSettingsSection() {
   } = useGnssSettingsStore()
 
   return (
-    <div className="border-t pt-3 space-y-3">
-      <div className="text-slate-700 font-semibold">計測設定</div>
+    <div className="space-y-3">
 
       {/* 音声ガイダンス */}
       <label className="flex items-center gap-2">
