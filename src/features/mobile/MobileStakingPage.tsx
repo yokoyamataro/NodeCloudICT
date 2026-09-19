@@ -107,6 +107,7 @@ import {
 import { MobileStakingRecordsSheet } from './MobileStakingRecordsSheet'
 import { MobileSurveySetPicker } from './MobileSurveySetPicker'
 import { useSurveySetStore } from '@/stores/surveySetStore'
+import { NO_SLIDE, type SurveySlide } from '@/lib/surveyCalibration'
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
 import { useLayerOrder } from '@/features/orthophoto/OverviewLayerPanel'
 import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
@@ -868,8 +869,11 @@ export function MobileStakingPage() {
   /**
    * この 起動 で 測る 記録セット。 最初 の 「測定」 で 選ぶ (または 作る) まで null。
    * 決まって いない 間 は 測定 の 代わり に 選択 ダイアログ を 出す。
+   * GPS設定 の 計測設定 から も 切り替える ので store に 置く。
    */
-  const [sessionSetId, setSessionSetId] = useState<string | null>(null)
+  const sessionSetId = useSurveySetStore((s) => s.activeSetId)
+  const setSessionSetId = useSurveySetStore((s) => s.setActiveSetId)
+  const surveySets = useSurveySetStore((s) => s.sets)
   /** セット を 決めた 後 に 続き で 走らせる 測定 */
   const [pendingStart, setPendingStart] = useState<{ forceFreePoint?: boolean } | null>(null)
   const touchSurveySet = useSurveySetStore((s) => s.touchSet)
@@ -2950,21 +2954,49 @@ export function MobileStakingPage() {
   )
 
 
+  /**
+   * 作業中 の 記録セット の 補正値 (スライド量)。 実測 は この 分 だけ ずれて
+   * いる ので、設計 と 比べる とき は 引いて から 比べる。
+   */
+  const sessionSlide = useMemo<SurveySlide>(() => {
+    const hit = sessionSetId ? surveySets.find((x) => x.id === sessionSetId) : null
+    return hit?.slide ?? NO_SLIDE
+  }, [sessionSetId, surveySets])
+  const hasSlide =
+    sessionSlide.dx !== 0 || sessionSlide.dy !== 0 || sessionSlide.dz !== 0
+
+  /**
+   * 補正後 の 自己位置 (実測 − スライド量)。 設計 の 土俵 に 乗せた 位置 で、
+   * 誘導 (方位 / 距離 / 近接) と 比高 は すべて これ を 使う。
+   * 補正値 が 0 の ときは 実測 そのもの。
+   */
+  const correctedPos = useMemo<[number, number] | null>(() => {
+    if (!currentPos) return null
+    if (!hasSlide) return currentPos
+    try {
+      const xy = converter.toXY(currentPos[0], currentPos[1])
+      const ll = converter.toLatLng(xy.x - sessionSlide.dx, xy.y - sessionSlide.dy)
+      return [ll.lat, ll.lng]
+    } catch {
+      return currentPos
+    }
+  }, [currentPos, converter, hasSlide, sessionSlide.dx, sessionSlide.dy])
+
   const distanceToTarget = useMemo(() => {
-    if (!currentPos || !selectedTarget) return null
+    if (!correctedPos || !selectedTarget) return null
     return distanceMeters(
-      { lat: currentPos[0], lng: currentPos[1] },
+      { lat: correctedPos[0], lng: correctedPos[1] },
       { lat: selectedTarget.lat, lng: selectedTarget.lng },
     )
-  }, [currentPos, selectedTarget])
+  }, [correctedPos, selectedTarget])
 
   const bearingToTarget = useMemo(() => {
-    if (!currentPos || !selectedTarget) return null
+    if (!correctedPos || !selectedTarget) return null
     return bearingDeg(
-      { lat: currentPos[0], lng: currentPos[1] },
+      { lat: correctedPos[0], lng: correctedPos[1] },
       { lat: selectedTarget.lat, lng: selectedTarget.lng },
     )
-  }, [currentPos, selectedTarget])
+  }, [correctedPos, selectedTarget])
 
   /**
    * 画面の 上を どの 方位に 合わせるか [deg, 真北から 時計回り]。
@@ -2988,15 +3020,17 @@ export function MobileStakingPage() {
     [heading],
   )
 
-  // 現在位置を平面直角座標 (X=北, Y=東) に変換
+  // 現在位置を平面直角座標 (X=北, Y=東) に変換。 補正値 が 入って いれば
+  // 引いた 後 の 値 (設計 の 土俵) を 返す。
   const currentXY = useMemo(() => {
     if (!currentPos) return null
     try {
-      return converter.toXY(currentPos[0], currentPos[1])
+      const xy = converter.toXY(currentPos[0], currentPos[1])
+      return { x: xy.x - sessionSlide.dx, y: xy.y - sessionSlide.dy }
     } catch {
       return null
     }
-  }, [currentPos, converter])
+  }, [currentPos, converter, sessionSlide.dx, sessionSlide.dy])
 
   // 近接モード: 自己位置→ターゲットの相対位置（測量座標 X=北/Y=東 ベースで高精度）
   const proximityRel = useMemo(() => {
@@ -3258,7 +3292,9 @@ export function MobileStakingPage() {
   // 近接モードに 出す 比高 (自分の 地表高 − ターゲットの 設計高)。
   // 正 = 自分が 高い (掘る)、負 = 自分が 低い (盛る)。trenchDiff と 同じ 向き。
   const targetHeightDiff =
-    selfElevation !== null && selectedTarget?.z != null ? selfElevation - selectedTarget.z : null
+    selfElevation !== null && selectedTarget?.z != null
+      ? selfElevation - sessionSlide.dz - selectedTarget.z
+      : null
 
   // 断面モードでは 近接モードに 入らない。断面線上を 動きながら 何点も 拾う
   // 使い方なので、1m 以内で 地図が レーダーに 変わると 作業が 止まる

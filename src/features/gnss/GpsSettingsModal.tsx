@@ -26,6 +26,7 @@ import {
   VolumeX,
 } from 'lucide-react'
 import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
+import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
 import { useDroggerConnection } from '@/stores/droggerConnectionStore'
 import {
   DroggerLocation,
@@ -538,6 +539,116 @@ function AntennaHeightInput({
   )
 }
 
+/**
+ * 実測 の 記録セット と 補正値 (スライド量)。
+ *
+ * ここ で 選んだ セット が 「今 測って いる セット」 に なり、実測 は そこ に 入る。
+ * 補正値 は その セット の もの で、入れる と 実測 は 設計 の 土俵 に 乗せ 直され、
+ * ターゲット の 誘導 (方位 / 距離 / 近接) と 比高 も 補正後 の 値 で 出る。
+ *
+ * 工区 を 開いて いない 画面 (現場 / 工区 一覧) では セット が 無い ので 出さない。
+ */
+function SurveySetBar() {
+  const sets = useSurveySetStore((s) => s.sets)
+  const activeSetId = useSurveySetStore((s) => s.activeSetId)
+  const setActiveSetId = useSurveySetStore((s) => s.setActiveSetId)
+  const updateSet = useSurveySetStore((s) => s.updateSet)
+  const touchSet = useSurveySetStore((s) => s.touchSet)
+  const active = sets.find((s) => s.id === activeSetId) ?? null
+
+  if (sets.length === 0) {
+    return (
+      <div className="border-t pt-3 text-[11px] text-slate-400">
+        実測 の 記録セット は 工区 を 開いて 最初 の 「測定」 で 決まります。
+      </div>
+    )
+  }
+
+  return (
+    <div className="border-t pt-3 space-y-2">
+      <div className="text-slate-700 font-semibold">実測セット と 補正値</div>
+      <label className="flex items-center gap-2">
+        <span className="w-16 shrink-0 text-slate-500">セット</span>
+        <select
+          value={activeSetId ?? ''}
+          onChange={(e) => {
+            const id = e.target.value || null
+            setActiveSetId(id)
+            if (id) void touchSet(id, { start: true })
+          }}
+          className="flex-1 px-2 py-1.5 border border-slate-300 rounded"
+        >
+          <option value="">(選択なし)</option>
+          {sets.map((s) => (
+            <option key={s.id} value={s.id}>
+              {setLabel(s)}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="flex items-center gap-2">
+        <span className="w-16 shrink-0 text-slate-500">補正値</span>
+        {(['dx', 'dy', 'dz'] as const).map((axis) => (
+          <label key={axis} className="flex items-center gap-1 flex-1">
+            <span className="text-[10px] text-slate-400">
+              {axis === 'dx' ? 'dX' : axis === 'dy' ? 'dY' : 'dZ'}
+            </span>
+            <SlideInput
+              value={active?.slide[axis] ?? 0}
+              disabled={!active}
+              onCommit={(v) => {
+                if (!active) return
+                void updateSet(active.id, { slide: { ...active.slide, [axis]: v } })
+              }}
+            />
+          </label>
+        ))}
+      </div>
+      <div className="text-[10px] text-slate-500 pl-16">
+        実測 − 補正値 = 設計 の 土俵。 入れる と 実測 の 表示 も、ターゲット の
+        誘導 と 比高 も 補正後 の 値 に なります (X=北 / Y=東、単位 m)。
+      </div>
+    </div>
+  )
+}
+
+/** 補正値 1 軸 の 入力。 触って いない 間 は mm 単位 (小数 3 桁) で 揃える */
+function SlideInput({
+  value,
+  onCommit,
+  disabled,
+}: {
+  value: number
+  onCommit: (v: number) => void
+  disabled?: boolean
+}) {
+  const [buf, setBuf] = useState<string | null>(null)
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      disabled={disabled}
+      value={buf ?? value.toFixed(3)}
+      onFocus={() => setBuf(String(value))}
+      onChange={(e) => setBuf(e.target.value)}
+      onBlur={() => {
+        const raw = buf
+        setBuf(null)
+        if (raw == null) return
+        const n = parseFloat(raw.trim())
+        if (!Number.isFinite(n)) return
+        const rounded = Math.round(n * 1000) / 1000
+        if (rounded !== value) onCommit(rounded)
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
+      }}
+      className="w-full min-w-0 px-1 py-1 border border-slate-300 rounded text-right font-mono disabled:bg-slate-100"
+    />
+  )
+}
+
 /** 計測設定 タブ の 中身。 測り方 に 関わる 端末側 の 設定 */
 function GnssSettingsSection() {
   const {
@@ -549,8 +660,6 @@ function GnssSettingsSection() {
     setAntennaHeight,
     useGeoidCorrection,
     setUseGeoidCorrection,
-    headingUp,
-    setHeadingUp,
   } = useGnssSettingsStore()
 
   return (
@@ -604,20 +713,12 @@ function GnssSettingsSection() {
         <span>ジオイド補正 (JPGEO2024)</span>
       </label>
 
-      {/* 方位表示の 基準 (測設画面の 矢印 / 近接モードの レーダー) */}
-      <label className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          checked={headingUp}
-          onChange={(e) => setHeadingUp(e.target.checked)}
-        />
-        <span>方位を 進行方向基準で 表示</span>
-      </label>
-      <div className="text-[10px] text-slate-500 -mt-2 pl-6">
-        OFF = 北が 上。ON = 自分の 向きが 上 (歩行中は GNSS の 進行方向、静止中は
-        端末の コンパス)。静止中の 向きには 方位センサーの 許可が 要るので、
-        測設画面の 「進行↑」ボタンから ON に すると 確実です。
-      </div>
+      {/* 方位 の 基準 (北 ⇄ 進行方向) は 測設画面 の ターゲット 横 の
+          「N↑ / 進行↑」 ボタン に 一本化 した。 静止中 の 向き に 要る
+          方位センサー の 許可 を その 場 で 求められる ため。 */}
+
+      {/* 実測 の 記録セット と 補正値 */}
+      <SurveySetBar />
     </div>
   )
 }

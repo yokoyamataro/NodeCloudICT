@@ -80,6 +80,13 @@ export function setLabel(s: SurveyRecordSet): string {
 interface State {
   loadedFarmId: string | null
   sets: SurveyRecordSet[]
+  /**
+   * この 起動 で 測って いる セット。 スマホ の 最初 の 「測定」 で 決める。
+   * 端末 に は 残さ ない (別 の 日 / 別 の 作業 で 引きずら ない ため)。
+   * 実測 の 保存先 と、誘導 に 使う 補正値 (スライド量) の 出どころ。
+   */
+  activeSetId: string | null
+  setActiveSetId: (id: string | null) => void
   loading: boolean
   error: string | null
 
@@ -103,12 +110,15 @@ interface State {
 export const useSurveySetStore = create<State>((set, get) => ({
   loadedFarmId: null,
   sets: [],
+  activeSetId: null,
+  setActiveSetId: (id) => set({ activeSetId: id }),
   loading: false,
   error: null,
 
   invalidateCache: () => set({ loadedFarmId: null }),
 
   fetchByFarm: async (farmId, force = false) => {
+    if (get().loadedFarmId !== farmId) set({ activeSetId: null })
     if (!force && get().loadedFarmId === farmId) return
     set({ loading: true, error: null })
     try {
