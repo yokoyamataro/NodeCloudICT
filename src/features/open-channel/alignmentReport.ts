@@ -17,7 +17,7 @@
 
 import type { DrawItem } from '@/features/boundary-survey/floorPlanDraw'
 import {
-  getCurveMarkers,
+  getCornerIpStations,
   getIpCornerGuides,
   pointAtDistance,
   tangentAtDistance,
@@ -234,6 +234,60 @@ function at(segments: AlignmentSegment[], d: number) {
   }
 }
 
+/**
+ * 曲線 の かたまり を 1 つ の IP 分 として 取り出す。
+ *
+ * 区間 は 直線 → (緩和) → 円弧 → (緩和) → 直線 と 並ぶ ので、直線 で ない 区間 が
+ * 続いて いる 間 が 1 つ の IP の 曲線。 主要点 の 呼び方 は 現場 の 呼び方 に 合わせる:
+ *   緩和あり … BTC (緩和始点) → BC (円始点) → EC (円終点) → ETC (緩和終点)
+ *   緩和なし … BC → EC
+ * 円弧 の 中心角 は EC の 行 に 添える。
+ */
+function curveGroups(
+  segments: AlignmentSegment[],
+): { points: { name: string; d: number; center?: number }[]; length: number }[] {
+  const out: { points: { name: string; d: number; center?: number }[]; length: number }[] = []
+  let acc = 0
+  let cur: { points: { name: string; d: number; center?: number }[]; length: number } | null = null
+  for (const s of segments) {
+    if (s.kind === 'line') {
+      if (cur) {
+        out.push(cur)
+        cur = null
+      }
+      acc += s.length
+      continue
+    }
+    if (!cur) cur = { points: [], length: 0 }
+    const push = (name: string, d: number, center?: number) => {
+      // 同じ 位置 に 2 つ 出さない (円弧 の 始点 = 緩和 の 終点)
+      if (cur && !cur.points.some((p) => Math.abs(p.d - d) < 1e-6)) {
+        cur.points.push({ name, d, center })
+      }
+    }
+    if (s.kind === 'spiral') {
+      if (s.direction === 'in') {
+        push('BTC', acc)
+        push('BC', acc + s.length)
+      } else {
+        push('EC', acc)
+        push('ETC', acc + s.length)
+      }
+    } else {
+      push('BC', acc)
+      push('EC', acc + s.length, (Math.abs(s.dA) * 180) / Math.PI)
+      // 緩和 が 先 に EC を 置いて いる 場合 は 中心角 だけ 足す
+      const ec = cur.points.find((p) => Math.abs(p.d - (acc + s.length)) < 1e-6)
+      if (ec) ec.center = (Math.abs(s.dA) * 180) / Math.PI
+    }
+    cur.length += s.length
+    acc += s.length
+  }
+  if (cur) out.push(cur)
+  for (const g of out) g.points.sort((a, b) => a.d - b.d)
+  return out
+}
+
 function buildRoutePages(input: AlignmentReportInput): DrawItem[][] {
   const { vertices, vertexNames, segments, spOffset } = input
   const pages: DrawItem[][] = []
@@ -310,11 +364,11 @@ function buildRoutePages(input: AlignmentReportInput): DrawItem[][] {
   drawTable(p1, 14, y, ipCols, ipRows)
   pages.push(p1)
 
-  // ---- 2 枚目: 主要点計算書
-  const p2: DrawItem[] = []
-  y = pageHeader(p2, input, '主\u3000要\u3000点\u3000計\u3000算\u3000書', 2)
-
-  // IP ごと の 1 行 ボックス
+  // ---- 2 枚目 以降: 主要点計算書
+  //
+  // 線形点 (BP / IP / EP) の 箱 を 1 つ 出し、その すぐ 下 に その 点 に 属する
+  // 主要点 を 並べる。 IP に 曲線 が 当たって いれば BTC / BC / EC / ETC、
+  // 角折れ の IP は その 点 自身、BP / EP は 端点 が 1 行。
   const boxCols: Col[] = [
     { label: '', w: 16 },
     { label: '', w: 20 },
@@ -328,31 +382,6 @@ function buildRoutePages(input: AlignmentReportInput): DrawItem[][] {
     { label: '', w: 26, align: 'end' },
     { label: '', w: 63 },
   ]
-  // 箱 が 増える と 表 の 場所 が 無くなる ので、半分 より 下 に は 置かない
-  const BOX_LIMIT_Y = REPORT_SHEET.h * 0.5
-  let boxesShown = 0
-  vertices.forEach((v, i) => {
-    if (y + 5.2 > BOX_LIMIT_Y) return
-    boxesShown += 1
-    const rows: Cell[][] = [
-      [
-        'IPタイプ',
-        v.kind === 'bp' ? 'BP' : v.kind === 'ep' ? 'EP' : 'IP',
-        'IPNo.',
-        '',
-        'IP点名',
-        { t: vertexNames[i] ?? '', align: 'start' },
-        'Ｘ座標',
-        { t: f3(v.x), align: 'end' },
-        'Ｙ座標',
-        { t: f3(v.y), align: 'end' },
-        '',
-      ],
-    ]
-    y = drawTable(p2, 14, y, boxCols, rows, { noHead: true, rowH: 5.2 }) + 2.4
-  })
-
-  // 全長 と 交角
   const lenCols: Col[] = [
     { label: '', w: 16 },
     { label: '', w: 22, align: 'end' },
@@ -361,28 +390,6 @@ function buildRoutePages(input: AlignmentReportInput): DrawItem[][] {
     { label: '', w: 12 },
     { label: '', w: 20, align: 'end' },
   ]
-  if (boxesShown < vertices.length) {
-    text(p2, 14, y + 2.4, `※ 線形点 は 全 ${vertices.length} 点。 残り は 下 の 表 を 参照`, 2.4)
-    y += 4.4
-  }
-  const ipSpan =
-    vertices.length >= 2
-      ? Math.hypot(
-          vertices[vertices.length - 1].x - vertices[0].x,
-          vertices[vertices.length - 1].y - vertices[0].y,
-        )
-      : 0
-  y =
-    drawTable(
-      p2,
-      14,
-      y + 1.5,
-      lenCols,
-      [['L=', { t: f3(total), align: 'end' }, 'IP間距離=', { t: f3(ipSpan), align: 'end' }, 'IA=', '']],
-      { noHead: true, rowH: 5.2 },
-    ) + 4.0
-
-  // 主要点 (BP / BC / EC / TS / SC / CS / ST / EP)
   const mainCols: Col[] = [
     { label: '点\u3000\u3000名', w: 44, align: 'start' },
     { label: 'ＳＰ', w: 26, align: 'end' },
@@ -393,56 +400,127 @@ function buildRoutePages(input: AlignmentReportInput): DrawItem[][] {
     { label: '横断方向角', w: 26 },
     { label: '中\u3000心\u3000角', w: 28 },
   ]
-  const MARKER_LABEL: Record<string, string> = {
-    bc: 'BC',
-    ec: 'EC',
-    ts: 'TS',
-    sc: 'SC',
-    cs: 'CS',
-    st: 'ST',
-  }
-  const mains: { name: string; d: number; center?: number }[] = []
-  mains.push({ name: vertexNames[0] ?? 'BP', d: 0 })
-  for (const m of getCurveMarkers(segments)) {
-    mains.push({ name: MARKER_LABEL[m.kind] ?? m.kind.toUpperCase(), d: m.distance })
-  }
-  // 円弧 の 中心角 は EC 行 に 添える
-  let acc = 0
-  for (const sgm of segments) {
-    if (sgm.kind === 'arc') {
-      const dEnd = acc + sgm.length
-      const hit = mains.find((r) => Math.abs(r.d - dEnd) < 1e-6)
-      if (hit) hit.center = (Math.abs(sgm.dA) * 180) / Math.PI
-    }
-    acc += sgm.length
-  }
-  mains.push({ name: vertexNames[vertices.length - 1] ?? 'EP', d: total })
-  mains.sort((a, b) => a.d - b.d)
 
-  const mainRows: Cell[][] = mains.map((r, i) => {
-    const g = at(segments, r.d)
-    const prev = i > 0 ? mains[i - 1].d : null
-    return [
-      { t: r.name, align: 'start' },
-      { t: f3(r.d + spOffset), align: 'end' },
-      { t: prev == null ? '' : f3(r.d - prev), align: 'end' },
-      { t: f3(g.x), align: 'end' },
-      { t: f3(g.y), align: 'end' },
-      Number.isFinite(g.az) ? formatDms(g.az) : '',
-      Number.isFinite(g.az) ? formatDms(g.az + 90) : '',
-      r.center != null ? formatDms(r.center) : '',
-    ]
-  })
-  const cap = rowCapacity(y)
-  drawTable(p2, 14, y, mainCols, mainRows.slice(0, cap))
-  pages.push(p2)
-  // 溢れ た 分 は 見出し だけ の ページ に 続ける
-  for (let i = cap; i < mainRows.length; i += ROWS_PER_PAGE) {
-    const pn: DrawItem[] = []
-    const y2 = pageHeader(pn, input, '主\u3000要\u3000点\u3000計\u3000算\u3000書', pages.length + 1)
-    drawTable(pn, 14, y2, mainCols, mainRows.slice(i, i + ROWS_PER_PAGE))
-    pages.push(pn)
+  // IP ごと の 主要点 を 束ねる
+  const groups = curveGroups(segments)
+  const curveIpIndexes = getIpCornerGuides(vertices).map((g) => g.vertexIndex)
+  const cornerAt = new Map<number, number>()
+  for (const c of getCornerIpStations(vertices)) cornerAt.set(c.vertexIndex, c.distance)
+
+  /** 主要点 1 点 */
+  interface MainPt {
+    name: string
+    d: number
+    center?: number
   }
+  const ptsOfVertex = (i: number): MainPt[] => {
+    const v = vertices[i]
+    if (v.kind === 'bp') return [{ name: vertexNames[i] || 'BP', d: 0 }]
+    if (v.kind === 'ep') return [{ name: vertexNames[i] || 'EP', d: total }]
+    const gi = curveIpIndexes.indexOf(i)
+    if (gi >= 0 && groups[gi]) return groups[gi].points
+    const d = cornerAt.get(i)
+    return d == null ? [] : [{ name: vertexNames[i] || `IP${i}`, d }]
+  }
+
+  // 1 点 ぶん の 高さ を 測って から 置く (足り なけれ ば 次 の ページ)
+  let page: DrawItem[] = []
+  let pageNo = 2
+  y = pageHeader(page, input, '主\u3000要\u3000点\u3000計\u3000算\u3000書', pageNo)
+  let ipNo2 = 0
+
+  vertices.forEach((v, i) => {
+    const pts = ptsOfVertex(i)
+    const next = vertices[i + 1]
+    const ipSpan = next ? Math.hypot(next.x - v.x, next.y - v.y) : NaN
+    let ia = NaN
+    const prev = vertices[i - 1]
+    if (prev && next) {
+      const azIn = azimuthDeg(v.x - prev.x, v.y - prev.y)
+      const azOut = azimuthDeg(next.x - v.x, next.y - v.y)
+      let dd = Math.abs(azOut - azIn) % 360
+      if (dd > 180) dd = 360 - dd
+      ia = dd
+    }
+    const gi = curveIpIndexes.indexOf(i)
+    const curveLen = gi >= 0 && groups[gi] ? groups[gi].length : NaN
+    const hasLenRow = Number.isFinite(ipSpan) || Number.isFinite(ia) || Number.isFinite(curveLen)
+
+    const h =
+      5.2 + 2.0 + (hasLenRow ? 5.2 + 2.0 : 0) + (pts.length > 0 ? 5.0 + pts.length * 4.6 : 0) + 4.0
+    if (y + h > BODY_BOTTOM) {
+      pages.push(page)
+      page = []
+      pageNo += 1
+      y = pageHeader(page, input, '主\u3000要\u3000点\u3000計\u3000算\u3000書', pageNo)
+    }
+
+    if (v.kind === 'ip') ipNo2 += 1
+    y =
+      drawTable(
+        page,
+        14,
+        y,
+        boxCols,
+        [
+          [
+            'IPタイプ',
+            v.kind === 'bp' ? 'BP' : v.kind === 'ep' ? 'EP' : 'IP',
+            'IPNo.',
+            v.kind === 'ip' ? String(ipNo2) : '',
+            'IP点名',
+            { t: vertexNames[i] ?? '', align: 'start' },
+            'Ｘ座標',
+            { t: f3(v.x), align: 'end' },
+            'Ｙ座標',
+            { t: f3(v.y), align: 'end' },
+            '',
+          ],
+        ],
+        { noHead: true, rowH: 5.2 },
+      ) + 2.0
+
+    if (hasLenRow) {
+      y =
+        drawTable(
+          page,
+          14,
+          y,
+          lenCols,
+          [
+            [
+              'L=',
+              { t: Number.isFinite(curveLen) ? f3(curveLen) : '', align: 'end' },
+              'IP間距離=',
+              { t: Number.isFinite(ipSpan) ? f3(ipSpan) : '', align: 'end' },
+              'IA=',
+              { t: Number.isFinite(ia) ? formatDms(ia) : '', align: 'end' },
+            ],
+          ],
+          { noHead: true, rowH: 5.2 },
+        ) + 2.0
+    }
+
+    if (pts.length > 0) {
+      const rows: Cell[][] = pts.map((r, k) => {
+        const g = at(segments, r.d)
+        const before = k > 0 ? pts[k - 1].d : null
+        return [
+          { t: r.name, align: 'start' },
+          { t: f3(r.d + spOffset), align: 'end' },
+          { t: before == null ? '' : f3(r.d - before), align: 'end' },
+          { t: f3(g.x), align: 'end' },
+          { t: f3(g.y), align: 'end' },
+          Number.isFinite(g.az) ? formatDms(g.az) : '',
+          Number.isFinite(g.az) ? formatDms(g.az + 90) : '',
+          r.center != null ? formatDms(r.center) : '',
+        ]
+      })
+      y = drawTable(page, 14, y, mainCols, rows) + 4.0
+    }
+  })
+  pages.push(page)
+
 
   return pages
 }
