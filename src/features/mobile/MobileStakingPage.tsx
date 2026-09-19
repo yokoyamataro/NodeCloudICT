@@ -2471,8 +2471,30 @@ export function MobileStakingPage() {
   const effAntennaHeight = antennaHeight
 
   // 自己標高（補正後）— Drogger GGA は 受信機内蔵ジオイド基準の MSL を返すので、
+  //   ジオイド と アンテナ高 に 加えて、作業中 セット の 補正値 (dZ) も 引く。
+  //   これ 1 本 で 比高 / TIN 差 / 断面図 の 自己位置 が すべて 設計 の 土俵 に 乗る。
   //   楕円体高 h = altitude + geoidalSep に 変換してから JPGEO2024 を引く。
   //   ブラウザ / Android GPS は geoidalSep が null (altitude が 既に 楕円体高 前提)。
+  /**
+   * その 記録 の 補正値。 セット に 属して いれば セット の 値、
+   * 属して いなければ 工区 の 既定 (実測記録 の slideOfRecord と 同じ 決め方)。
+   */
+  const slideOfRecord = (r: { recordSetId?: string | null }): SurveySlide =>
+    (r.recordSetId ? surveySets.find((x) => x.id === r.recordSetId)?.slide : undefined) ?? farmSlide
+
+  /**
+   * 作業中 の 記録セット の 補正値 (スライド量)。 実測 は この 分 だけ ずれて
+   * いる ので、設計 と 比べる とき は 引いて から 比べる。
+   */
+  const sessionSlide = useMemo<SurveySlide>(() => {
+    const hit = sessionSetId ? surveySets.find((x) => x.id === sessionSetId) : null
+    // セット を まだ 選んで いない (= 未振り分け に 入る) 間 は 工区 の 既定。
+    // 実測記録 の 画面 の slideOfRecord と 同じ 決め方 に 揃える。
+    return hit?.slide ?? farmSlide
+  }, [sessionSetId, surveySets, farmSlide])
+  const hasSlide =
+    sessionSlide.dx !== 0 || sessionSlide.dy !== 0 || sessionSlide.dz !== 0
+
   const selfElevation = useMemo<number | null>(() => {
     if (currentAlt === null || currentPos === null) return null
     if (effUseGeoid && geoidGrid) {
@@ -2489,11 +2511,19 @@ export function MobileStakingPage() {
         const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
         const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
         const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
-        if (Number.isFinite(N)) return hEllip - N - effAntennaHeight
+        if (Number.isFinite(N)) return hEllip - N - effAntennaHeight - sessionSlide.dz
       }
     }
-    return currentAlt - effAntennaHeight
-  }, [currentAlt, currentGeoidalSep, currentPos, effUseGeoid, geoidGrid, effAntennaHeight])
+    return currentAlt - effAntennaHeight - sessionSlide.dz
+  }, [
+    currentAlt,
+    currentGeoidalSep,
+    currentPos,
+    effUseGeoid,
+    geoidGrid,
+    effAntennaHeight,
+    sessionSlide.dz,
+  ])
 
   const trenchDiff = trenchZ !== null && selfElevation !== null ? selfElevation - trenchZ : null
   const groundDiff = groundZ !== null && selfElevation !== null ? selfElevation - groundZ : null
@@ -2651,13 +2681,19 @@ export function MobileStakingPage() {
     const recPts: { d: number; z: number; name: string }[] = []
     for (const r of records) {
       if (r.measuredZ == null) continue
-      const t = ((r.measuredX - Ax) * dx + (r.measuredY - Ay) * dy) / L2
+      // 断面図 は 設計 (TIN / 計画横断) と 並べて 見る 図 な ので、実測点 も
+      // その 記録 の セット の 補正値 を 引いて 設計 の 土俵 に 乗せて から 置く
+      const sl = slideOfRecord(r)
+      const rx = r.measuredX - sl.dx
+      const ry = r.measuredY - sl.dy
+      const rz = r.measuredZ - sl.dz
+      const t = ((rx - Ax) * dx + (ry - Ay) * dy) / L2
       if (t < 0 || t > 1) continue
       const fx = Ax + t * dx
       const fy = Ay + t * dy
-      const dist = Math.hypot(r.measuredX - fx, r.measuredY - fy)
+      const dist = Math.hypot(rx - fx, ry - fy)
       if (dist > sectionToleranceM) continue // 断面線から ±sectionToleranceM 以内のみ
-      recPts.push({ d: t * len, z: r.measuredZ, name: r.targetName ?? '' })
+      recPts.push({ d: t * len, z: rz, name: r.targetName ?? '' })
     }
     // 中間点から 作った 断面は、床掘 TIN も 実測記録も 無い ことが 多い。
     // 計画横断 (中心からの offset と 高さ) を 重ねないと 中身が 空に なり、
@@ -2672,7 +2708,17 @@ export function MobileStakingPage() {
       planPts.sort((a, b) => a.d - b.d)
     }
     return { length: len, tinPts, recPts, planPts }
-  }, [activeSection, activeStationVertices, converter, trenchIdx, records, sectionToleranceM])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeSection,
+    activeStationVertices,
+    converter,
+    trenchIdx,
+    records,
+    sectionToleranceM,
+    surveySets,
+    farmSlide,
+  ])
 
   // 線形物 (中心線 / 幅杭 / 線形点 / 中間点)。全体図と 同じ 変換・同じ 見た目・
   // 同じ 出し分けに なるよう 共有の 部品を 使う。
@@ -2962,19 +3008,6 @@ export function MobileStakingPage() {
     [orderedTargets, selectedTargetId],
   )
 
-
-  /**
-   * 作業中 の 記録セット の 補正値 (スライド量)。 実測 は この 分 だけ ずれて
-   * いる ので、設計 と 比べる とき は 引いて から 比べる。
-   */
-  const sessionSlide = useMemo<SurveySlide>(() => {
-    const hit = sessionSetId ? surveySets.find((x) => x.id === sessionSetId) : null
-    // セット を まだ 選んで いない (= 未振り分け に 入る) 間 は 工区 の 既定。
-    // 実測記録 の 画面 の slideOfRecord と 同じ 決め方 に 揃える。
-    return hit?.slide ?? farmSlide
-  }, [sessionSetId, surveySets, farmSlide])
-  const hasSlide =
-    sessionSlide.dx !== 0 || sessionSlide.dy !== 0 || sessionSlide.dz !== 0
 
   /**
    * 補正後 の 自己位置 (実測 − スライド量)。 設計 の 土俵 に 乗せた 位置 で、
@@ -3304,7 +3337,7 @@ export function MobileStakingPage() {
   // 正 = 自分が 高い (掘る)、負 = 自分が 低い (盛る)。trenchDiff と 同じ 向き。
   const targetHeightDiff =
     selfElevation !== null && selectedTarget?.z != null
-      ? selfElevation - sessionSlide.dz - selectedTarget.z
+      ? selfElevation - selectedTarget.z
       : null
 
   // 断面モードでは 近接モードに 入らない。断面線上を 動きながら 何点も 拾う
