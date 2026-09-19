@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { Loader2, Plus, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { Marker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useFarmStore } from '@/stores/farmStore'
@@ -464,6 +464,7 @@ export function StakingRecordsPage() {
   // 工区 単位 の 値 (下 の xOffset 等) は セット が 無い 記録 の 受け皿 と して 残す。
   const sets = useSurveySetStore((st) => st.sets)
   const fetchSets = useSurveySetStore((st) => st.fetchByFarm)
+  const createSet = useSurveySetStore((st) => st.createSet)
   useEffect(() => {
     if (currentFarm) void fetchSets(currentFarm.id)
   }, [currentFarm, fetchSets])
@@ -579,6 +580,21 @@ export function StakingRecordsPage() {
    * それ以外 は セット の id。 セット を 分けた 以上、既定 は 1 つ ずつ 見る 方 が
    * 分かり やすい ので、既定 の セット を 初期選択 に する。
    */
+  /** セット の 追加。 タブ行 の 右端 の ボタン から。 作ったら その タブ に 移る */
+  const [creatingSet, setCreatingSet] = useState(false)
+  const handleCreateSet = async () => {
+    if (!currentFarm) return
+    setCreatingSet(true)
+    try {
+      // 既定 は 「今日」。 名前 や 担当者 は 下 の 一覧 で 入れて もらう
+      const today = new Date().toISOString().slice(0, 10)
+      const row = await createSet(currentFarm.id, { measuredOn: today })
+      if (row) setSetTab(row.id)
+    } finally {
+      setCreatingSet(false)
+    }
+  }
+
   const [setTab, setSetTab] = useState<string>('all')
   const setTabFarmRef = useRef<string | null>(null)
   useEffect(() => {
@@ -1216,8 +1232,9 @@ export function StakingRecordsPage() {
         </CoordinateMap>
       </div>
 
-      {/* 記録セット の タブ。 セット を 分けた 以上、1 つ ずつ 見る 方 が 分かり やすい */}
-      {(sets.length > 0 || (countBySet.get(null) ?? 0) > 0) && (
+      {/* 記録セット の タブ。 セット を 分けた 以上、1 つ ずつ 見る 方 が 分かり やすい。
+          右端 の 「+ セット」 が セット を 作る 唯一 の 入口。 */}
+      {currentFarm && (
         <div className="px-3 pt-1.5 border-b bg-white flex items-end gap-0 overflow-x-auto">
           {[
             { key: 'all', label: 'すべて', n: totalCount, slide: null as SurveySlide | null },
@@ -1253,6 +1270,20 @@ export function StakingRecordsPage() {
               </button>
             )
           })}
+          <button
+            type="button"
+            onClick={() => void handleCreateSet()}
+            disabled={creatingSet}
+            className="ml-auto mb-1 shrink-0 px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
+            title="記録セット を 追加 (測量日 は 今日。 名前 や 担当者 は 下 の 一覧 で)"
+          >
+            {creatingSet ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Plus className="h-3 w-3" />
+            )}
+            セット
+          </button>
         </div>
       )}
 

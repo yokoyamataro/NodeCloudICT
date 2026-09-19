@@ -2,14 +2,14 @@
 //
 // 行 の 束ね方 (実測1 / 実測2) と 計算 は PC の 実測記録 と 同じ (lib/stakingGroups)。
 // 違う のは 幅 の 使い方 だけ:
-//   ・出す 列 の かたまり を 選べる (既定 は 当初 / 実測1 / 補正実測値)
+//   ・出す 列 の かたまり を 選べる (既定 は 全部)
 //   ・1 行 は 折り返さ ず、はみ出す 分 は 横 スクロール
 //   ・記録セット を タブ で 切替、その セット の スライド量 を その場 で 直せる
 //
 // 記録 の 付け替え や 削除、セット の 追加 は PC に 任せる。
 
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, X } from 'lucide-react'
+import { Loader2, Plus, X } from 'lucide-react'
 import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
 import { deriveRow, groupStakingRecords, type StakingGroup } from '@/lib/stakingGroups'
 import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
@@ -68,7 +68,7 @@ function SlideField({
 
 /**
  * 出せる 列 の かたまり。 PC の 実測記録 と 同じ 並び / 同じ 呼び方 に 揃える。
- * スマホ は 幅 が 無い ので 既定 は 当初 / 実測1 / 補正実測値 だけ に する。
+ * 既定 は 全部 出す (横 に スクロール すれば 読める)。 選択 は 端末 に 憶える。
  */
 const GROUPS = [
   { key: 'design', label: '当初' },
@@ -81,7 +81,7 @@ const GROUPS = [
   { key: 'rev', label: '補正実測値' },
 ] as const
 type GroupKey = (typeof GROUPS)[number]['key']
-const DEFAULT_GROUPS: GroupKey[] = ['design', 'm1', 'rev']
+const DEFAULT_GROUPS: GroupKey[] = GROUPS.map((g) => g.key)
 const GROUP_LS_KEY = 'mobile:stakingRecordGroups'
 
 export function MobileStakingRecordsSheet({
@@ -169,6 +169,20 @@ export function MobileStakingRecordsSheet({
   const tabSet = tab === 'all' || tab === 'none' ? null : (sets.find((s) => s.id === tab) ?? null)
   const tabSlide: SurveySlide = tabSet?.slide ?? farmSlide
 
+  /** セット の 追加。 作ったら その タブ に 移る */
+  const createSet = useSurveySetStore((s) => s.createSet)
+  const [creatingSet, setCreatingSet] = useState(false)
+  const handleCreateSet = async () => {
+    setCreatingSet(true)
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      const row = await createSet(farmId, { measuredOn: today })
+      if (row) setTab(row.id)
+    } finally {
+      setCreatingSet(false)
+    }
+  }
+
   const [slideSaving, setSlideSaving] = useState(false)
   const [slideError, setSlideError] = useState<string | null>(null)
   /** スライド量 を 保存。 セット を 選んで いれば セット、それ 以外 は 工区 の 既定 */
@@ -233,6 +247,20 @@ export function MobileStakingRecordsSheet({
               <span className="ml-1 text-slate-400">{t.n}</span>
             </button>
           ))}
+          {/* セット を 作る 入口。 名前 や 担当者 は PC で 入れる */}
+          <button
+            onClick={() => void handleCreateSet()}
+            disabled={creatingSet}
+            className="ml-auto mb-1 shrink-0 px-2 py-0.5 text-xs border rounded bg-white text-slate-600 disabled:opacity-40 flex items-center gap-1"
+            title="記録セット を 追加 (測量日 は 今日)"
+          >
+            {creatingSet ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Plus className="h-3 w-3" />
+            )}
+            セット
+          </button>
         </div>
         {/* スライド量。 セット を 選んで いれば その セット、それ 以外 は 工区 の 既定。
             現場 で 基準局 を 立て 直した 直後 に 入れ たい ので ここ で 直せる ように する。 */}
@@ -249,20 +277,18 @@ export function MobileStakingRecordsSheet({
               onCommit={(v) => void commitSlide({ ...tabSlide, [axis]: v })}
             />
           ))}
+          {/* 出す 列 の かたまり。 dZ の 右 に 置く */}
+          <button
+            onClick={() => setPickerOpen((v) => !v)}
+            className={`shrink-0 px-2 py-0.5 border rounded ${
+              pickerOpen ? 'bg-slate-200 border-slate-400' : 'bg-white text-slate-600'
+            }`}
+          >
+            表示列 {groups.size}/{GROUPS.length}
+          </button>
         </div>
-        {slideError && <div className="pb-1 text-[11px] text-red-600">{slideError}</div>}
-      </div>
-
-      {/* 出す 列 の かたまり を 選ぶ。 スマホ は 幅 が 無い ので 既定 は 3 つ */}
-      <div className="px-2 py-1 border-b bg-white shrink-0">
-        <button
-          onClick={() => setPickerOpen((v) => !v)}
-          className="text-[11px] px-2 py-0.5 border rounded text-slate-600"
-        >
-          表示列 {groups.size} / {GROUPS.length}
-        </button>
         {pickerOpen && (
-          <div className="mt-1 flex flex-wrap gap-1">
+          <div className="pb-1 flex flex-wrap gap-1">
             {GROUPS.map((g) => (
               <button
                 key={g.key}
@@ -278,6 +304,7 @@ export function MobileStakingRecordsSheet({
             ))}
           </div>
         )}
+        {slideError && <div className="pb-1 text-[11px] text-red-600">{slideError}</div>}
       </div>
 
       {/* 1 行 = 1 点。 折り返す と 目 で 追えなく なる ので、はみ出す 分 は

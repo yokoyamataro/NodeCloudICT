@@ -6,7 +6,7 @@
 // 「既定」 の セット が 新しい 記録 の 入り先 に なる。
 
 import { useState } from 'react'
-import { Check, ChevronDown, ChevronRight, Loader2, Plus, Star, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Loader2, Star, Trash2 } from 'lucide-react'
 import {
   setLabel,
   useSurveySetStore,
@@ -45,33 +45,13 @@ function NumCell({
 export function SurveyRecordSetsPanel({
   farmId,
   countBySet,
-  onCreated,
 }: {
   farmId: string | null
   /** セット id → 記録 の 数。 null の 鍵 は 未振り分け */
   countBySet: Map<string | null, number>
-  onCreated?: (s: SurveyRecordSet) => void
 }) {
-  const { sets, loading, error, createSet, updateSet, setDefault, deleteSet } =
-    useSurveySetStore()
+  const { sets, loading, error, updateSet, setDefault, deleteSet } = useSurveySetStore()
   const [openId, setOpenId] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  const handleCreate = async () => {
-    if (!farmId) return
-    setBusy(true)
-    try {
-      // 既定 は 「今日」。 担当者 は 空 の まま 出し、その場 で 入れて もらう
-      const today = new Date().toISOString().slice(0, 10)
-      const s = await createSet(farmId, { measuredOn: today })
-      if (s) {
-        setOpenId(s.id)
-        onCreated?.(s)
-      }
-    } finally {
-      setBusy(false)
-    }
-  }
 
   const handleDelete = async (s: SurveyRecordSet) => {
     const n = countBySet.get(s.id) ?? 0
@@ -92,20 +72,9 @@ export function SurveyRecordSetsPanel({
         別 の 日 / 別 の 担当者 / 基準局 や 設定 を 変えた ときは 新しい セット に します。
       </div>
 
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void handleCreate()}
-          disabled={!farmId || busy}
-          className="px-2 py-1 border rounded bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
-        >
-          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
-          セットを追加
-        </button>
-        {unassigned > 0 && (
-          <span className="text-amber-700">未振り分け {unassigned} 点</span>
-        )}
-      </div>
+      {unassigned > 0 && (
+        <div className="text-amber-700">未振り分け {unassigned} 点</div>
+      )}
 
       {error && <div className="text-[11px] text-red-600 whitespace-pre-line">{error}</div>}
 
@@ -116,7 +85,7 @@ export function SurveyRecordSetsPanel({
         </div>
       ) : sets.length === 0 ? (
         <div className="text-slate-400">
-          セットがありません。「セットを追加」から作ります。
+          セットがありません。 タブ の 右端 の 「+ セット」 から 作ります。
         </div>
       ) : (
         <ul className="border rounded divide-y">
