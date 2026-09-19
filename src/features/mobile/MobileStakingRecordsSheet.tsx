@@ -1,16 +1,17 @@
 // スマホ の 実測一覧。
 //
-// PC の 実測記録 画面 (StakingRecordsPage) を そのまま 出す と 横 に 広すぎる ので、
-// 現場 で 見たい もの だけ を 縦 の リスト に する:
-//   ・記録セット の 切替 (タブ) と、その セット の スライド量
-//   ・点名 / 種別 / 実測 の X・Y・Z / 設計 との 差 / 測った 時刻
+// 行 の 束ね方 (実測1 / 実測2) と 計算 は PC の 実測記録 と 同じ (lib/stakingGroups)。
+// 違う のは 幅 の 使い方 だけ:
+//   ・出す 列 の かたまり を 選べる (既定 は 当初 / 実測1 / 補正実測値)
+//   ・1 行 は 折り返さ ず、はみ出す 分 は 横 スクロール
+//   ・記録セット を タブ で 切替、その セット の スライド量 を その場 で 直せる
 //
-// 直す のは PC に 任せる。 ここ は 「今 どこ まで 測った か」 「どの セット で
-// 測った か」 を 確かめる ため の 画面。
+// 記録 の 付け替え や 削除、セット の 追加 は PC に 任せる。
 
 import { useEffect, useMemo, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
 import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
+import { deriveRow, groupStakingRecords, type StakingGroup } from '@/lib/stakingGroups'
 import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
 import {
   fetchSurveySlide,
@@ -18,14 +19,6 @@ import {
   NO_SLIDE,
   type SurveySlide,
 } from '@/lib/surveyCalibration'
-
-/** 記録 が どの 設計点 を 狙った もの か を 短く */
-function targetKindLabel(r: StakingRecord): string {
-  if (r.targetType === 'coordinate') return '座標'
-  if (r.targetType === 'pipe_vertex') return '管'
-  if (r.targetType === 'free') return '任意'
-  return r.targetType
-}
 
 const f3 = (v: number | null | undefined): string => (v == null ? '—' : v.toFixed(3))
 
@@ -73,16 +66,23 @@ function SlideField({
   )
 }
 
-/** 設計 と 実測 の 差 (m)。 設計 が 無い 記録 は null */
-function deltaOf(r: StakingRecord, slide: SurveySlide) {
-  if (r.targetX == null || r.targetY == null) return null
-  // 実測 − スライド量 で 設計 の 土俵 に 乗せて から 比べる
-  const dx = r.measuredX - slide.dx - r.targetX
-  const dy = r.measuredY - slide.dy - r.targetY
-  const dz =
-    r.measuredZ == null || r.targetZ == null ? null : r.measuredZ - slide.dz - r.targetZ
-  return { dx, dy, dz, h: Math.hypot(dx, dy) }
-}
+/**
+ * 出せる 列 の かたまり。 PC の 実測記録 と 同じ 並び / 同じ 呼び方 に 揃える。
+ * スマホ は 幅 が 無い ので 既定 は 当初 / 実測1 / 補正実測値 だけ に する。
+ */
+const GROUPS = [
+  { key: 'design', label: '当初' },
+  { key: 'm1', label: '実測1' },
+  { key: 'm2', label: '実測2' },
+  { key: 'diff', label: '実測差' },
+  { key: 'avg', label: '実測平均' },
+  { key: 'dvs', label: '実測平均-当初' },
+  { key: 'slided', label: 'スライド値' },
+  { key: 'rev', label: '補正実測値' },
+] as const
+type GroupKey = (typeof GROUPS)[number]['key']
+const DEFAULT_GROUPS: GroupKey[] = ['design', 'm1', 'rev']
+const GROUP_LS_KEY = 'mobile:stakingRecordGroups'
 
 export function MobileStakingRecordsSheet({
   farmId,
@@ -111,8 +111,9 @@ export function MobileStakingRecordsSheet({
     () => records.filter((r) => r.farmId === farmId),
     [records, farmId],
   )
-  const slideOf = (r: StakingRecord): SurveySlide =>
-    (r.recordSetId ? sets.find((s) => s.id === r.recordSetId)?.slide : undefined) ?? farmSlide
+  /** その 記録 の 土俵。 セット に 属さない 記録 は 工区 の 既定 */
+  const slideOf = (r: StakingRecord | null): SurveySlide =>
+    (r?.recordSetId ? sets.find((s) => s.id === r.recordSetId)?.slide : undefined) ?? farmSlide
 
   const countBySet = useMemo(() => {
     const m = new Map<string | null, number>()
@@ -123,16 +124,46 @@ export function MobileStakingRecordsSheet({
     return m
   }, [mine])
 
-  const shown = useMemo(() => {
+  /** 表 に 出す 行。 PC と 同じ 束ね方 (実測1 / 実測2) */
+  const shown = useMemo<StakingGroup[]>(() => {
     const base =
       tab === 'all'
         ? mine
         : tab === 'none'
           ? mine.filter((r) => !r.recordSetId)
           : mine.filter((r) => r.recordSetId === tab)
-    // 新しい 順。 現場 では 直前 に 測った もの を 見たい
-    return [...base].sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))
+    return groupStakingRecords(base)
   }, [mine, tab])
+
+  /** 出す 列 の かたまり。 端末 に 憶えて おく */
+  const [groups, setGroups] = useState<Set<GroupKey>>(() => {
+    try {
+      const raw = localStorage.getItem(GROUP_LS_KEY)
+      if (raw) {
+        const arr = JSON.parse(raw) as string[]
+        const ok = arr.filter((k): k is GroupKey => GROUPS.some((g) => g.key === k))
+        if (ok.length > 0) return new Set(ok)
+      }
+    } catch {
+      /* ignore */
+    }
+    return new Set(DEFAULT_GROUPS)
+  })
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const toggleGroup = (k: GroupKey) => {
+    setGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
+      try {
+        localStorage.setItem(GROUP_LS_KEY, JSON.stringify([...next]))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }
+  const on = (k: GroupKey) => groups.has(k)
 
   /** タブ で 選んで いる セット (すべて / 未振り分け は null = 工区 の 既定) */
   const tabSet = tab === 'all' || tab === 'none' ? null : (sets.find((s) => s.id === tab) ?? null)
@@ -205,14 +236,10 @@ export function MobileStakingRecordsSheet({
         </div>
         {/* スライド量。 セット を 選んで いれば その セット、それ 以外 は 工区 の 既定。
             現場 で 基準局 を 立て 直した 直後 に 入れ たい ので ここ で 直せる ように する。 */}
-        <div className="py-1 flex items-center gap-2 text-[11px] flex-wrap">
-          <span className="text-slate-500">
-            スライド量
-            <span className="ml-1 text-slate-400">
-              ({tabSet ? setLabel(tabSet) : '工区の既定'})
-            </span>
-          </span>
-          {slideSaving && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+        {/* スライド量 は 1 行。 直す 先 は 選んで いる タブ (セット / 工区の既定) */}
+        <div className="py-1 flex items-center gap-2 text-[11px] whitespace-nowrap overflow-x-auto">
+          <span className="text-slate-500 shrink-0">スライド量</span>
+          {slideSaving && <Loader2 className="h-3 w-3 animate-spin text-slate-400 shrink-0" />}
           {(['dx', 'dy', 'dz'] as const).map((axis) => (
             <SlideField
               key={axis}
@@ -223,15 +250,37 @@ export function MobileStakingRecordsSheet({
             />
           ))}
         </div>
-        {tab === 'all' && sets.length > 0 && (
-          <div className="pb-1 text-[10px] text-slate-400">
-            「すべて」 は 工区 の 既定 を 直します。 差 の 計算 は 記録 ごと の セット の 値。
-          </div>
-        )}
         {slideError && <div className="pb-1 text-[11px] text-red-600">{slideError}</div>}
       </div>
 
-      {/* 1 件 = 1 行。 折り返す と 目 で 追えなく なる ので、はみ出す 分 は
+      {/* 出す 列 の かたまり を 選ぶ。 スマホ は 幅 が 無い ので 既定 は 3 つ */}
+      <div className="px-2 py-1 border-b bg-white shrink-0">
+        <button
+          onClick={() => setPickerOpen((v) => !v)}
+          className="text-[11px] px-2 py-0.5 border rounded text-slate-600"
+        >
+          表示列 {groups.size} / {GROUPS.length}
+        </button>
+        {pickerOpen && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {GROUPS.map((g) => (
+              <button
+                key={g.key}
+                onClick={() => toggleGroup(g.key)}
+                className={`px-1.5 py-0.5 text-[11px] border rounded ${
+                  on(g.key)
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-slate-500 border-slate-300'
+                }`}
+              >
+                {g.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 1 行 = 1 点。 折り返す と 目 で 追えなく なる ので、はみ出す 分 は
           横 に スクロール させる。 */}
       <div className="flex-1 min-h-0 overflow-auto">
         {shown.length === 0 ? (
@@ -242,60 +291,124 @@ export function MobileStakingRecordsSheet({
           <table className="min-w-full w-max text-[11px]">
             <thead className="sticky top-0 bg-slate-50 z-10">
               <tr className="text-slate-500">
-                <th className="px-2 py-1 text-left whitespace-nowrap">点名</th>
-                <th className="px-2 py-1 text-left whitespace-nowrap">種別</th>
-                <th className="px-2 py-1 text-right whitespace-nowrap">X</th>
-                <th className="px-2 py-1 text-right whitespace-nowrap">Y</th>
-                <th className="px-2 py-1 text-right whitespace-nowrap">Z</th>
-                <th className="px-2 py-1 text-right whitespace-nowrap">水平差</th>
-                <th className="px-2 py-1 text-right whitespace-nowrap">高さ差</th>
-                <th className="px-2 py-1 text-left whitespace-nowrap">日時</th>
+                {GROUPS.filter((g) => on(g.key)).map((g) => (
+                  <th
+                    key={g.key}
+                    colSpan={g.key === 'design' || g.key === 'm1' || g.key === 'm2' ? 4 : 3}
+                    className="px-2 py-1 text-center whitespace-nowrap border-l first:border-l-0"
+                  >
+                    {g.label}
+                  </th>
+                ))}
+                <th className="px-2 py-1 text-left whitespace-nowrap border-l">日時</th>
                 {tab === 'all' && (
                   <th className="px-2 py-1 text-left whitespace-nowrap">セット</th>
                 )}
               </tr>
+              <tr className="text-slate-400">
+                {GROUPS.filter((g) => on(g.key)).map((g) => {
+                  const cols =
+                    g.key === 'design' || g.key === 'm1' || g.key === 'm2'
+                      ? ['点名', 'X', 'Y', 'Z']
+                      : g.key === 'diff' || g.key === 'dvs'
+                        ? ['dX', 'dY', 'dZ']
+                        : ['X', 'Y', 'Z']
+                  return cols.map((c, i) => (
+                    <th
+                      key={`${g.key}-${c}`}
+                      className={`px-2 py-0.5 whitespace-nowrap ${
+                        c === '点名' ? 'text-left' : 'text-right'
+                      } ${i === 0 ? 'border-l first:border-l-0' : ''}`}
+                    >
+                      {c}
+                    </th>
+                  ))
+                })}
+                <th className="px-2 py-0.5 border-l" />
+                {tab === 'all' && <th className="px-2 py-0.5" />}
+              </tr>
             </thead>
             <tbody>
-              {shown.map((r) => {
-                const d = deltaOf(r, slideOf(r))
-                const set = r.recordSetId ? sets.find((s) => s.id === r.recordSetId) : null
-                const tone =
-                  d == null
-                    ? 'text-slate-400'
-                    : d.h <= 0.02
-                      ? 'text-emerald-700'
-                      : d.h <= 0.05
-                        ? 'text-amber-700'
-                        : 'text-red-600'
+              {shown.map((g) => {
+                const slide = slideOf(g.m1 ?? g.m2)
+                const d = deriveRow(g, slide.dx, slide.dy, slide.dz)
+                const set = g.m1?.recordSetId
+                  ? sets.find((x) => x.id === g.m1?.recordSetId)
+                  : null
+                /** 数値 3 桁 の セル */
+                const num = (v: number | null | undefined) => (
+                  <td className="px-2 py-1 text-right font-mono whitespace-nowrap">{f3(v)}</td>
+                )
                 return (
-                  <tr key={r.id} className="border-t">
-                    <td className="px-2 py-1 font-medium text-slate-800 whitespace-nowrap max-w-[8rem] truncate">
-                      {r.targetName ?? '(点名なし)'}
-                      {r.pending && <span className="ml-1 text-amber-700">*</span>}
-                    </td>
-                    <td className="px-2 py-1 text-slate-600 whitespace-nowrap">
-                      {targetKindLabel(r)}
-                      {r.surveyCategory === 'asbuilt' && (
-                        <span className="ml-1 text-emerald-700">出来形</span>
-                      )}
-                    </td>
-                    <td className="px-2 py-1 text-right font-mono whitespace-nowrap">
-                      {f3(r.measuredX)}
-                    </td>
-                    <td className="px-2 py-1 text-right font-mono whitespace-nowrap">
-                      {f3(r.measuredY)}
-                    </td>
-                    <td className="px-2 py-1 text-right font-mono whitespace-nowrap">
-                      {f3(r.measuredZ)}
-                    </td>
-                    <td className={`px-2 py-1 text-right font-mono whitespace-nowrap ${tone}`}>
-                      {d ? `${(d.h * 100).toFixed(1)}cm` : '-'}
-                    </td>
-                    <td className={`px-2 py-1 text-right font-mono whitespace-nowrap ${tone}`}>
-                      {d?.dz != null ? `${(d.dz * 100).toFixed(1)}cm` : '-'}
-                    </td>
-                    <td className="px-2 py-1 text-slate-500 whitespace-nowrap">
-                      {r.recordedAt.slice(5, 16).replace('T', ' ')}
+                  <tr key={g.key} className="border-t">
+                    {on('design') && (
+                      <>
+                        <td className="px-2 py-1 whitespace-nowrap max-w-[8rem] truncate border-l first:border-l-0">
+                          {g.designName || '—'}
+                        </td>
+                        {num(g.designX)}
+                        {num(g.designY)}
+                        {num(g.designZ)}
+                      </>
+                    )}
+                    {on('m1') && (
+                      <>
+                        <td className="px-2 py-1 whitespace-nowrap max-w-[8rem] truncate border-l">
+                          {g.m1?.targetName ?? '—'}
+                          {g.m1?.pending && <span className="ml-1 text-amber-700">*</span>}
+                        </td>
+                        {num(g.m1?.measuredX)}
+                        {num(g.m1?.measuredY)}
+                        {num(g.m1?.measuredZ)}
+                      </>
+                    )}
+                    {on('m2') && (
+                      <>
+                        <td className="px-2 py-1 whitespace-nowrap max-w-[8rem] truncate border-l">
+                          {g.m2?.targetName ?? '—'}
+                        </td>
+                        {num(g.m2?.measuredX)}
+                        {num(g.m2?.measuredY)}
+                        {num(g.m2?.measuredZ)}
+                      </>
+                    )}
+                    {on('diff') && (
+                      <>
+                        {num(d.diffX)}
+                        {num(d.diffY)}
+                        {num(d.diffZ)}
+                      </>
+                    )}
+                    {on('avg') && (
+                      <>
+                        {num(d.avgX)}
+                        {num(d.avgY)}
+                        {num(d.avgZ)}
+                      </>
+                    )}
+                    {on('dvs') && (
+                      <>
+                        {num(d.dvsX)}
+                        {num(d.dvsY)}
+                        {num(d.dvsZ)}
+                      </>
+                    )}
+                    {on('slided') && (
+                      <>
+                        {num(d.slidedDX)}
+                        {num(d.slidedDY)}
+                        {num(d.slidedDZ)}
+                      </>
+                    )}
+                    {on('rev') && (
+                      <>
+                        {num(d.revSlideMX)}
+                        {num(d.revSlideMY)}
+                        {num(d.revSlideMZ)}
+                      </>
+                    )}
+                    <td className="px-2 py-1 text-slate-500 whitespace-nowrap border-l">
+                      {(g.m1?.recordedAt ?? '').slice(5, 16).replace('T', ' ')}
                     </td>
                     {tab === 'all' && (
                       <td className="px-2 py-1 text-slate-500 whitespace-nowrap max-w-[8rem] truncate">

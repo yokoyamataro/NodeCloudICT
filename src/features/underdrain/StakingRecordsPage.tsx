@@ -3,13 +3,14 @@ import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X, 
 import { Marker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useFarmStore } from '@/stores/farmStore'
-import { useStakingStore, type SurveyCategory, type StakingRecord, type StakingTargetType } from '@/stores/stakingStore'
+import { useStakingStore, type SurveyCategory, type StakingRecord } from '@/stores/stakingStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { CoordinateConverter, COORDINATE_TYPE_NAMES, type CoordinateType } from '@/lib/coordinates'
 import { supabase } from '@/lib/supabase'
 import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
+import { deriveRow, groupStakingRecords, type StakingGroup } from '@/lib/stakingGroups'
 import type { SurveySlide } from '@/lib/surveyCalibration'
 
 import { SurveyRecordSetsPanel } from './SurveyRecordSetsPanel'
@@ -51,62 +52,6 @@ type SectionKey =
   | 'dvs'
   | 'slidedD'
   | 'revSlideM'
-/**
- * 1 行 分 の 計算値。 画面 の 表 と Excel 出力 で 同じ 式 を 使う ため に
- * ここ 1 か所 に まとめる。
- */
-function deriveRow(
-  g: { designX: number | null; designY: number | null; designZ: number | null;
-       m1: { measuredX: number; measuredY: number; measuredZ: number | null; accuracy: number | null } | null;
-       m2: { measuredX: number; measuredY: number; measuredZ: number | null; accuracy: number | null } | null },
-  xOffset: number,
-  yOffset: number,
-  zOffset: number,
-) {
-  const m1 = g.m1
-  const m2 = g.m2
-  // 差 (m2 - m1)
-  const diffX = m1 && m2 ? m2.measuredX - m1.measuredX : null
-  const diffY = m1 && m2 ? m2.measuredY - m1.measuredY : null
-  const diffZ =
-    m1 && m2 && m1.measuredZ != null && m2.measuredZ != null
-      ? m2.measuredZ - m1.measuredZ
-      : null
-  // 平均 (m2 が あれば 平均、無ければ m1)
-  const avgX = m1 && m2 ? (m1.measuredX + m2.measuredX) / 2 : m1?.measuredX ?? null
-  const avgY = m1 && m2 ? (m1.measuredY + m2.measuredY) / 2 : m1?.measuredY ?? null
-  const avgZ =
-    m1 && m2 && m1.measuredZ != null && m2.measuredZ != null
-      ? (m1.measuredZ + m2.measuredZ) / 2
-      : m1?.measuredZ ?? null
-  // 実測平均 - 設計 (生 の 差、補正 適用前 の バイアス)
-  const dvsX = avgX != null && g.designX != null ? avgX - g.designX : null
-  const dvsY = avgY != null && g.designY != null ? avgY - g.designY : null
-  const dvsZ = avgZ != null && g.designZ != null ? avgZ - g.designZ : null
-  const dvsH = dvsX != null && dvsY != null ? Math.hypot(dvsX, dvsY) : null
-  // スライド設計: 設計値 に スライド量 を 加算 して 実測 に 寄せる
-  const slidedDX = g.designX != null ? g.designX + xOffset : null
-  const slidedDY = g.designY != null ? g.designY + yOffset : null
-  const slidedDZ = g.designZ != null ? g.designZ + zOffset : null
-  // 逆スライド実測: 実測平均 から スライド量 を 引いて 設計 に 寄せる (出力 の 既定)
-  const revSlideMX = avgX != null ? avgX - xOffset : null
-  const revSlideMY = avgY != null ? avgY - yOffset : null
-  const revSlideMZ = avgZ != null ? avgZ - zOffset : null
-  // 精度: m1 と m2 の 悪い方 (Max)。 未取得 は 除外
-  const acc =
-    m1?.accuracy != null && m2?.accuracy != null
-      ? Math.max(m1.accuracy, m2.accuracy)
-      : m1?.accuracy ?? m2?.accuracy ?? null
-  return {
-    diffX, diffY, diffZ,
-    avgX, avgY, avgZ,
-    dvsX, dvsY, dvsZ, dvsH,
-    slidedDX, slidedDY, slidedDZ,
-    revSlideMX, revSlideMY, revSlideMZ,
-    acc,
-  }
-}
-
 const TABLE_SECTIONS: Array<{
   key: SectionKey
   label: string
@@ -117,8 +62,8 @@ const TABLE_SECTIONS: Array<{
 }> = [
   {
     key: 'design',
-    label: '設計',
-    headerTitle: '設計座標 (座標管理 と リンク 済み の 場合 の み)',
+    label: '当初',
+    headerTitle: '当初 の 設計座標 (座標管理 と リンク 済み の 場合 の み)',
     bgHeader: 'bg-slate-50',
     bgSub: '',
     cols: [
@@ -180,9 +125,9 @@ const TABLE_SECTIONS: Array<{
   },
   {
     key: 'dvs',
-    label: '実測平均 - 設計',
+    label: '実測平均 - 当初',
     headerTitle:
-      '生 の 差 (実測平均 - 設計)。 水平 = √(dX²+dY²)。 この 値 を スライド量 に 入れると 中央値 が 揃う。',
+      '生 の 差 (実測平均 - 当初)。 水平 = √(dX²+dY²)。 この 値 を スライド量 に 入れると 中央値 が 揃う。',
     bgHeader: 'bg-blue-50',
     bgSub: 'bg-blue-50',
     cols: [
@@ -194,8 +139,8 @@ const TABLE_SECTIONS: Array<{
   },
   {
     key: 'slidedD',
-    label: 'スライド後設計値',
-    headerTitle: '設計値 を 実測 に 近づける: 設計 + スライド量',
+    label: 'スライド値',
+    headerTitle: '当初 を 実測 に 近づける: 当初 + スライド量',
     bgHeader: 'bg-fuchsia-50',
     bgSub: 'bg-fuchsia-50',
     cols: [
@@ -206,8 +151,8 @@ const TABLE_SECTIONS: Array<{
   },
   {
     key: 'revSlideM',
-    label: '逆スライド後実測値',
-    headerTitle: '実測平均 を 設計 に 近づける: 実測平均 - スライド量。 出力 の 既定。',
+    label: '補正実測値',
+    headerTitle: '実測平均 を 当初 に 近づける: 実測平均 - スライド量。 出力 の 既定。',
     bgHeader: 'bg-cyan-50',
     bgSub: 'bg-cyan-50',
     cols: [
@@ -663,17 +608,6 @@ export function StakingRecordsPage() {
   // 同じ 設計座標 に リンク された 実測記録 を 「実測1 / 実測2」に ペアリング。
   // 3 件 以上 ある 場合 は 2 件 ごと に 追加行 を 生成。 フリー / 未リンク は
   // ペアリング せず 単独行 として 扱う。
-  interface StakingGroup {
-    key: string
-    designName: string
-    designX: number | null
-    designY: number | null
-    designZ: number | null
-    surveyCategory: SurveyCategory
-    targetType: StakingTargetType
-    m1: StakingRecord | null
-    m2: StakingRecord | null
-  }
   /** セット id → スライド量。 セット が 無い 記録 は 工区 単位 の 値 に 落とす */
   const slideOfSet = useMemo(() => {
     const m = new Map<string, { dx: number; dy: number; dz: number }>()
@@ -723,86 +657,7 @@ export function StakingRecordsPage() {
     return m
   }, [records, currentFarm?.id])
 
-  const grouped = useMemo<StakingGroup[]>(() => {
-    // (1) 設計座標 リンク済み: targetRefId で グループ化
-    const byRef = new Map<string, StakingRecord[]>()
-    const freeRecords: StakingRecord[] = []
-    for (const r of filtered) {
-      if (r.targetType === 'coordinate' && r.targetRefId) {
-        const arr = byRef.get(r.targetRefId) ?? []
-        arr.push(r)
-        byRef.set(r.targetRefId, arr)
-      } else {
-        freeRecords.push(r)
-      }
-    }
-    for (const arr of byRef.values()) {
-      arr.sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
-    }
-    const out: StakingGroup[] = []
-    for (const [refId, arr] of byRef.entries()) {
-      const design = arr[0]
-      for (let i = 0; i < arr.length; i += 2) {
-        out.push({
-          key: i === 0 ? refId : `${refId}-${i}`,
-          designName: design.targetName ?? '',
-          designX: design.targetX,
-          designY: design.targetY,
-          designZ: design.targetZ,
-          surveyCategory: arr[i].surveyCategory,
-          targetType: design.targetType,
-          m1: arr[i] ?? null,
-          m2: arr[i + 1] ?? null,
-        })
-      }
-    }
-    // (2) free 記録: pairedWithId で 対称ペア を 束ねる (相互 参照 のみ 有効扱い)
-    const freeById = new Map(freeRecords.map((r) => [r.id, r]))
-    const consumed = new Set<string>()
-    for (const r of freeRecords) {
-      if (consumed.has(r.id)) continue
-      const partner = r.pairedWithId ? freeById.get(r.pairedWithId) : null
-      const isSymmetric = partner && partner.pairedWithId === r.id
-      if (partner && isSymmetric && !consumed.has(partner.id)) {
-        const pair = [r, partner].sort((a, b) =>
-          a.recordedAt.localeCompare(b.recordedAt),
-        )
-        out.push({
-          key: `pair-${pair[0].id}`,
-          designName: '',
-          designX: null,
-          designY: null,
-          designZ: null,
-          surveyCategory: pair[0].surveyCategory,
-          targetType: pair[0].targetType,
-          m1: pair[0],
-          m2: pair[1],
-        })
-        consumed.add(pair[0].id)
-        consumed.add(pair[1].id)
-      } else {
-        out.push({
-          key: r.id,
-          designName: '',
-          designX: null,
-          designY: null,
-          designZ: null,
-          surveyCategory: r.surveyCategory,
-          targetType: r.targetType,
-          m1: r,
-          m2: null,
-        })
-        consumed.add(r.id)
-      }
-    }
-    // 直近 が 先頭 (m1 の 記録日時 降順)
-    out.sort((a, b) => {
-      const at = a.m1?.recordedAt ?? ''
-      const bt = b.m1?.recordedAt ?? ''
-      return bt.localeCompare(at)
-    })
-    return out
-  }, [filtered])
+  const grouped = useMemo<StakingGroup[]>(() => groupStakingRecords(filtered), [filtered])
 
   // 平均誤差・件数 の 簡易サマリ。 平均 dX / dY は 実測平均 と 設計 の 生 の 差
   // (実測 - 設計) を グループ 全体 で 平均。 スライド量 を どう 設定 すれば 良い か
@@ -901,7 +756,7 @@ export function StakingRecordsPage() {
     if (items.length === 0) {
       alert(
         mode === 's'
-          ? '設計座標 が 無い 行 は 「スライド設計」を 登録 できません。'
+          ? '当初 の 座標 が 無い 行 は 「スライド値」を 登録 できません。'
           : '実測 が 無い 行 は 登録 できません。',
       )
       return
@@ -1212,7 +1067,7 @@ export function StakingRecordsPage() {
         )}
         {pendingLinkRecordId && (
           <span className="ml-auto flex items-center gap-2 text-blue-700 font-semibold">
-            📍 地図上の 設計座標 を クリック で 割り付け
+            📍 地図上の 当初 の 座標 を クリック で 割り付け
             <button
               onClick={() => setPendingLinkRecordId(null)}
               className="p-0.5 rounded border hover:bg-white"
@@ -1483,17 +1338,17 @@ export function StakingRecordsPage() {
           onClick={() => void handleRegisterAsCoordinates('s')}
           disabled={selectedGroupKeys.size === 0 || registering !== null}
           className="px-2 py-1 bg-fuchsia-600 text-white rounded hover:bg-fuchsia-700 disabled:opacity-50"
-          title="スライド後 設計値 (設計 + スライド量) を 座標管理 に 登録。 点名 = s + 元点名"
+          title="スライド値 (当初 + スライド量) を 座標管理 に 登録。 点名 = s + 元点名"
         >
-          {registering === 's' ? '登録中…' : 'スライド後設計値 を 登録 (s+点名)'}
+          {registering === 's' ? '登録中…' : 'スライド値 を 登録 (s+点名)'}
         </button>
         <button
           onClick={() => void handleRegisterAsCoordinates('rs')}
           disabled={selectedGroupKeys.size === 0 || registering !== null}
           className="px-2 py-1 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:opacity-50"
-          title="逆スライド後 実測値 (実測平均 - スライド量) を 座標管理 に 登録。 点名 = rs + 元点名"
+          title="補正実測値 (実測平均 - スライド量) を 座標管理 に 登録。 点名 = rs + 元点名"
         >
-          {registering === 'rs' ? '登録中…' : '逆スライド後実測値 を 登録 (rs+点名)'}
+          {registering === 'rs' ? '登録中…' : '補正実測値 を 登録 (rs+点名)'}
         </button>
         {/* 選んだ 点 を 別 の 記録セット へ 移す。 スライド量 は セット ごと な ので
             移す と 補正 の 土俵 も 変わる。 */}
@@ -1753,7 +1608,7 @@ export function StakingRecordsPage() {
                         )
                       })()}
                     </td>
-                    {/* 設計 (点名 + XYZ + リンク 操作 ボタン) — 実測1 の record を 対象 */}
+                    {/* 当初 (点名 + XYZ + リンク 操作 ボタン) — 実測1 の record を 対象 */}
                     {!isHidden('design') && <>
                     <td
                       className={`px-2 py-1.5 border-b border-r font-medium ${
@@ -1778,7 +1633,7 @@ export function StakingRecordsPage() {
                               const ids = [m1?.id, m2?.id].filter(Boolean) as string[]
                               for (const id of ids) void updateRecordTarget(id, null)
                             }}
-                            title="設計座標 の リンク を 解除 (グループ 全体)"
+                            title="当初 の 座標 の リンク を 解除 (グループ 全体)"
                             className="p-0.5 text-slate-400 hover:text-red-500"
                           >
                             <X className="h-3 w-3" />
@@ -1789,7 +1644,7 @@ export function StakingRecordsPage() {
                               e.stopPropagation()
                               setPendingLinkRecordId(null)
                             }}
-                            title="設計座標 の 選択 を キャンセル"
+                            title="当初 の 座標 の 選択 を キャンセル"
                             className="p-0.5 text-blue-600 hover:bg-blue-200 rounded"
                           >
                             <X className="h-3 w-3" />
@@ -1801,7 +1656,7 @@ export function StakingRecordsPage() {
                               setPendingLinkRecordId(m1.id)
                               setPendingLinkM2ForM1Id(null)
                             }}
-                            title="地図 から 設計座標 を 選んで リンク"
+                            title="地図 から 当初 の 座標 を 選んで リンク"
                             className="p-0.5 text-blue-500 hover:bg-blue-50 rounded"
                           >
                             <LinkIcon className="h-3 w-3" />
