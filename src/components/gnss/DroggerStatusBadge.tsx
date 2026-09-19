@@ -93,7 +93,10 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
   }, [])
 
   // Drogger モード の 時に BT を 開始 (グローバル store が 1 回だけ実行)。
-  // バッジ アンマウント時 は 何もしない = 接続維持
+  // バッジ は 工区 を 開いた 画面 に しか 置いて いない ので、実質 ここ が
+  // 「工区 を 開いた ら 繋ぐ」 の 入口 に なる。 現場 / 工区 の 選択 中 は
+  // バッジ ごと 出さない ので 繋ぎ に 行かない。
+  // アンマウント時 は 何もしない = 工区 を 移って も 接続 は 維持
   useEffect(() => {
     if (source === 'drogger') void ensureStarted()
   }, [source, ensureStarted])

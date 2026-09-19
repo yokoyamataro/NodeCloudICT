@@ -19,7 +19,6 @@ import { useAuth } from '@/contexts/AuthContext'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
-import { DroggerStatusBadge } from '@/components/gnss/DroggerStatusBadge'
 import {
   NewFarmFromParcelPanel,
   type NewFarmFromParcelSelection,
@@ -325,8 +324,8 @@ export function MobileTopPage() {
           {currentProject ? currentProject.name : '工区一覧（スマホ）'}
         </span>
         <div className="flex-1" />
-        {/* Drogger 接続バッジ (工区一覧ページでも 常時表示 = ページ遷移で 接続維持) */}
-        <DroggerStatusBadge />
+        {/* GPS は 工区 を 開いて から 繋ぐ。 現場 / 工区 の 選択 中 は
+            バッジ も 信号 も 出さない (無駄 に BT を 掴まない ため) */}
         <FeedbackButton variant="mobile" />
         <button
           onClick={handleSignOut}
