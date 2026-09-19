@@ -10,6 +10,7 @@ import { useOfflineListFallback } from '@/lib/useOfflineListFallback'
 import { getAllProjectRecency, sortByRecency } from '@/lib/recentProjects'
 import { useFarmStore } from '@/stores/farmStore'
 import { useAuth } from '@/contexts/AuthContext'
+import { useDroggerConnection } from '@/stores/droggerConnectionStore'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
@@ -22,6 +23,13 @@ import type { ProjectMemberRole } from '@/types/database'
 
 export function MobileProjectChooserPage() {
   const navigate = useNavigate()
+  // 工区 を 出た ら GPS は 切る。 選ぶ だけ の 画面 で BT を 掴んで いて も
+  // 電池 を 食う だけ。 次 に 工区 を 開いた とき に 繋ぎ 直す。
+  const releaseDrogger = useDroggerConnection((s) => s.release)
+  useEffect(() => {
+    void releaseDrogger()
+  }, [releaseDrogger])
+
   const { signOut, user } = useAuth()
   const {
     projects: rawProjects,

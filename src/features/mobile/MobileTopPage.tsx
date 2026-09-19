@@ -16,6 +16,7 @@ import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useOfflineListFallback } from '@/lib/useOfflineListFallback'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useAuth } from '@/contexts/AuthContext'
+import { useDroggerConnection } from '@/stores/droggerConnectionStore'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
@@ -76,6 +77,13 @@ function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
 
 export function MobileTopPage() {
   const navigate = useNavigate()
+  // 工区 を 出た ら GPS は 切る。 選ぶ だけ の 画面 で BT を 掴んで いて も
+  // 電池 を 食う だけ。 次 に 工区 を 開いた とき に 繋ぎ 直す。
+  const releaseDrogger = useDroggerConnection((s) => s.release)
+  useEffect(() => {
+    void releaseDrogger()
+  }, [releaseDrogger])
+
   const { projectId: routeProjectId } = useParams<{ projectId: string }>()
   const { signOut } = useAuth()
   const {

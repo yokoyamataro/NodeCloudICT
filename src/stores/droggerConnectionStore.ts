@@ -48,6 +48,13 @@ interface DroggerConnectionState {
   reconnect: () => Promise<void>
   /** BLE 接続を 閉じる (ユーザー操作、NTRIP も 一緒に切れる) */
   disconnect: () => Promise<void>
+  /**
+   * 工区 を 出た とき の 後始末。 BT を 切り、listener も 剥がして
+   * 次 に 工区 を 開いた とき に ensureStarted が 最初 から やり直せる
+   * 状態 に 戻す。 disconnect だけ だと 初期化 フラグ が 立った まま で
+   * 再入場 して も 繋ぎ 直さ ない。
+   */
+  release: () => Promise<void>
 }
 
 // モジュールレベル: 初期化は 1 回だけ、listener は 常に 生きている
@@ -185,6 +192,31 @@ export const useDroggerConnection = create<DroggerConnectionState>((set, get) =>
       console.warn('Drogger disconnect failed:', e)
       throw e
     }
+  },
+
+  release: async () => {
+    if (!_initialized) return
+    try {
+      await DroggerLocation.stop()
+    } catch (e) {
+      console.warn('Drogger stop failed:', e)
+    }
+    for (const h of _handles) await h.remove().catch(() => undefined)
+    _handles = []
+    _initialized = false
+    _startPromise = null
+    set({
+      connected: false,
+      deviceName: null,
+      fixQuality: null,
+      hdop: null,
+      satellites: null,
+      diffAge: null,
+      stationId: null,
+      lastUpdateAt: null,
+      ntrip: initialNtrip,
+      lastErrorCode: null,
+    })
   },
 }))
 
