@@ -27,12 +27,24 @@ export interface SurveyRecordSet {
   isDefault: boolean
   sortOrder: number
   createdAt: string
+  /** その セット で 測り 始めた 時刻 (スマホ で セット を 選んだ / 作った とき) */
+  startedAt: string | null
+  /** その セット に 最後 に 記録 が 入った 時刻 */
+  endedAt: string | null
 }
 
 export type SurveySetPatch = Partial<
   Pick<
     SurveyRecordSet,
-    'name' | 'measuredOn' | 'operator' | 'baseStation' | 'settingsNote' | 'slide' | 'sortOrder'
+    | 'name'
+    | 'measuredOn'
+    | 'operator'
+    | 'baseStation'
+    | 'settingsNote'
+    | 'slide'
+    | 'sortOrder'
+    | 'startedAt'
+    | 'endedAt'
   >
 >
 
@@ -53,6 +65,8 @@ function toSet(r: Record<string, unknown>): SurveyRecordSet {
     isDefault: r.is_default === true,
     sortOrder: num(r.sort_order),
     createdAt: String(r.created_at ?? ''),
+    startedAt: (r.started_at as string) ?? null,
+    endedAt: (r.ended_at as string) ?? null,
   }
 }
 
@@ -73,6 +87,13 @@ interface State {
   /** セット を 1 つ 作る。 最初 の 1 つ は 既定 に する */
   createSet: (farmId: string, init?: SurveySetPatch) => Promise<SurveyRecordSet | null>
   updateSet: (id: string, patch: SurveySetPatch) => Promise<void>
+  /**
+   * 作業 の 時刻 を 打つ。
+   *   start … まだ 入って いなけれ ば 開始日時 を 今 に する
+   *   常に 終了日時 を 今 に する (その セット に 最後 に 触れた 時刻)
+   * 失敗 して も 実測 の 邪魔 は しない ので 黙って 流す。
+   */
+  touchSet: (id: string, opt?: { start?: boolean }) => Promise<void>
   /** 既定 を 移す (工区 に 1 つ) */
   setDefault: (farmId: string, id: string) => Promise<void>
   deleteSet: (id: string) => Promise<void>
@@ -126,6 +147,8 @@ export const useSurveySetStore = create<State>((set, get) => ({
         dz_offset: init?.slide?.dz ?? 0,
         is_default: cur.length === 0,
         sort_order: next,
+        started_at: init?.startedAt ?? null,
+        ended_at: init?.endedAt ?? null,
       }
       const { data, error } = await supabase
         .from('survey_record_sets')
@@ -150,6 +173,8 @@ export const useSurveySetStore = create<State>((set, get) => ({
     if (patch.baseStation !== undefined) body.base_station = patch.baseStation
     if (patch.settingsNote !== undefined) body.settings_note = patch.settingsNote
     if (patch.sortOrder !== undefined) body.sort_order = patch.sortOrder
+    if (patch.startedAt !== undefined) body.started_at = patch.startedAt
+    if (patch.endedAt !== undefined) body.ended_at = patch.endedAt
     if (patch.slide) {
       body.dx_offset = patch.slide.dx
       body.dy_offset = patch.slide.dy
@@ -165,6 +190,24 @@ export const useSurveySetStore = create<State>((set, get) => ({
       if (error) throw error
     } catch (e) {
       set({ error: errorMessage(e) })
+    }
+  },
+
+  touchSet: async (id, opt) => {
+    const now = new Date().toISOString()
+    const cur = get().sets.find((x) => x.id === id)
+    const body: Record<string, unknown> = { ended_at: now }
+    const withStart = opt?.start === true && !cur?.startedAt
+    if (withStart) body.started_at = now
+    set((s) => ({
+      sets: s.sets.map((x) =>
+        x.id === id ? { ...x, endedAt: now, startedAt: withStart ? now : x.startedAt } : x,
+      ),
+    }))
+    try {
+      await supabase.from('survey_record_sets').update(body as never).eq('id', id)
+    } catch (e) {
+      console.warn('[surveySet] 作業時刻 の 記録 に 失敗', e)
     }
   },
 

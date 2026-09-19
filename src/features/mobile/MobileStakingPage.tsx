@@ -105,6 +105,8 @@ import {
   MapDrawingToolbar,
 } from '@/components/map/MapDrawingToolbar'
 import { MobileStakingRecordsSheet } from './MobileStakingRecordsSheet'
+import { MobileSurveySetPicker } from './MobileSurveySetPicker'
+import { useSurveySetStore } from '@/stores/surveySetStore'
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
 import { useLayerOrder } from '@/features/orthophoto/OverviewLayerPanel'
 import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
@@ -863,6 +865,19 @@ export function MobileStakingPage() {
   const [showTargetList, setShowTargetList] = useState(false)
   /** 実測一覧 (記録セット ごと に 見る) */
   const [showStakingRecords, setShowStakingRecords] = useState(false)
+  /**
+   * この 起動 で 測る 記録セット。 最初 の 「測定」 で 選ぶ (または 作る) まで null。
+   * 決まって いない 間 は 測定 の 代わり に 選択 ダイアログ を 出す。
+   */
+  const [sessionSetId, setSessionSetId] = useState<string | null>(null)
+  /** セット を 決めた 後 に 続き で 走らせる 測定 */
+  const [pendingStart, setPendingStart] = useState<{ forceFreePoint?: boolean } | null>(null)
+  const touchSurveySet = useSurveySetStore((s) => s.touchSet)
+  const fetchSurveySets = useSurveySetStore((s) => s.fetchByFarm)
+  useEffect(() => {
+    if (!farmId) return
+    void fetchSurveySets(farmId)
+  }, [farmId, fetchSurveySets])
   const [showRecordList, setShowRecordList] = useState(
     () => params.get('openCoords') === '1',
   )
@@ -3516,6 +3531,15 @@ export function MobileStakingPage() {
   // 記録開始
   const startRecording = (opts: { forceFreePoint?: boolean } = {}) => {
     if (recording) return
+    // 起動後 の 1 回目 は どの 記録セット に 入れる か を 先 に 決める
+    if (!sessionSetId) {
+      setPendingStart(opts)
+      return
+    }
+    startRecordingNow(opts)
+  }
+  const startRecordingNow = (opts: { forceFreePoint?: boolean } = {}) => {
+    if (recording) return
     if (!('geolocation' in navigator)) {
       alert('Geolocation が利用できません')
       return
@@ -3791,6 +3815,7 @@ export function MobileStakingPage() {
         {
           farmId,
           surveyCategory,
+          recordSetId: sessionSetId,
           targetType: selectedTarget.kind,
           targetRefId: selectedTarget.refId,
           targetVertexIndex: selectedTarget.vertexIndex,
@@ -3817,6 +3842,8 @@ export function MobileStakingPage() {
         },
         { zone },
       )
+      // その セット に 最後 に 記録 が 入った 時刻 を 進める
+      if (sessionSetId) void touchSurveySet(sessionSetId)
       if (result.status === 'full') {
         alert(OFFLINE_FULL_MESSAGE)
         return
@@ -3908,6 +3935,7 @@ export function MobileStakingPage() {
       {
         farmId,
         surveyCategory,
+        recordSetId: sessionSetId,
         targetType: 'free',
         targetRefId: null,
         targetVertexIndex: null,
@@ -3926,6 +3954,7 @@ export function MobileStakingPage() {
       { pointNumber: name, x: d.x, y: d.y, z: d.z, type, notes: d.measureNote },
       { zone },
     )
+    if (sessionSetId) void touchSurveySet(sessionSetId)
     if (result.status === 'full') {
       alert(OFFLINE_FULL_MESSAGE)
       return
@@ -4016,6 +4045,7 @@ export function MobileStakingPage() {
     await addRecord({
       farmId,
       surveyCategory,
+      recordSetId: sessionSetId,
       targetType: target.kind,
       targetRefId: target.refId,
       targetVertexIndex: target.vertexIndex,
@@ -7235,6 +7265,22 @@ export function MobileStakingPage() {
           </div>
         )}
 
+
+        {/* 起動後 の 1 回目 の 測定: どの 記録セット に 入れる か を 決める */}
+        {pendingStart && farmId && (
+          <MobileSurveySetPicker
+            farmId={farmId}
+            onCancel={() => setPendingStart(null)}
+            onDecided={(setId) => {
+              const opts = pendingStart
+              setSessionSetId(setId)
+              setPendingStart(null)
+              // 開始日時 は ここ で 打つ (未設定 の とき だけ)
+              void touchSurveySet(setId, { start: true })
+              if (opts) startRecordingNow(opts)
+            }}
+          />
+        )}
 
         {/* 実測一覧 (記録セット の 切替 + スライド量) */}
         {showStakingRecords && farmId && (

@@ -254,7 +254,6 @@ export function StakingRecordsPage() {
 
   // 座標管理 に 登録 する 行 の 選択 (グループ.key 単位)
   const [selectedGroupKeys, setSelectedGroupKeys] = useState<Set<string>>(new Set())
-  const [registering, setRegistering] = useState<null | 's' | 'rs'>(null)
   const isHidden = (key: string) => hiddenSections.has(key)
   const toggleSection = (key: string) => {
     setHiddenSections((prev) => {
@@ -720,104 +719,6 @@ export function StakingRecordsPage() {
     await deleteRecord(id)
   }
 
-  // 選択行 の スライド設計値 (mode='s') / 逆スライド実測値 (mode='rs') を
-  // 座標管理 に 新規 座標 として 登録。 点名 は プレフィックス s / rs を
-  // 元 の 実測点名 (G_ / G2_ 剥がし) に 付加。 型 は 現況 (current)。
-  const handleRegisterAsCoordinates = async (mode: 's' | 'rs') => {
-    if (!currentFarm) return
-    if (selectedGroupKeys.size === 0) {
-      alert('登録する 行 を チェック して ください。')
-      return
-    }
-    const prefix = mode
-    const items: Array<{
-      pointNumber: string
-      x: number
-      y: number
-      z: number | null
-    }> = []
-    for (const g of grouped) {
-      if (!selectedGroupKeys.has(g.key)) continue
-      const avgX = g.m2 && g.m1 ? (g.m1.measuredX + g.m2.measuredX) / 2 : g.m1?.measuredX
-      const avgY = g.m2 && g.m1 ? (g.m1.measuredY + g.m2.measuredY) / 2 : g.m1?.measuredY
-      const avgZ =
-        g.m2 && g.m1 && g.m1.measuredZ != null && g.m2.measuredZ != null
-          ? (g.m1.measuredZ + g.m2.measuredZ) / 2
-          : g.m1?.measuredZ ?? null
-      const baseName = (g.m1?.targetName ?? g.designName ?? '').replace(/^G2?_/, '')
-      if (!baseName) continue
-      let x: number | null = null
-      let y: number | null = null
-      let z: number | null = null
-      if (mode === 's') {
-        // スライド設計 = 設計 + スライド量
-        if (g.designX == null || g.designY == null) continue
-        x = g.designX + xOffset
-        y = g.designY + yOffset
-        z = g.designZ != null ? g.designZ + zOffset : null
-      } else {
-        // 逆スライド実測 = 実測平均 - スライド量
-        if (avgX == null || avgY == null) continue
-        x = avgX - xOffset
-        y = avgY - yOffset
-        z = avgZ != null ? avgZ - zOffset : null
-      }
-      items.push({
-        pointNumber: `${prefix}${baseName}`,
-        x,
-        y,
-        z,
-      })
-    }
-    if (items.length === 0) {
-      alert(
-        mode === 's'
-          ? '当初 の 座標 が 無い 行 は 「スライド値」を 登録 できません。'
-          : '実測 が 無い 行 は 登録 できません。',
-      )
-      return
-    }
-    if (
-      !confirm(
-        `${items.length} 件 の 座標 を 「${prefix}<元点名>」で 座標管理 に 登録します。`,
-      )
-    )
-      return
-    setRegistering(mode)
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      const uid = user?.id ?? null
-      const rows = items.map((it) => ({
-        farm_id: currentFarm.id,
-        point_number: it.pointNumber,
-        x: it.x,
-        y: it.y,
-        z: it.z,
-        coordinate_type: 'current' as const,
-        stake_type: null,
-        latitude: null,
-        longitude: null,
-        created_by: uid,
-        updated_by: uid,
-      }))
-      const { error } = await supabase
-        .from('design_coordinates')
-        .insert(rows as never)
-      if (error) throw error
-      await fetchCoordinates(currentFarm.id)
-      setSelectedGroupKeys(new Set())
-      alert(`${items.length} 件 の 座標 を 登録 しました。`)
-    } catch (err) {
-      console.error('[staking-records] 座標登録 に 失敗', err)
-      alert(
-        `座標 の 登録 に 失敗 しました: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      )
-    } finally {
-      setRegistering(null)
-    }
-  }
 
   // CSV 出力（実測値ベース）
   const handleExportCSV = () => {
@@ -1361,29 +1262,12 @@ export function StakingRecordsPage() {
             className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
           />
         </label>
+        {/* 実測 から 座標管理 へ 直接 登録 する 導線 は 廃止。 実測 は 実測 の まま
+            残し、座標 に する なら Excel / SIMA を 通す。 */}
         <span className="text-slate-400 mx-1">|</span>
         <span className="text-slate-500">
           選択 {selectedGroupKeys.size} 件 →
         </span>
-        <button
-          onClick={() => void handleRegisterAsCoordinates('s')}
-          disabled={selectedGroupKeys.size === 0 || registering !== null}
-          className="px-2 py-1 bg-fuchsia-600 text-white rounded hover:bg-fuchsia-700 disabled:opacity-50"
-          title="スライド値 (当初 + スライド量) を 座標管理 に 登録。 点名 = s + 元点名"
-        >
-          {registering === 's' ? '登録中…' : 'スライド値 を 登録 (s+点名)'}
-        </button>
-        <button
-          onClick={() => void handleRegisterAsCoordinates('rs')}
-          disabled={selectedGroupKeys.size === 0 || registering !== null}
-          className="px-2 py-1 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:opacity-50"
-          title="補正実測値 (実測平均 - スライド量) を 座標管理 に 登録。 点名 = rs + 元点名"
-        >
-          {registering === 'rs' ? '登録中…' : '補正実測値 を 登録 (rs+点名)'}
-        </button>
-        {/* 選んだ 点 を 別 の 記録セット へ 移す。 スライド量 は セット ごと な ので
-            移す と 補正 の 土俵 も 変わる。 */}
-        <span className="text-slate-400 mx-1">|</span>
         <label className="flex items-center gap-1">
           <span className="text-slate-500">セットへ移動</span>
           <select
@@ -1467,7 +1351,7 @@ export function StakingRecordsPage() {
                 <th
                   className="px-2 py-2 border-b border-r text-center w-8"
                   rowSpan={2}
-                  title="座標管理 に 登録 する 行 を 選択"
+                  title="記録セット を 移す 行 を 選択"
                 >
                   <input
                     type="checkbox"

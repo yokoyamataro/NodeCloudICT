@@ -42,6 +42,20 @@ function NumCell({
   )
 }
 
+/** 開始 / 終了日時。 未記録 は — */
+function fmtStamp(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('ja-JP', {
+    year: '2-digit',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 export function SurveyRecordSetsPanel({
   farmId,
   countBySet,
@@ -209,8 +223,13 @@ export function SurveyRecordSetsPanel({
                       />
                     </div>
                     <div className="text-[11px] text-slate-400">
-                      実測 に この 量 を 足した もの が 設計 の 土俵 に 乗る 値 です
-                      (逆スライド = 実測 − スライド量)。
+                      実測 から この 量 を 引いた もの が 当初 の 土俵 に 乗る 値 です
+                      (補正実測値 = 実測 − スライド量)。
+                    </div>
+                    {/* 作業 の 幅。 スマホ で セット を 選んだ 時刻 と、最後 に
+                        記録 が 入った 時刻 が 自動 で 入る (手入力 は しない) */}
+                    <div className="text-[11px] text-slate-500 font-mono">
+                      作業 {fmtStamp(s.startedAt)} 〜 {fmtStamp(s.endedAt)}
                     </div>
                     {s.isDefault && (
                       <div className="flex items-center gap-1 text-[11px] text-amber-700">
