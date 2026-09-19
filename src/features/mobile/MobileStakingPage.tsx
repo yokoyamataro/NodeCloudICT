@@ -104,6 +104,7 @@ import {
   MapDrawingSnapControl,
   MapDrawingToolbar,
 } from '@/components/map/MapDrawingToolbar'
+import { MobileStakingRecordsSheet } from './MobileStakingRecordsSheet'
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
 import { useLayerOrder } from '@/features/orthophoto/OverviewLayerPanel'
 import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
@@ -860,6 +861,8 @@ export function MobileStakingPage() {
   const [chatMention, setChatMention] = useState<string | null>(null)
   const [showFarmEditModal, setShowFarmEditModal] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
+  /** 実測一覧 (記録セット ごと に 見る) */
+  const [showStakingRecords, setShowStakingRecords] = useState(false)
   const [showRecordList, setShowRecordList] = useState(
     () => params.get('openCoords') === '1',
   )
@@ -4334,6 +4337,7 @@ export function MobileStakingPage() {
         <button
           onClick={() => {
             setShowParcelList(false)
+            setShowStakingRecords(false)
             setShowRecordList((v) => !v)
           }}
           className={`shrink-0 relative px-2 py-1.5 rounded font-medium ${
@@ -4348,11 +4352,25 @@ export function MobileStakingPage() {
             </span>
           )}
         </button>
+        <button
+          onClick={() => {
+            setShowRecordList(false)
+            setShowParcelList(false)
+            setShowStakingRecords((v) => !v)
+          }}
+          className={`shrink-0 relative px-2 py-1.5 rounded font-medium ${
+            showStakingRecords ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
+          }`}
+          title="実測一覧（記録セットごとに確認）"
+        >
+          実測
+        </button>
         {/* 地番タブは地籍測量プロジェクトのみ表示 (土木工事モードでは非表示) */}
         {isCadastralProject && (
           <button
             onClick={() => {
               setShowRecordList(false)
+              setShowStakingRecords(false)
               setShowParcelList((v) => !v)
             }}
             className={`shrink-0 relative px-2 py-1.5 rounded font-medium ${
@@ -7217,6 +7235,14 @@ export function MobileStakingPage() {
           </div>
         )}
 
+
+        {/* 実測一覧 (記録セット の 切替 + スライド量) */}
+        {showStakingRecords && farmId && (
+          <MobileStakingRecordsSheet
+            farmId={farmId}
+            onClose={() => setShowStakingRecords(false)}
+          />
+        )}
 
         {/* 座標一覧（元の座標 + 起工測量記録をマージ表示） */}
         {showRecordList && (
