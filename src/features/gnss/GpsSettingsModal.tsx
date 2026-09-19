@@ -26,6 +26,10 @@ import {
 import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
 import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
 import { useFarmStore } from '@/stores/farmStore'
+import { useProjectListStore } from '@/stores/projectListStore'
+import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useStakingStore } from '@/stores/stakingStore'
+import { CoordinateConverter } from '@/lib/coordinates'
 import { useDroggerConnection } from '@/stores/droggerConnectionStore'
 import {
   DroggerLocation,
@@ -558,13 +562,16 @@ function SurveySetBar() {
   const [creating, setCreating] = useState(false)
   const active = sets.find((s) => s.id === activeSetId) ?? null
 
-  /** セット を 追加 して、そのまま 作業中 に する */
+  /** セット を 追加 して、そのまま 作業中 に する。 名前 は その場 で 聞く */
   const handleCreate = async () => {
     if (!farmId) return
+    const today = new Date().toISOString().slice(0, 10)
+    const name = window.prompt('記録セット の 名前 (空 なら 測量日 と 担当者 で 表示)', '')
+    // キャンセル は 作らない。 空文字 の OK は 名前なし で 作る
+    if (name === null) return
     setCreating(true)
     try {
-      const today = new Date().toISOString().slice(0, 10)
-      const row = await createSet(farmId, { measuredOn: today })
+      const row = await createSet(farmId, { measuredOn: today, name: name.trim() || null })
       if (row) {
         setActiveSetId(row.id)
         void touchSet(row.id, { start: true })
@@ -572,6 +579,14 @@ function SurveySetBar() {
     } finally {
       setCreating(false)
     }
+  }
+
+  /** 選んで いる セット の 名前 を 変える */
+  const handleRename = async () => {
+    if (!active) return
+    const next = window.prompt('記録セット の 名前', active.name ?? '')
+    if (next === null) return
+    await updateSet(active.id, { name: next.trim() || null })
   }
 
   return (
@@ -623,6 +638,16 @@ function SurveySetBar() {
         </select>
         <button
           type="button"
+          onClick={() => void handleRename()}
+          disabled={!active}
+          className="shrink-0 px-2 py-1.5 border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-30"
+          title="この セット の 名前 を 変える"
+          aria-label="名前を変える"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
           onClick={() => void handleCreate()}
           disabled={creating}
           className="shrink-0 px-2 py-1.5 border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
@@ -669,6 +694,213 @@ function SlideInput({
       }}
       className="w-full min-w-0 px-1 py-1 border border-slate-300 rounded text-right font-mono disabled:bg-slate-100"
     />
+  )
+}
+
+/**
+ * 点検。
+ *
+ * 補正値 を 入れた 後、本当に 設計 の 土俵 に 乗って いる か を その場 で 確かめる。
+ * 既知 の 基準点 の 上 で 10 秒 観測 し、補正実測値 (実測平均 − 補正値) と
+ * 元 の 座標 の 差 を 見る。 水平 2cm / 高さ 3cm 以内 なら 正常。
+ *
+ * 点検 で 取った 値 も 実測 な ので、作業中 の 記録セット に 残す。
+ */
+const CHECK_SECONDS = 10
+const CHECK_TOL_H = 0.02
+const CHECK_TOL_V = 0.03
+
+function SurveyCheckSection() {
+  const coordinates = useCoordinateStore((s) => s.coordinates)
+  const farmId = useFarmStore((s) => s.currentFarm?.id ?? null)
+  const zone = useProjectListStore((s) => s.currentProject?.coordinate_zone ?? 13)
+  const sets = useSurveySetStore((s) => s.sets)
+  const activeSetId = useSurveySetStore((s) => s.activeSetId)
+  const touchSet = useSurveySetStore((s) => s.touchSet)
+  const addRecord = useStakingStore((s) => s.addRecord)
+  const antennaHeight = useGnssSettingsStore((s) => s.antennaHeight)
+  const useGeoidCorrection = useGnssSettingsStore((s) => s.useGeoidCorrection)
+
+  const slide = sets.find((s) => s.id === activeSetId)?.slide ?? { dx: 0, dy: 0, dz: 0 }
+  // 基準点 が 無い 工区 も ある ので、その ときは 全部 から 選ばせる
+  const controls = coordinates.filter((c) => c.type === 'control')
+  const pickable = controls.length > 0 ? controls : coordinates
+  const [targetId, setTargetId] = useState<string>('')
+  const target = pickable.find((c) => c.id === targetId) ?? null
+
+  const [busy, setBusy] = useState(false)
+  const [left, setLeft] = useState(0)
+  const [result, setResult] = useState<{
+    ok: boolean
+    dx: number
+    dy: number
+    dz: number | null
+    h: number
+    n: number
+  } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = async () => {
+    if (!target || !farmId) return
+    setBusy(true)
+    setError(null)
+    setResult(null)
+    setLeft(CHECK_SECONDS)
+    const samples: { lat: number; lon: number; alt: number | null; sep: number | null }[] = []
+    let handle: { remove: () => Promise<void> } | null = null
+    const tick = window.setInterval(() => setLeft((n) => Math.max(0, n - 1)), 1000)
+    try {
+      handle = await DroggerLocation.addListener('location', (ev: DroggerLocationEvent) => {
+        samples.push({
+          lat: ev.lat,
+          lon: ev.lon,
+          alt: ev.altitude_m,
+          sep: ev.geoidal_separation_m ?? null,
+        })
+      })
+      await new Promise((r) => window.setTimeout(r, CHECK_SECONDS * 1000))
+      if (samples.length === 0) {
+        setError('位置 を 受信 できません でした。 接続 と FIX を 確かめて ください。')
+        return
+      }
+      const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
+      const lat = avg(samples.map((s) => s.lat))
+      const lon = avg(samples.map((s) => s.lon))
+      const alts = samples.map((s) => s.alt).filter((v): v is number => v != null)
+      const seps = samples.map((s) => s.sep).filter((v): v is number => v != null)
+      const alt = alts.length > 0 ? avg(alts) : null
+
+      // 平面直角 に 直して から 補正値 を 引く (= 補正実測値)
+      const conv = new CoordinateConverter(zone)
+      const xy = conv.toXY(lat, lon)
+      const cx = xy.x - slide.dx
+      const cy = xy.y - slide.dy
+
+      // 標高。 ジオイド 補正 を 使う 設定 なら 楕円体高 から 引く
+      let elev: number | null = null
+      if (alt != null) {
+        if (useGeoidCorrection) {
+          const { loadGeoid, correctElevation } = await import('@/lib/geoid')
+          const grid = await loadGeoid()
+          const hEllip = alt + (seps.length > 0 ? avg(seps) : 0)
+          elev = correctElevation(grid, hEllip, lat, lon, antennaHeight)
+        } else {
+          elev = alt - antennaHeight
+        }
+      }
+      const cz = elev != null ? elev - slide.dz : null
+
+      const dx = cx - target.x
+      const dy = cy - target.y
+      const dz = cz != null && target.z != null ? cz - target.z : null
+      const h = Math.hypot(dx, dy)
+      const ok = h <= CHECK_TOL_H && (dz == null || Math.abs(dz) <= CHECK_TOL_V)
+      setResult({ ok, dx, dy, dz, h, n: samples.length })
+
+      // 点検 も 実測 な ので 記録 に 残す (生値。 補正 は 見る とき に 掛ける)
+      await addRecord({
+        farmId,
+        surveyCategory: 'initial',
+        recordSetId: activeSetId,
+        targetType: 'coordinate',
+        targetRefId: target.id,
+        targetVertexIndex: null,
+        targetName: `点検_${target.pointNumber}`,
+        targetX: target.x,
+        targetY: target.y,
+        targetZ: target.z,
+        measuredX: xy.x,
+        measuredY: xy.y,
+        measuredZ: elev,
+        accuracy: null,
+        sampleCount: samples.length,
+        durationSeconds: CHECK_SECONDS,
+        notes: `点検 (水平 ${(h * 100).toFixed(1)}cm${
+          dz != null ? ` / 高さ ${(dz * 100).toFixed(1)}cm` : ''
+        })`,
+      })
+      if (activeSetId) void touchSet(activeSetId)
+    } catch (e) {
+      console.error('[check]', e)
+      setError(e instanceof Error ? e.message : '点検 に 失敗 しました')
+    } finally {
+      window.clearInterval(tick)
+      if (handle) void handle.remove()
+      setBusy(false)
+      setLeft(0)
+    }
+  }
+
+  return (
+    <div className="border-t pt-3 space-y-2">
+      <div className="text-slate-700 font-semibold">点検</div>
+      <div className="text-[10px] text-slate-500">
+        既知 の 点 の 上 で {CHECK_SECONDS} 秒 観測 し、補正実測値 と 元 の 座標 の 差 を
+        見ます。 水平 {(CHECK_TOL_H * 100).toFixed(0)}cm / 高さ {(CHECK_TOL_V * 100).toFixed(0)}cm
+        以内 なら 正常。 結果 は 作業中 の セット に 残り ます。
+      </div>
+      <label className="flex items-center gap-2">
+        <span className="w-16 shrink-0 text-slate-500">
+          {controls.length > 0 ? '基準点' : '既知点'}
+        </span>
+        <select
+          value={targetId}
+          onChange={(e) => {
+            setTargetId(e.target.value)
+            setResult(null)
+          }}
+          className="flex-1 min-w-0 px-2 py-1.5 border border-slate-300 rounded"
+        >
+          <option value="">(選択)</option>
+          {pickable.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.pointNumber}
+            </option>
+          ))}
+        </select>
+      </label>
+      {controls.length === 0 && coordinates.length > 0 && (
+        <div className="text-[10px] text-amber-700 pl-16">
+          点種 が 「基準点」 の 点 が ない ので、全部 の 点 から 選べる ように して います。
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => void run()}
+        disabled={!target || busy}
+        className="w-full px-3 py-2 rounded bg-blue-600 text-white font-medium disabled:opacity-40 flex items-center justify-center gap-1"
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+        {busy ? `観測中… 残り ${left} 秒` : `点検を開始 (${CHECK_SECONDS} 秒)`}
+      </button>
+      {error && <div className="text-[11px] text-red-600">{error}</div>}
+      {result && (
+        <div
+          className={`rounded border p-2 space-y-1 ${
+            result.ok
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+              : 'bg-red-50 border-red-300 text-red-800'
+          }`}
+        >
+          <div className="font-semibold">
+            {result.ok ? '正常です' : '許容を 超えて います'}
+          </div>
+          <div className="font-mono text-[11px]">
+            水平 {(result.h * 100).toFixed(1)} cm (dX {(result.dx * 100).toFixed(1)} / dY{' '}
+            {(result.dy * 100).toFixed(1)})
+          </div>
+          <div className="font-mono text-[11px]">
+            高さ {result.dz != null ? `${(result.dz * 100).toFixed(1)} cm` : '—'}
+          </div>
+          <div className="text-[10px] opacity-80">{result.n} エポック の 平均</div>
+          {!result.ok && (
+            <div className="text-[11px]">
+              補正値 を 見直す か、基準点 の 座標 / アンテナ高 を 確かめて ください。
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -724,6 +956,9 @@ function GnssSettingsSection() {
 
       {/* 実測 の 記録セット と 補正値 */}
       <SurveySetBar />
+
+      {/* 補正値 が 効いて いる か を 既知点 で 確かめる */}
+      <SurveyCheckSection />
     </div>
   )
 }

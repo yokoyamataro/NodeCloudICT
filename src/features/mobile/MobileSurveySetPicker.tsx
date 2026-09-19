@@ -44,6 +44,7 @@ export function MobileSurveySetPicker({
   )
   const [picked, setPicked] = useState<string | null>(() => latestSet(sets)?.id ?? null)
   const [operator, setOperator] = useState('')
+  const [name, setName] = useState('')
 
   const handleStart = () => {
     if (!picked) return
@@ -55,6 +56,7 @@ export function MobileSurveySetPicker({
       const today = new Date().toISOString().slice(0, 10)
       const row = await createSet(farmId, {
         measuredOn: today,
+        name: name.trim() || null,
         operator: operator.trim() || null,
       })
       if (row) onDecided(row.id)
@@ -118,6 +120,16 @@ export function MobileSurveySetPicker({
           <div className="border rounded p-2 space-y-2">
             <div className="text-xs font-semibold text-slate-700">新しい セット で 始める</div>
             <label className="flex items-center gap-2 text-xs">
+              <span className="text-slate-500 w-12 shrink-0">名前</span>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="(空 なら 測量日 と 担当者)"
+                className="flex-1 px-2 py-1.5 border rounded text-sm"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-xs">
               <span className="text-slate-500 w-12 shrink-0">担当者</span>
               <input
                 type="text"
@@ -136,7 +148,7 @@ export function MobileSurveySetPicker({
               新しい セット を 作って 開始
             </button>
             <div className="text-[11px] text-slate-400">
-              測量日 は 今日。 名前 や 基準局、スライド量 は 後 から 直せます。
+              測量日 は 今日。 基準局 や スライド量 は 後 から 直せます。
             </div>
           </div>
         </div>
