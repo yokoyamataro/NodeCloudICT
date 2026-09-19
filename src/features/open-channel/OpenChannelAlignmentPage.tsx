@@ -6,7 +6,7 @@
 // - 座標管理の点を参照する
 // - 地図で線形（直線 + 曲線）をプレビュー
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { AlignmentReportKind } from './alignmentReport'
 import { Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
@@ -1238,13 +1238,13 @@ function SectionPointsEditor({
   )
 }
 
-function CrossSectionView({
-  cs,
-  centerHeight,
-  currentGroundHeight,
-  currentSection,
-  asbuiltSection,
-}: {
+/** 親 (横断図 の 表題行) から 呼ぶ 操作 */
+export interface CrossSectionViewHandle {
+  /** 表示 (パン / ズーム) を 初期 の 自動フィット に 戻す */
+  resetView: () => void
+}
+
+const CrossSectionView = forwardRef<CrossSectionViewHandle, {
   cs: StandardCrossSection
   centerHeight?: number
   /** 現況高 (中心線上の 地盤高) [m]。undefined / null は 未入力扱い。
@@ -1254,7 +1254,10 @@ function CrossSectionView({
   currentSection?: MeasuredCrossPoint[] | null
   /** 出来形 断面 の 測定点列。ある場合 は 別 色 で 折れ線 + マーカー描画。 */
   asbuiltSection?: MeasuredCrossPoint[] | null
-}) {
+}>(function CrossSectionView(
+  { cs, centerHeight, currentGroundHeight, currentSection, asbuiltSection },
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 720, h: 340 })
 
@@ -1384,28 +1387,16 @@ function CrossSectionView({
     panStartRef.current = null
     // wasDraggingRef は 直後の onClick で 読まれる。次の mouseDown で リセット される
   }
-  /** 表示 リセット: パン (0,0) / ズーム 1.0 に 戻す (自動フィット 状態) */
-  const resetView = () => {
-    setViewPan({ x: 0, y: 0 })
-    setViewZoom(1)
-  }
+  /** 表示 リセット: パン (0,0) / ズーム 1.0 に 戻す (自動フィット 状態)。
+   *  ボタン は 横断図 の 表題行 に ある ので ref 経由 で 呼ばれる */
+  useImperativeHandle(ref, () => ({
+    resetView: () => {
+      setViewPan({ x: 0, y: 0 })
+      setViewZoom(1)
+    },
+  }))
   return (
     <div className="flex flex-col gap-2 h-full">
-      {/* ツールバー。 断面 の 入力 は 左 の 断面入力欄 (表) に 一本化 した ので、
-          ここ に 残る のは 表示 まわり だけ。 */}
-      <div className="flex items-center gap-1.5 flex-wrap text-xs shrink-0">
-        <button
-          onClick={resetView}
-          className="px-2 py-1 text-xs border rounded bg-white hover:bg-slate-100"
-          title="表示 (パン / ズーム) を リセット"
-        >
-          表示リセット
-        </button>
-        <span className="text-slate-400 text-[10px] ml-1">
-          ホイール ズーム / ドラッグ スクロール
-        </span>
-      </div>
-
       {/* 断面図。 点 の 入力 は 左 の 断面入力欄 (表) で 行う。
           ここ は 表示 と パン / ズーム だけ。 */}
       <div
@@ -1769,7 +1760,7 @@ function CrossSectionView({
       </div>
     </div>
   )
-}
+})
 
 
 /**
@@ -3520,18 +3511,8 @@ export function OpenChannelAlignmentPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStation, farmId, segments, selected?.sideOrientation, stakingRecords, surveySlide, surveySets, crossBandM])
 
-  /**
-   * 「横断 > 現況」 の 表 に 出す、測点 ごと の 「その 断面 の 上 に ある 実測点」 の 数。
-   * 取込 ボタン を 押す 価値 が ある 測点 が どれ か を 先 に 見せる ため。
-   * 現況 タブ 以外 では 数えない (記録 × 測点 の 総当たり な ので)。
-   */
-  const measuredCountByStation = useMemo(() => {
-    const m = new Map<string, number>()
-    if (editTarget !== 'current') return m
-    for (const st of stations) m.set(st.id, measuredPointsOnStation(st).length)
-    return m
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editTarget, stations, farmId, segments, selected?.sideOrientation, stakingRecords, surveySlide, surveySets, crossBandM])
+  /** 横断図 の 表示リセット を 表題行 の ボタン から 呼ぶ */
+  const crossViewRef = useRef<CrossSectionViewHandle | null>(null)
 
   // ---- 計算書 (PDF) の 出力
   const [reportBusy, setReportBusy] = useState<AlignmentReportKind | null>(null)
@@ -3585,9 +3566,6 @@ export function OpenChannelAlignmentPage() {
     </button>
   )
 
-  /** 直近 の 取込 結果 (「横断 > 現況」 の 表 の 下 に 出す) */
-  const [stationImportMsg, setStationImportMsg] = useState<string | null>(null)
-
   /** 横断 の 表 を 管理測点 だけ に 絞る */
   const [controlOnly, setControlOnly] = useState<boolean>(() => {
     try {
@@ -3614,23 +3592,6 @@ export function OpenChannelAlignmentPage() {
     )
   }
   const controlStationCount = stations.filter((s) => s.isControlStation).length
-
-  /**
-   * 1 測点 分 の 現況 を 実測記録 から 取込む。
-   * 一括 では なく 行 ごと に 押す 形 に して いる のは、手入力 済み の 現況 を
-   * まとめて 潰さない ため。 中心高 (currentGroundHeight) は 取込 内容 から 補間。
-   */
-  const handleImportStationCurrent = (st: StationRow) => {
-    const pts = measuredPointsOnStation(st)
-    if (pts.length === 0) {
-      setStationImportMsg(
-        `${st.label}: 横断幅 ${crossBandM} m 以内 に 実測点 が 見つかり ません`,
-      )
-      return
-    }
-    handleReplaceStationSection(st.id, 'current', pts)
-    setStationImportMsg(`${st.label}: 実測記録 から ${pts.length} 点 を 取込みました`)
-  }
 
   // 「横断を 切替中は 図面の 断面方向 (左右=画面 左右) が 水平に なる ように 地図を 回転」
   // する 用の bearing (度)。 CoordinateMap の mapBearingDeg (setBearing 経由) に 渡す。
@@ -5253,7 +5214,7 @@ export function OpenChannelAlignmentPage() {
                       {editTarget === 'plan'
                         ? '行 を 選ぶ と 右下 の 横断図 で 計画断面 の 編集 に 入り ます。 個別断面 が 無い 測点 は 標準断面 を 複製 して 始め ます。'
                         : editTarget === 'current'
-                          ? '行 を 選ぶ と 右下 の 横断図 で 現況 の 編集 に 入り ます (地図 / 表 / DXF から 拾える)。 「取込」 は その 測点 の 現況 を 実測記録 から 入れ 直し ます。'
+                          ? '行 を 選ぶ と 右下 の 横断図 で 現況 の 編集 に 入り ます。 点 の 取込 (実測記録 / 地図 / DXF / LandXML) は 下 の 断面入力欄 の 上 から。'
                           : '行 を 選ぶ と 右下 の 横断図 で 出来形 の 編集 に 入り ます。'}
                     </div>
                     <div className="border rounded overflow-auto max-h-80">
@@ -5284,18 +5245,7 @@ export function OpenChannelAlignmentPage() {
                                 現況高 (m)
                               </th>
                             )}
-                            {editTarget === 'current' && (
-                              <th
-                                className="px-2 py-1 w-16 text-right whitespace-nowrap"
-                                title="この断面の横断幅以内にある実測記録の点数"
-                              >
-                                実測
-                              </th>
-                            )}
                             <th className="px-2 py-1 w-28 text-center whitespace-nowrap">状態</th>
-                            {editTarget === 'current' && (
-                              <th className="px-2 py-1 w-16 text-center whitespace-nowrap"></th>
-                            )}
                           </tr>
                         </thead>
                         <tbody>
@@ -5371,18 +5321,6 @@ export function OpenChannelAlignmentPage() {
                                     />
                                   </td>
                                 )}
-                                {editTarget === 'current' && (
-                                  <td className="px-2 py-1 text-right tabular-nums text-[11px] whitespace-nowrap">
-                                    {(() => {
-                                      const n = measuredCountByStation.get(s.id) ?? 0
-                                      return n > 0 ? (
-                                        <span className="text-cyan-700">{n}</span>
-                                      ) : (
-                                        <span className="text-slate-300">0</span>
-                                      )
-                                    })()}
-                                  </td>
-                                )}
                                 <td className="px-2 py-1 text-center text-[11px] whitespace-nowrap">
                                   {(() => {
                                     if (editTarget === 'plan') {
@@ -5413,21 +5351,6 @@ export function OpenChannelAlignmentPage() {
                                     )
                                   })()}
                                 </td>
-                                {editTarget === 'current' && (
-                                  <td className="px-1 py-1 text-center whitespace-nowrap">
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        handleImportStationCurrent(s)
-                                      }}
-                                      disabled={(measuredCountByStation.get(s.id) ?? 0) === 0}
-                                      className="px-1.5 py-0.5 text-[11px] border rounded bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100 disabled:opacity-40"
-                                      title="この 測点 の 現況 を 実測記録 から 取込 (逆スライド 済み)"
-                                    >
-                                      取込
-                                    </button>
-                                  </td>
-                                )}
                               </tr>
                             )
                           })}
@@ -5439,9 +5362,6 @@ export function OpenChannelAlignmentPage() {
                         管理測点 が まだ ありません。 「管理測点のみ表示」 を 解除 して
                         「管理」 に チェック を 付けて ください。
                       </div>
-                    )}
-                    {editTarget === 'current' && stationImportMsg && (
-                      <div className="text-[11px] text-emerald-700">{stationImportMsg}</div>
                     )}
                   </>
                 )}
@@ -5923,20 +5843,20 @@ export function OpenChannelAlignmentPage() {
                                   disabled={!prev}
                                   className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-100 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
                                   title={
-                                    prev ? `手前の 断面 (${prev.label})` : '手前の 断面 は ありません'
+                                    prev ? `前 の 断面 (${prev.label})` : '前 の 断面 は ありません'
                                   }
                                 >
-                                  ◀ 手前
+                                  ◀ 前断面
                                 </button>
                                 <button
                                   onClick={() => next && setSelectedStationId(next.id)}
                                   disabled={!next}
                                   className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-100 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
                                   title={
-                                    next ? `次の 断面 (${next.label})` : '次の 断面 は ありません'
+                                    next ? `次 の 断面 (${next.label})` : '次 の 断面 は ありません'
                                   }
                                 >
-                                  次 ▶
+                                  次断面 ▶
                                 </button>
                               </span>
                             )
@@ -5950,58 +5870,33 @@ export function OpenChannelAlignmentPage() {
                           >
                             {selectedStation.crossSection ? '個別設定' : '標準を継承'}
                           </span>
-                          {centerZ !== undefined && (
-                            <>
-                              <span className="text-[10px] text-slate-500">中心設計高</span>
-                              <span className="font-mono font-semibold text-emerald-700 tabular-nums">
-                                {centerZ.toFixed(3)}
-                                <span className="text-[10px] text-slate-400 ml-0.5">m</span>
-                              </span>
-                            </>
-                          )}
-                          {/* 横断幅: 中心線 沿い に この 範囲の 実測記録を
-                              「この 断面上の 点」と みなす。既定 50cm */}
-                          <label
-                            className="flex items-center gap-1 text-[10px] text-slate-500"
-                            title="中心線沿いにこの範囲内の実測記録を、この断面上の点として自動で拾います"
-                          >
-                            <span>横断幅</span>
-                            <input
-                              type="number"
-                              step={0.1}
-                              min={0.05}
-                              value={crossBandM}
-                              onChange={(e) => {
-                                const n = parseFloat(e.target.value)
-                                if (Number.isFinite(n) && n > 0) setCrossBandM(n)
-                              }}
-                              className="w-14 px-1 py-0.5 border rounded text-right text-[11px]"
-                            />
-                            <span>m</span>
-                            {autoCurrentSection.length > 0 && (
-                              <span className="text-cyan-700">
-                                実測 {autoCurrentSection.length} 点
-                              </span>
-                            )}
-                          </label>
-                          {/* 編集対象 (現況 / 計画 / 出来形) は 左メニュー の 「横断」 タブ
-                              で 選ぶ。 ここ は いま どれ を 編集 して いる か の 表示 だけ。 */}
-                          {(() => {
-                            const m = EDIT_TARGET_TABS.find((t) => t.key === editTarget)
-                            if (!m) return null
-                            return (
-                              <div className="flex items-center gap-1 border-l pl-2 ml-1">
-                                <span className="text-[10px] text-slate-500">編集</span>
-                                <span
-                                  className={`px-2 py-0.5 text-[11px] border rounded ${m.act}`}
-                                  title="左メニュー の 「横断」 タブ で 切り替え"
-                                >
-                                  {m.label}
-                                </span>
-                              </div>
-                            )
-                          })()}
+                          {/* 編集対象 の 切替。 左メニュー 「横断」 の タブ と 同じ state */}
+                          <div className="flex items-center gap-0.5 border-l pl-2 ml-1">
+                            <span className="text-[10px] text-slate-500 mr-0.5">編集</span>
+                            {EDIT_TARGET_TABS.map((b) => (
+                              <button
+                                key={b.key}
+                                onClick={() => {
+                                  setEditTarget(b.key)
+                                  // 対象を 切り替えたら 地図ピック モードは 解除
+                                  setMapCaptureTarget(null)
+                                }}
+                                className={`px-2 py-0.5 text-[11px] border rounded ${
+                                  editTarget === b.key ? b.act : b.idle
+                                }`}
+                              >
+                                {b.label}
+                              </button>
+                            ))}
+                          </div>
                           <div className="ml-auto flex gap-1">
+                            <button
+                              onClick={() => crossViewRef.current?.resetView()}
+                              className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-600 hover:bg-slate-50"
+                              title="断面図 の 表示 (パン / ズーム) を リセット"
+                            >
+                              表示リセット
+                            </button>
                             {selectedStation.crossSection ||
                             (selectedStation.plannedSectionRaw?.length ?? 0) > 0 ? (
                               <button
@@ -6033,16 +5928,18 @@ export function OpenChannelAlignmentPage() {
                             横断計画 (標準断面)
                           </span>
                           <span className="text-[11px] text-slate-500">
-                            左右計画線 の ボタン で 描画 開始。 中間点 の 計画 を 押すと 個別断面 を 編集 できます。
+                            左メニュー 「横断」 で 測点 を 選ぶ と 個別断面 を 編集 できます。
                           </span>
                         </>
                       )}
                     </div>
 
                     {/* 断面図 (表示)。 測点 の 切替 は 表題 の 測点名 の 右 の
-                        ◀ 手前 / 次 ▶。 入力 は 左 の 断面入力欄 (表) で。 */}
+                        ◀ 前断面 / 次断面 ▶。 入力 は 左 の 断面入力欄 (表) で。
+                        表示リセット も 表題行 の ボタン (ref 経由)。 */}
                     <div className="flex-1 min-h-0">
                       <CrossSectionView
+                        ref={crossViewRef}
                         cs={cs}
                         centerHeight={centerZ}
                         currentGroundHeight={selectedStation?.currentGroundHeight ?? null}
