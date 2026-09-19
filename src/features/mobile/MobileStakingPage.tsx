@@ -7294,47 +7294,47 @@ export function MobileStakingPage() {
               {filteredTargets.length === 0 ? (
                 <div className="p-4 text-center text-xs text-slate-400">座標がありません</div>
               ) : (
-                <table className="w-full text-[11px]">
+                <table className="min-w-full w-max text-[11px]">
                   <thead className="sticky top-0 bg-slate-50 z-10">
                     <tr className="text-slate-500">
                       {coordColumns.has('name') && (
-                        <th className="px-2 py-1 text-left">点名</th>
+                        <th className="px-2 py-1 text-left whitespace-nowrap">点名</th>
                       )}
                       {coordColumns.has('xy') && (
                         <>
-                          <th className="px-2 py-1 text-right">X</th>
-                          <th className="px-2 py-1 text-right">Y</th>
+                          <th className="px-2 py-1 text-right whitespace-nowrap">X</th>
+                          <th className="px-2 py-1 text-right whitespace-nowrap">Y</th>
                         </>
                       )}
                       {coordColumns.has('z') && (
-                        <th className="px-2 py-1 text-right">Z</th>
+                        <th className="px-2 py-1 text-right whitespace-nowrap">Z</th>
                       )}
                       {coordColumns.has('latlng') && (
                         <>
-                          <th className="px-2 py-1 text-right">緯度</th>
-                          <th className="px-2 py-1 text-right">経度</th>
+                          <th className="px-2 py-1 text-right whitespace-nowrap">緯度</th>
+                          <th className="px-2 py-1 text-right whitespace-nowrap">経度</th>
                         </>
                       )}
                       {coordColumns.has('ellipsoidH') && (
                         <th className="px-2 py-1 text-right whitespace-nowrap">楕円体高</th>
                       )}
                       {coordColumns.has('type') && (
-                        <th className="px-2 py-1 text-left">点種</th>
+                        <th className="px-2 py-1 text-left whitespace-nowrap">点種</th>
                       )}
                       {coordColumns.has('stakeType') && (
-                        <th className="px-2 py-1 text-left">杭種</th>
+                        <th className="px-2 py-1 text-left whitespace-nowrap">杭種</th>
                       )}
                       {coordColumns.has('stakeStatus') && (
-                        <th className="px-2 py-1 text-left">設置</th>
+                        <th className="px-2 py-1 text-left whitespace-nowrap">設置</th>
                       )}
                       {coordColumns.has('photo') && (
-                        <th className="px-2 py-1 text-center">カメラ</th>
+                        <th className="px-2 py-1 text-center whitespace-nowrap">カメラ</th>
                       )}
                       {coordColumns.has('updatedBy') && (
-                        <th className="px-2 py-1 text-left">更新者</th>
+                        <th className="px-2 py-1 text-left whitespace-nowrap">更新者</th>
                       )}
                       {coordColumns.has('updatedAt') && (
-                        <th className="px-2 py-1 text-left">更新日</th>
+                        <th className="px-2 py-1 text-left whitespace-nowrap">更新日</th>
                       )}
                     </tr>
                   </thead>
@@ -7380,25 +7380,25 @@ export function MobileStakingPage() {
                           )}
                           {coordColumns.has('xy') && (
                             <>
-                              <td className="px-2 py-1 text-right font-mono">
+                              <td className="px-2 py-1 text-right font-mono whitespace-nowrap">
                                 {t.x.toFixed(3)}
                               </td>
-                              <td className="px-2 py-1 text-right font-mono">
+                              <td className="px-2 py-1 text-right font-mono whitespace-nowrap">
                                 {t.y.toFixed(3)}
                               </td>
                             </>
                           )}
                           {coordColumns.has('z') && (
-                            <td className="px-2 py-1 text-right font-mono">
+                            <td className="px-2 py-1 text-right font-mono whitespace-nowrap">
                               {t.z != null ? t.z.toFixed(3) : '-'}
                             </td>
                           )}
                           {coordColumns.has('latlng') && (
                             <>
-                              <td className="px-2 py-1 text-right font-mono">
+                              <td className="px-2 py-1 text-right font-mono whitespace-nowrap">
                                 {t.lat != null ? t.lat.toFixed(8) : '-'}
                               </td>
-                              <td className="px-2 py-1 text-right font-mono">
+                              <td className="px-2 py-1 text-right font-mono whitespace-nowrap">
                                 {t.lng != null ? t.lng.toFixed(8) : '-'}
                               </td>
                             </>
@@ -7419,7 +7419,7 @@ export function MobileStakingPage() {
                             </td>
                           )}
                           {coordColumns.has('stakeStatus') && (
-                            <td className="px-2 py-1 text-slate-600">
+                            <td className="px-2 py-1 text-slate-600 whitespace-nowrap">
                               {statusLabel || '-'}
                             </td>
                           )}

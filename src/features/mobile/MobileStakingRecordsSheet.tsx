@@ -231,67 +231,82 @@ export function MobileStakingRecordsSheet({
         {slideError && <div className="pb-1 text-[11px] text-red-600">{slideError}</div>}
       </div>
 
+      {/* 1 件 = 1 行。 折り返す と 目 で 追えなく なる ので、はみ出す 分 は
+          横 に スクロール させる。 */}
       <div className="flex-1 min-h-0 overflow-auto">
         {shown.length === 0 ? (
           <div className="py-8 text-center text-sm text-slate-500">
             {loading ? '読み込み中…' : 'この セット の 実測記録 は ありません'}
           </div>
         ) : (
-          <ul className="divide-y">
-            {shown.map((r) => {
-              const d = deltaOf(r, slideOf(r))
-              const set = r.recordSetId ? sets.find((s) => s.id === r.recordSetId) : null
-              return (
-                <li key={r.id} className="px-3 py-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm truncate">
+          <table className="min-w-full w-max text-[11px]">
+            <thead className="sticky top-0 bg-slate-50 z-10">
+              <tr className="text-slate-500">
+                <th className="px-2 py-1 text-left whitespace-nowrap">点名</th>
+                <th className="px-2 py-1 text-left whitespace-nowrap">種別</th>
+                <th className="px-2 py-1 text-right whitespace-nowrap">X</th>
+                <th className="px-2 py-1 text-right whitespace-nowrap">Y</th>
+                <th className="px-2 py-1 text-right whitespace-nowrap">Z</th>
+                <th className="px-2 py-1 text-right whitespace-nowrap">水平差</th>
+                <th className="px-2 py-1 text-right whitespace-nowrap">高さ差</th>
+                <th className="px-2 py-1 text-left whitespace-nowrap">日時</th>
+                {tab === 'all' && (
+                  <th className="px-2 py-1 text-left whitespace-nowrap">セット</th>
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((r) => {
+                const d = deltaOf(r, slideOf(r))
+                const set = r.recordSetId ? sets.find((s) => s.id === r.recordSetId) : null
+                const tone =
+                  d == null
+                    ? 'text-slate-400'
+                    : d.h <= 0.02
+                      ? 'text-emerald-700'
+                      : d.h <= 0.05
+                        ? 'text-amber-700'
+                        : 'text-red-600'
+                return (
+                  <tr key={r.id} className="border-t">
+                    <td className="px-2 py-1 font-medium text-slate-800 whitespace-nowrap max-w-[8rem] truncate">
                       {r.targetName ?? '(点名なし)'}
-                    </span>
-                    <span className="text-[10px] px-1 rounded bg-slate-100 text-slate-600 shrink-0">
+                      {r.pending && <span className="ml-1 text-amber-700">*</span>}
+                    </td>
+                    <td className="px-2 py-1 text-slate-600 whitespace-nowrap">
                       {targetKindLabel(r)}
-                    </span>
-                    {r.surveyCategory === 'asbuilt' && (
-                      <span className="text-[10px] px-1 rounded bg-emerald-100 text-emerald-700 shrink-0">
-                        出来形
-                      </span>
-                    )}
-                    {r.pending && (
-                      <span className="text-[10px] px-1 rounded bg-amber-100 text-amber-800 shrink-0">
-                        未送信
-                      </span>
-                    )}
-                    <span className="ml-auto text-[10px] text-slate-400 shrink-0">
+                      {r.surveyCategory === 'asbuilt' && (
+                        <span className="ml-1 text-emerald-700">出来形</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1 text-right font-mono whitespace-nowrap">
+                      {f3(r.measuredX)}
+                    </td>
+                    <td className="px-2 py-1 text-right font-mono whitespace-nowrap">
+                      {f3(r.measuredY)}
+                    </td>
+                    <td className="px-2 py-1 text-right font-mono whitespace-nowrap">
+                      {f3(r.measuredZ)}
+                    </td>
+                    <td className={`px-2 py-1 text-right font-mono whitespace-nowrap ${tone}`}>
+                      {d ? `${(d.h * 100).toFixed(1)}cm` : '-'}
+                    </td>
+                    <td className={`px-2 py-1 text-right font-mono whitespace-nowrap ${tone}`}>
+                      {d?.dz != null ? `${(d.dz * 100).toFixed(1)}cm` : '-'}
+                    </td>
+                    <td className="px-2 py-1 text-slate-500 whitespace-nowrap">
                       {r.recordedAt.slice(5, 16).replace('T', ' ')}
-                    </span>
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-2 text-[11px] font-mono text-slate-600">
-                    <span>X {f3(r.measuredX)}</span>
-                    <span>Y {f3(r.measuredY)}</span>
-                    <span>Z {f3(r.measuredZ)}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-[11px]">
-                    {d ? (
-                      <span
-                        className={`font-mono ${
-                          d.h <= 0.02 ? 'text-emerald-700' : d.h <= 0.05 ? 'text-amber-700' : 'text-red-600'
-                        }`}
-                      >
-                        差 水平 {(d.h * 100).toFixed(1)}cm
-                        {d.dz != null && ` / 高さ ${(d.dz * 100).toFixed(1)}cm`}
-                      </span>
-                    ) : (
-                      <span className="text-slate-400">設計点 なし</span>
-                    )}
+                    </td>
                     {tab === 'all' && (
-                      <span className="ml-auto text-[10px] text-slate-400 truncate">
+                      <td className="px-2 py-1 text-slate-500 whitespace-nowrap max-w-[8rem] truncate">
                         {set ? setLabel(set) : '未振り分け'}
-                      </span>
+                      </td>
                     )}
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         )}
       </div>
 
