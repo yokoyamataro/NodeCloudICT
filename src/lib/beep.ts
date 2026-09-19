@@ -7,6 +7,7 @@ let ctx: AudioContext | null = null
 
 function ensureCtx(): AudioContext | null {
   if (typeof window === 'undefined') return null
+  // closed の ときは 作り直す (バックグラウンド 復帰 で 閉じられる こと が ある)
   if (ctx && ctx.state !== 'closed') return ctx
   const AC =
     (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
@@ -44,6 +45,9 @@ interface BeepOptions {
 function beep(opts: BeepOptions = {}): void {
   const c = ensureCtx()
   if (!c) return
+  // 電話 や 他アプリ に 音声 を 奪われた 後 は suspended の まま 戻ら ない ので、
+  // 鳴らす 直前 に 起こす (await は しない。 この 1 回 が 出なくて も 次 で 鳴る)
+  if (c.state === 'suspended') void c.resume().catch(() => undefined)
   const freq = opts.frequency ?? 880
   const dur = (opts.durationMs ?? 150) / 1000
   const vol = opts.volume ?? 0.25

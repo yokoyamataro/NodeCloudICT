@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import AVFoundation
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -7,8 +8,34 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        configureAudioSession()
         return true
+    }
+
+    /// 計測の 音声ガイダンス (ピッ / ブッ) を 端末 本体の スピーカーから 鳴らす。
+    ///
+    /// 既定の カテゴリ (.soloAmbient) だと
+    ///   * サイレントスイッチ ON で 無音に なる
+    ///   * Bluetooth (車載 / イヤホン) に 繋がって いると そちらに 流れる
+    /// ため、現場で 聞こえない ことが ある。
+    ///
+    /// 出力先を 本体スピーカーに 固定 できるのは .playAndRecord + .defaultToSpeaker
+    /// だけ (overrideOutputAudioPort も この カテゴリ 専用)。 録音は 一切 しないが
+    /// マイク 権限が 要る ため、Info.plist に その 旨を 書いて いる。
+    /// .mixWithOthers を 付けて、他アプリ (音楽 / ナビ) の 再生は 止めない。
+    private func configureAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(
+                .playAndRecord,
+                mode: .default,
+                options: [.defaultToSpeaker, .mixWithOthers, .allowBluetooth]
+            )
+            try session.setActive(true)
+            try session.overrideOutputAudioPort(.speaker)
+        } catch {
+            print("[audio] session setup failed: \(error)")
+        }
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
@@ -26,7 +53,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+        // 電話や 他アプリで 音声セッションを 奪われた 後は 経路が 戻らない ことが
+        // ある ので、前面に 戻る たびに 本体スピーカーに 貼り直す。
+        configureAudioSession()
     }
 
     func applicationWillTerminate(_ application: UIApplication) {

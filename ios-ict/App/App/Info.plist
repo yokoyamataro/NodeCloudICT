@@ -34,6 +34,8 @@
 	<string>RTK受信機（Drogger）と接続するためにローカルネットワークを使用します</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>測量位置の記録と地図表示のために位置情報を使用します</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>計測の警告音を本体スピーカーから鳴らすために音声機能を使用します（録音はしません）</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>撮影済みの写真を測点に添付するために使用します</string>
 	<key>UIBackgroundModes</key>

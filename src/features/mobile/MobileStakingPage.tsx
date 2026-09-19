@@ -3303,24 +3303,42 @@ export function MobileStakingPage() {
    *  (Float=5 は 除外。精度しきい値による 判定は 廃止) */
   const isCurrentlyFixed = (): boolean => soundFqRef.current === 4
 
-  // AudioContext の 初回セットアップ: soundEnabled が ON になった時に
-  // AudioContext が 未生成なら 作る。GPS設定モーダルから ON にした場合も 動く。
-  useEffect(() => {
-    if (!soundEnabled) return
-    if (audioCtxRef.current) return
+  /**
+   * 鳴らす 直前 に 生きて いる AudioContext を 返す。
+   *
+   * 「たまに 鳴らない」 の 原因 は だいたい これ:
+   *   ・電話 や 他アプリ に 音声 を 奪われて suspended の まま 戻らない
+   *   ・バックグラウンド 復帰 で closed に なって いる
+   * 作り直し と resume を ここ 1 か所 で 面倒 みる。
+   */
+  const ensureAudioCtx = (): AudioContext | null => {
+    const cur = audioCtxRef.current
+    if (cur && cur.state !== 'closed') {
+      if (cur.state === 'suspended') void cur.resume().catch(() => undefined)
+      return cur
+    }
     try {
       const AC =
         (window as unknown as { AudioContext?: typeof AudioContext }).AudioContext ??
         (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!AC) {
         console.warn('AudioContext not supported')
-        return
+        return null
       }
-      audioCtxRef.current = new AC()
-      void audioCtxRef.current.resume().catch(() => undefined)
+      const next = new AC()
+      audioCtxRef.current = next
+      void next.resume().catch(() => undefined)
+      return next
     } catch (e) {
       console.warn('AudioContext init failed:', e)
+      return null
     }
+  }
+
+  // soundEnabled を ON に した 時点 で 用意 して おく (初回 の 鳴り出し を 早く)
+  useEffect(() => {
+    if (!soundEnabled) return
+    ensureAudioCtx()
   }, [soundEnabled])
 
   // iOS / Safari は ユーザー操作を 挟まないと AudioContext が suspended の まま で、
@@ -3329,8 +3347,7 @@ export function MobileStakingPage() {
   useEffect(() => {
     if (!soundEnabled) return
     const wake = () => {
-      const ctx = audioCtxRef.current
-      if (ctx && ctx.state === 'suspended') void ctx.resume().catch(() => undefined)
+      ensureAudioCtx()
       void unlockAudio().catch(() => undefined)
     }
     // capture で 拾い、1 回で 十分 (once)
@@ -3345,8 +3362,6 @@ export function MobileStakingPage() {
   // 1Hz ビープのループ
   useEffect(() => {
     if (!soundEnabled) return
-    const ctx = audioCtxRef.current
-    if (!ctx) return
     prevFixRef.current = isCurrentlyFixed()
     const id = window.setInterval(() => {
       // 棄却フェーズ (連続 1〜5 回) の間は FIX 音を止める
@@ -3366,7 +3381,8 @@ export function MobileStakingPage() {
       let count = 1
       if (d != null && d <= 0.1) count = 3
       else if (d != null && d <= near) count = 2
-      playBeeps(ctx, count)
+      const ctx = ensureAudioCtx()
+      if (ctx) playBeeps(ctx, count)
     }, 1000)
     return () => window.clearInterval(id)
   }, [soundEnabled])
@@ -3443,7 +3459,7 @@ export function MobileStakingPage() {
       return
     }
     if (prevFixRef.current && !soundIsFix) {
-      const ctx = audioCtxRef.current
+      const ctx = ensureAudioCtx()
       if (ctx) playBuzzer(ctx)
     }
     prevFixRef.current = soundIsFix
