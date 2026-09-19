@@ -96,10 +96,13 @@ export function MobileStakingRecordsSheet({
   const loading = useStakingStore((s) => s.loading)
   const fetchRecords = useStakingStore((s) => s.fetchRecords)
   const sets = useSurveySetStore((s) => s.sets)
+  const activeSetId = useSurveySetStore((s) => s.activeSetId)
   const fetchSets = useSurveySetStore((s) => s.fetchByFarm)
   /** 工区 単位 の スライド量。 セット に 属さない 記録 は これ で 見る */
   const [farmSlide, setFarmSlide] = useState<SurveySlide>(NO_SLIDE)
-  const [tab, setTab] = useState<string>('all')
+  // タブ は 必ず どれ か 1 つ の セット (または 未振り分け)。 混ざる と
+  // どの 補正値 で 見て いる か 分から なく なる ので 「すべて」 は 出さない。
+  const [tab, setTab] = useState<string>('none')
 
   useEffect(() => {
     void fetchRecords(farmId)
@@ -127,13 +130,23 @@ export function MobileStakingRecordsSheet({
   /** 表 に 出す 行。 PC と 同じ 束ね方 (実測1 / 実測2) */
   const shown = useMemo<StakingGroup[]>(() => {
     const base =
-      tab === 'all'
-        ? mine
-        : tab === 'none'
-          ? mine.filter((r) => !r.recordSetId)
-          : mine.filter((r) => r.recordSetId === tab)
+      tab === 'none'
+        ? mine.filter((r) => !r.recordSetId)
+        : mine.filter((r) => r.recordSetId === tab)
     return groupStakingRecords(base)
   }, [mine, tab])
+
+  // 作業中 の セット (無ければ 既定 / 先頭) を 初期選択 に する
+  useEffect(() => {
+    if (sets.length === 0) return
+    setTab((prev) => {
+      if (prev !== 'none' && sets.some((s) => s.id === prev)) return prev
+      const pick = (activeSetId && sets.find((s) => s.id === activeSetId)) ||
+        sets.find((s) => s.isDefault) ||
+        sets[0]
+      return pick ? pick.id : prev
+    })
+  }, [sets, activeSetId])
 
   /** 出す 列 の かたまり。 端末 に 憶えて おく */
   const [groups, setGroups] = useState<Set<GroupKey>>(() => {
@@ -166,7 +179,7 @@ export function MobileStakingRecordsSheet({
   const on = (k: GroupKey) => groups.has(k)
 
   /** タブ で 選んで いる セット (すべて / 未振り分け は null = 工区 の 既定) */
-  const tabSet = tab === 'all' || tab === 'none' ? null : (sets.find((s) => s.id === tab) ?? null)
+  const tabSet = tab === 'none' ? null : (sets.find((s) => s.id === tab) ?? null)
   const tabSlide: SurveySlide = tabSet?.slide ?? farmSlide
 
   /** セット の 追加。 作ったら その タブ に 移る */
@@ -224,7 +237,6 @@ export function MobileStakingRecordsSheet({
       <div className="px-2 pt-1.5 border-b bg-slate-50 shrink-0">
         <div className="flex gap-0 overflow-x-auto">
           {[
-            { key: 'all', label: 'すべて', n: mine.length },
             ...sets.map((s) => ({
               key: s.id,
               label: setLabel(s),
@@ -328,9 +340,6 @@ export function MobileStakingRecordsSheet({
                   </th>
                 ))}
                 <th className="px-2 py-1 text-left whitespace-nowrap border-l">日時</th>
-                {tab === 'all' && (
-                  <th className="px-2 py-1 text-left whitespace-nowrap">セット</th>
-                )}
               </tr>
               <tr className="text-slate-400">
                 {GROUPS.filter((g) => on(g.key)).map((g) => {
@@ -352,16 +361,12 @@ export function MobileStakingRecordsSheet({
                   ))
                 })}
                 <th className="px-2 py-0.5 border-l" />
-                {tab === 'all' && <th className="px-2 py-0.5" />}
               </tr>
             </thead>
             <tbody>
               {shown.map((g) => {
                 const slide = slideOf(g.m1 ?? g.m2)
                 const d = deriveRow(g, slide.dx, slide.dy, slide.dz)
-                const set = g.m1?.recordSetId
-                  ? sets.find((x) => x.id === g.m1?.recordSetId)
-                  : null
                 /** 数値 3 桁 の セル */
                 const num = (v: number | null | undefined) => (
                   <td className="px-2 py-1 text-right font-mono whitespace-nowrap">{f3(v)}</td>
@@ -437,11 +442,6 @@ export function MobileStakingRecordsSheet({
                     <td className="px-2 py-1 text-slate-500 whitespace-nowrap border-l">
                       {(g.m1?.recordedAt ?? '').slice(5, 16).replace('T', ' ')}
                     </td>
-                    {tab === 'all' && (
-                      <td className="px-2 py-1 text-slate-500 whitespace-nowrap max-w-[8rem] truncate">
-                        {set ? setLabel(set) : '未振り分け'}
-                      </td>
-                    )}
                   </tr>
                 )
               })}

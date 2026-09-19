@@ -11,7 +11,6 @@ import { CoordinateConverter, COORDINATE_TYPE_NAMES, type CoordinateType } from 
 import { supabase } from '@/lib/supabase'
 import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
 import { deriveRow, groupStakingRecords, type StakingGroup } from '@/lib/stakingGroups'
-import type { SurveySlide } from '@/lib/surveyCalibration'
 
 import { SurveyRecordSetsPanel } from './SurveyRecordSetsPanel'
 
@@ -600,14 +599,16 @@ export function StakingRecordsPage() {
     setTabFarmRef.current = farmId
     if (farmChanged) {
       // 工区 を 変えた とき / 初回 は 既定 セット へ 寄せる
-      const def = sets.find((x) => x.isDefault)
-      setSetTab(def ? def.id : 'all')
+      const def = sets.find((x) => x.isDefault) ?? sets[0]
+      setSetTab(def ? def.id : 'none')
       return
     }
-    // セット が 消えた ときだけ すべて に 戻す (選択中 の タブ は 保つ)
-    setSetTab((prev) =>
-      prev === 'all' || prev === 'none' || sets.some((x) => x.id === prev) ? prev : 'all',
-    )
+    // セット が 消えた ときだけ 寄せ 直す (選択中 の タブ は 保つ)
+    setSetTab((prev) => {
+      if (prev === 'none' || sets.some((x) => x.id === prev)) return prev
+      const def = sets.find((x) => x.isDefault) ?? sets[0]
+      return def ? def.id : 'none'
+    })
   }, [currentFarm?.id, sets])
 
   /**
@@ -617,8 +618,7 @@ export function StakingRecordsPage() {
    * 記録 1 件 に 効く のは どちら か 片方 だけ (slideOfRecord と 同じ 決め方) な ので、
    * 両方 に 値 が 入って いて も 二重 に 掛かる こと は ない。
    */
-  const slideTargetSet =
-    setTab === 'all' || setTab === 'none' ? null : (sets.find((x) => x.id === setTab) ?? null)
+  const slideTargetSet = setTab === 'none' ? null : (sets.find((x) => x.id === setTab) ?? null)
   /** 入力中 の 生 文字列 (触って いない 軸 は null = 保存値 を 3 桁 で 表示) */
   const [slideDraft, setSlideDraft] = useState<{
     x: string | null
@@ -645,9 +645,12 @@ export function StakingRecordsPage() {
   }
 
   const filtered = useMemo(() => {
-    let base = records
-    if (setTab === 'none') base = base.filter((r) => !r.recordSetId)
-    else if (setTab !== 'all') base = base.filter((r) => r.recordSetId === setTab)
+    // タブ は 必ず どれ か 1 つ の セット (または 未振り分け)。
+    // 混ざる と どの 補正値 で 見て いる か 分から なく なる ので 「すべて」 は 出さない。
+    const base =
+      setTab === 'none'
+        ? records.filter((r) => !r.recordSetId)
+        : records.filter((r) => r.recordSetId === setTab)
     if (filter === 'all') return base
     return base.filter((r) => r.surveyCategory === filter)
   }, [records, filter, setTab])
@@ -688,10 +691,6 @@ export function StakingRecordsPage() {
   }
 
   /** この 工区 の 記録 の 数 (タブ の 「すべて」) */
-  const totalCount = useMemo(
-    () => records.filter((r) => r.farmId === currentFarm?.id).length,
-    [records, currentFarm?.id],
-  )
 
   /** セット ごと の 記録 の 数 (null = 未振り分け) */
   const countBySet = useMemo(() => {
@@ -1170,7 +1169,6 @@ export function StakingRecordsPage() {
       {currentFarm && (
         <div className="px-3 pt-1.5 border-b bg-white flex items-end gap-0 overflow-x-auto">
           {[
-            { key: 'all', label: 'すべて', n: totalCount, slide: null as SurveySlide | null },
             ...sets.map((st) => ({
               key: st.id,
               label: setLabel(st),
@@ -1243,7 +1241,7 @@ export function StakingRecordsPage() {
         {/* スライド量。 実測 は セット 単位 で ずれる ので、いま 見て いる
             タブ の 対象 を 直す:
               セット の タブ … その セット の 値 (survey_record_sets)
-              すべて / 未振り分け … 工区 の 既定 (design_survey_calibration)
+              未振り分け … 工区 の 既定 (design_survey_calibration)
             どの 記録 に どちら が 効く か は slideOfRecord と 同じ 決め方 (片方 だけ)
             な ので、二重 に 掛かる こと は ない。 */}
         <span className="text-[11px] text-slate-500">スライド量 (m)</span>

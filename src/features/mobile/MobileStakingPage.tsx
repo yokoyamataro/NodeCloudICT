@@ -32,6 +32,8 @@ import {
   RefreshCw,
   AlertTriangle,
   Crosshair,
+  Volume2,
+  VolumeX,
   Settings2,
   MessageSquare,
   Edit3,
@@ -832,6 +834,7 @@ export function MobileStakingPage() {
   const antennaHeight = useGnssSettingsStore((s) => s.antennaHeight)
   const useGeoidCorrection = useGnssSettingsStore((s) => s.useGeoidCorrection)
   const soundEnabled = useGnssSettingsStore((s) => s.soundEnabled)
+  const setSoundEnabled = useGnssSettingsStore((s) => s.setSoundEnabled)
   const headingUp = useGnssSettingsStore((s) => s.headingUp)
   const setHeadingUp = useGnssSettingsStore((s) => s.setHeadingUp)
   // 画面モード: 起工測量のみに統一（出来形 / 施工管理 タブは削除）
@@ -5723,6 +5726,29 @@ export function MobileStakingPage() {
             aria-label="更新"
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+          {/* 音声ガイダンス。 測りながら すぐ 切りたい こと が ある ので、
+              GPS 設定 の 奥 では なく 地図 の 上 に 置く。 ON に する とき は
+              iOS の 制約 上 ここ の タップ で AudioContext を 起こして おく。 */}
+          <button
+            type="button"
+            onClick={() => {
+              const next = !soundEnabled
+              setSoundEnabled(next)
+              if (next) {
+                ensureAudioCtx()
+                void unlockAudio().catch(() => undefined)
+              }
+            }}
+            className={`w-9 h-9 flex items-center justify-center rounded shadow-md border ${
+              soundEnabled
+                ? 'bg-blue-600 border-blue-600 text-white'
+                : 'bg-white border-slate-400 text-slate-400 hover:bg-slate-50'
+            }`}
+            title={soundEnabled ? '音声ガイダンス ON (タップで OFF)' : '音声ガイダンス OFF (タップで ON)'}
+            aria-label="音声ガイダンス"
+          >
+            {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
           </button>
         </div>
         {/* 法務省地図 (地籍測量プロジェクトのみ) — 背景セレクタの上に配置 */}

@@ -22,11 +22,10 @@ import {
   RefreshCw,
   RadioTower,
   WifiOff,
-  Volume2,
-  VolumeX,
 } from 'lucide-react'
 import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
 import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
+import { useFarmStore } from '@/stores/farmStore'
 import { useDroggerConnection } from '@/stores/droggerConnectionStore'
 import {
   DroggerLocation,
@@ -554,38 +553,30 @@ function SurveySetBar() {
   const setActiveSetId = useSurveySetStore((s) => s.setActiveSetId)
   const updateSet = useSurveySetStore((s) => s.updateSet)
   const touchSet = useSurveySetStore((s) => s.touchSet)
+  const createSet = useSurveySetStore((s) => s.createSet)
+  const farmId = useFarmStore((s) => s.currentFarm?.id ?? null)
+  const [creating, setCreating] = useState(false)
   const active = sets.find((s) => s.id === activeSetId) ?? null
 
-  if (sets.length === 0) {
-    return (
-      <div className="border-t pt-3 text-[11px] text-slate-400">
-        実測 の 記録セット は 工区 を 開いて 最初 の 「測定」 で 決まります。
-      </div>
-    )
+  /** セット を 追加 して、そのまま 作業中 に する */
+  const handleCreate = async () => {
+    if (!farmId) return
+    setCreating(true)
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      const row = await createSet(farmId, { measuredOn: today })
+      if (row) {
+        setActiveSetId(row.id)
+        void touchSet(row.id, { start: true })
+      }
+    } finally {
+      setCreating(false)
+    }
   }
 
   return (
     <div className="border-t pt-3 space-y-2">
-      <div className="text-slate-700 font-semibold">実測セット と 補正値</div>
-      <label className="flex items-center gap-2">
-        <span className="w-16 shrink-0 text-slate-500">セット</span>
-        <select
-          value={activeSetId ?? ''}
-          onChange={(e) => {
-            const id = e.target.value || null
-            setActiveSetId(id)
-            if (id) void touchSet(id, { start: true })
-          }}
-          className="flex-1 px-2 py-1.5 border border-slate-300 rounded"
-        >
-          <option value="">(選択なし)</option>
-          {sets.map((s) => (
-            <option key={s.id} value={s.id}>
-              {setLabel(s)}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="text-slate-700 font-semibold">補正値 と 実測セット</div>
 
       <div className="flex items-center gap-2">
         <span className="w-16 shrink-0 text-slate-500">補正値</span>
@@ -609,6 +600,37 @@ function SurveySetBar() {
         実測 − 補正値 = 設計 の 土俵。 入れる と 実測 の 表示 も、ターゲット の
         誘導 と 比高 も 補正後 の 値 に なります (X=北 / Y=東、単位 m)。
         {!active && ' セット 未選択 の 間 は 工区 の 既定 が 効きます。'}
+      </div>
+
+      {/* 補正値 は セット ごと な ので、対象 の セット は すぐ 下 に */}
+      <div className="flex items-center gap-2">
+        <span className="w-16 shrink-0 text-slate-500">セット</span>
+        <select
+          value={activeSetId ?? ''}
+          onChange={(e) => {
+            const id = e.target.value || null
+            setActiveSetId(id)
+            if (id) void touchSet(id, { start: true })
+          }}
+          className="flex-1 min-w-0 px-2 py-1.5 border border-slate-300 rounded"
+        >
+          <option value="">(選択なし)</option>
+          {sets.map((s) => (
+            <option key={s.id} value={s.id}>
+              {setLabel(s)}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => void handleCreate()}
+          disabled={creating}
+          className="shrink-0 px-2 py-1.5 border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
+          title="記録セット を 追加 (測量日 は 今日)。 作った セット が すぐ 作業中 に なる"
+        >
+          {creating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+          追加
+        </button>
       </div>
     </div>
   )
@@ -655,8 +677,6 @@ function GnssSettingsSection() {
   const {
     avgSeconds,
     setAvgSeconds,
-    soundEnabled,
-    setSoundEnabled,
     antennaHeight,
     setAntennaHeight,
     useGeoidCorrection,
@@ -665,24 +685,8 @@ function GnssSettingsSection() {
 
   return (
     <div className="space-y-3">
-
-      {/* 音声ガイダンス */}
-      <label className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          checked={soundEnabled}
-          onChange={(e) => setSoundEnabled(e.target.checked)}
-        />
-        <span>音声ガイダンス</span>
-        {soundEnabled ? (
-          <Volume2 className="h-3.5 w-3.5 ml-auto text-emerald-600" />
-        ) : (
-          <VolumeX className="h-3.5 w-3.5 ml-auto text-slate-400" />
-        )}
-      </label>
-      <div className="text-[10px] text-slate-500 -mt-2 pl-6">
-        FIX: ピッ / 1m 以内: ピピ / 10cm 以内: ピピピ / FIX 喪失: ブーッ
-      </div>
+      {/* 音声ガイダンス の ON/OFF は 地図 の 左上 (現在地 / 更新 の 下) の
+          スピーカー ボタン に 移した。 測りながら すぐ 切れる ように する ため。 */}
 
       {/* 平均秒数 */}
       <label className="block">
