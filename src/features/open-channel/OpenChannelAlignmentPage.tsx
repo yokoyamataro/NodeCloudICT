@@ -2027,11 +2027,21 @@ function DxfTraceModal({
    * 割り込み 中 も 拾った 順 に 並ぶ よう、1 点 足す ごと に 1 つ 進める。
    */
   const [insertIndex, setInsertIndex] = useState<number | null>(null)
+  /**
+   * トレース する 側。 断面 は 中心 から 左右 に 分かれて いる ので、
+   * 「中心 から 左 へ」 「中心 から 右 へ」 と 別々 に なぞる。
+   *   right … 拾う たび に 列 の 末尾 (右 の 外側) へ
+   *   left  … 拾う たび に 列 の 先頭 (左 の 外側) へ
+   * 結果 と して 列 は 左外 → 中心 → 右外 の 断面 の 並び に なる。
+   * null は 従来 どおり 「追加位置」 の キャレット に 従う。
+   */
+  const [traceSide, setTraceSide] = useState<'left' | 'right' | null>(null)
   // station or 対象 が 変わった時 に 該当 断面の 点列を 再読込
   useEffect(() => {
     const initial = (station[stationSectionKey] as MeasuredCrossPoint[] | null | undefined) ?? []
     setLocalPoints(initial.map((p) => ({ ...p })))
     setInsertIndex(null)
+    setTraceSide(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [station.id, activeTarget])
 
@@ -2225,10 +2235,14 @@ function DxfTraceModal({
         elevation: w.elevation,
       }
       setLocalPoints((pts) => {
+        // 側 を 選んで いる 間 は その 側 の 外側 に 伸ばす
+        if (traceSide === 'right') return [...pts, pt]
+        if (traceSide === 'left') return [pt, ...pts]
         const at = insertIndex == null ? pts.length : Math.min(insertIndex, pts.length)
         return [...pts.slice(0, at), pt, ...pts.slice(at)]
       })
-      // 割り込み 中 は キャレット も 1 つ 進めて、続けて 拾って も 順 が 崩れない
+      // 割り込み 中 は キャレット も 1 つ 進めて、続けて 拾って も 順 が 崩れない。
+      // 左 を なぞって いる 間 は 先頭 に 積む ので キャレット も 1 つ 後ろ へ。
       setInsertIndex((i) => (i == null ? null : i + 1))
       return
     }
@@ -2237,9 +2251,15 @@ function DxfTraceModal({
     setLocalPoints([])
     setInsertIndex(null)
   }
-  /** キャレット の 直前 1 点 を 取消 (末尾 モード なら 最後 の 点) */
+  /**
+   * 直前 の 1 点 を 取消。 側 を 選んで いる 間 は その 側 の 外端 (右 なら 末尾、
+   * 左 なら 先頭)、それ 以外 は キャレット の 直前。
+   */
   const undoLastPoint = () => {
     setLocalPoints((pts) => {
+      if (pts.length === 0) return pts
+      if (traceSide === 'right') return pts.slice(0, -1)
+      if (traceSide === 'left') return pts.slice(1)
       const at = insertIndex == null ? pts.length : Math.min(insertIndex, pts.length)
       if (at <= 0) return pts
       return [...pts.slice(0, at - 1), ...pts.slice(at)]
@@ -2334,14 +2354,29 @@ function DxfTraceModal({
   // 末尾)。 校正済み で 1 点以上 あれば DXF 座標に 逆マッピングして 渡す。
   const traceRubberBandFrom = useMemo<{ x: number; y: number } | null>(() => {
     if (!parsedCalib || localPoints.length === 0) return null
-    const at = insertIndex == null ? localPoints.length : Math.min(insertIndex, localPoints.length)
-    if (at === 0) return null
-    const p = localPoints[at - 1]
-    return {
-      x: parsedCalib.centerX + (p.offset * 1000) / parsedCalib.hScale,
-      y: parsedCalib.dlY + ((p.elevation - parsedCalib.dlElevation) * 1000) / parsedCalib.vScale,
+    // 側 を 選んで いる 間 は その 側 の 端 から 引く
+    const p =
+      traceSide === 'right'
+        ? localPoints[localPoints.length - 1]
+        : traceSide === 'left'
+          ? localPoints[0]
+          : null
+    if (p) {
+      return {
+        x: parsedCalib.centerX + (p.offset * 1000) / parsedCalib.hScale,
+        y:
+          parsedCalib.dlY +
+          ((p.elevation - parsedCalib.dlElevation) * 1000) / parsedCalib.vScale,
+      }
     }
-  }, [parsedCalib, localPoints, insertIndex])
+    const at = insertIndex == null ? localPoints.length : Math.min(localPoints.length, insertIndex)
+    if (at === 0) return null
+    const q = localPoints[at - 1]
+    return {
+      x: parsedCalib.centerX + (q.offset * 1000) / parsedCalib.hScale,
+      y: parsedCalib.dlY + ((q.elevation - parsedCalib.dlElevation) * 1000) / parsedCalib.vScale,
+    }
+  }, [parsedCalib, localPoints, insertIndex, traceSide])
 
   // カーソル位置の 補助ラベル (校正済み + トレース中に 有効)。
   // 校正 済み なら 常時 現在位置の 「H (標高) / d (中心離れ)」を 返す。
@@ -2577,20 +2612,62 @@ function DxfTraceModal({
                 </div>
               ) : (
                 <div className="flex flex-col gap-1.5">
+                  {/* 断面 は 中心 から 左右 に 分かれる ので、側 を 決めて から なぞる。
+                      左 は 拾う たび に 列 の 先頭、右 は 末尾 に 積む ので、
+                      でき上がる 列 は 左外 → 中心 → 右外 の 並び に なる。 */}
+                  <div className="flex gap-1">
+                    {([
+                      { side: 'left' as const, label: '← 左をトレース' },
+                      { side: 'right' as const, label: '右をトレース →' },
+                    ]).map((b) => {
+                      const on = pickMode === 'trace' && traceSide === b.side
+                      return (
+                        <button
+                          key={b.side}
+                          onClick={() => {
+                            if (on) {
+                              setPickMode(null)
+                              setTraceSide(null)
+                              return
+                            }
+                            setTraceSide(b.side)
+                            setInsertIndex(null)
+                            setPickMode('trace')
+                          }}
+                          className={`flex-1 px-1.5 py-1 border rounded ${
+                            on ? 'text-white' : 'bg-white hover:bg-slate-50'
+                          }`}
+                          style={on ? { backgroundColor: meta.color, borderColor: meta.color } : {}}
+                        >
+                          {b.label}
+                        </button>
+                      )
+                    })}
+                  </div>
                   <button
-                    onClick={() => setPickMode(pickMode === 'trace' ? null : 'trace')}
+                    onClick={() => {
+                      if (pickMode === 'trace' && traceSide == null) {
+                        setPickMode(null)
+                        return
+                      }
+                      setTraceSide(null)
+                      setPickMode('trace')
+                    }}
                     className={`px-2 py-1 border rounded text-left ${
-                      pickMode === 'trace'
+                      pickMode === 'trace' && traceSide == null
                         ? 'text-white'
                         : 'bg-white hover:bg-slate-50'
                     }`}
                     style={
-                      pickMode === 'trace'
+                      pickMode === 'trace' && traceSide == null
                         ? { backgroundColor: meta.color, borderColor: meta.color }
                         : {}
                     }
+                    title="側 を 決めず に、下 の 「追加位置」 の 場所 へ 足す"
                   >
-                    {pickMode === 'trace' ? 'トレース 中 (クリックで 追加)' : `${meta.label}をトレース`}
+                    {pickMode === 'trace' && traceSide == null
+                      ? 'トレース 中 (クリックで 追加)'
+                      : `${meta.label}を 位置指定 で トレース`}
                   </button>
                   <label className="flex items-center gap-1.5 text-[11px] cursor-pointer select-none">
                     <input
@@ -2602,11 +2679,18 @@ function DxfTraceModal({
                     <span>ピック (端点 / 交点に 吸着)</span>
                   </label>
                   <div className="text-[11px] text-slate-500">
-                    1 クリック = 1 点 追加。 BS で 直前 1 点 取消。 ピック ON 時は
-                    端点 (青) / 交点 (橙×) に 吸い付く。
+                    中心 から 外 へ 向かって なぞる。 1 クリック = 1 点 追加、
+                    BS で 直前 1 点 取消。 ピック ON 時は 端点 (青) / 交点 (橙×) に 吸い付く。
                   </div>
                   <div className="flex items-center gap-1 text-[11px] pt-1 border-t">
-                    <span className="text-slate-500">拾い済 {localPoints.length} 点</span>
+                    <span className="text-slate-500">
+                      拾い済 {localPoints.length} 点
+                      <span className="ml-1 text-slate-400">
+                        (左 {localPoints.filter((p) => p.offset < 0).length} / 中心{' '}
+                        {localPoints.filter((p) => p.offset === 0).length} / 右{' '}
+                        {localPoints.filter((p) => p.offset > 0).length})
+                      </span>
+                    </span>
                     <button
                       onClick={undoLastPoint}
                       disabled={localPoints.length === 0}
@@ -2662,6 +2746,18 @@ function DxfTraceModal({
                             />
                             <div className="px-1.5 py-0.5 flex items-center gap-1 text-[11px] font-mono hover:bg-slate-50">
                               <span className="w-6 text-slate-400">#{idx + 1}</span>
+                              {/* 中心 から どちら 側 の 点 か */}
+                              <span
+                                className={`w-4 text-center ${
+                                  p.offset < 0
+                                    ? 'text-amber-700'
+                                    : p.offset > 0
+                                      ? 'text-emerald-700'
+                                      : 'text-slate-400'
+                                }`}
+                              >
+                                {p.offset < 0 ? 'L' : p.offset > 0 ? 'R' : 'C'}
+                              </span>
                               <span className="w-14 text-right">
                                 {p.offset >= 0 ? '+' : ''}
                                 {p.offset.toFixed(3)}
@@ -2684,7 +2780,14 @@ function DxfTraceModal({
                         />
                       </div>
                     )}
-                    {insertIndex != null && (
+                    {traceSide != null && (
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        {traceSide === 'left' ? '左' : '右'} を なぞって います。 拾った 点 は
+                        {traceSide === 'left' ? ' 列 の 先頭' : ' 列 の 末尾'} に 積まれ、
+                        列 全体 は 左外 → 中心 → 右外 の 並び に なり ます。
+                      </div>
+                    )}
+                    {traceSide == null && insertIndex != null && (
                       <div className="mt-1 text-[11px] text-amber-700">
                         {insertIndex === 0
                           ? '先頭 に 割り込み 中'
