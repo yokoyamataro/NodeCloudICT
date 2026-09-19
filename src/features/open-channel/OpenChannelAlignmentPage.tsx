@@ -8,6 +8,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import type { AlignmentReportKind } from './alignmentReport'
 import { Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -3532,6 +3533,58 @@ export function OpenChannelAlignmentPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editTarget, stations, farmId, segments, selected?.sideOrientation, stakingRecords, surveySlide, surveySets, crossBandM])
 
+  // ---- 計算書 (PDF) の 出力
+  const [reportBusy, setReportBusy] = useState<AlignmentReportKind | null>(null)
+  const handleExportReport = async (kind: AlignmentReportKind) => {
+    if (!selected) return
+    setReportBusy(kind)
+    try {
+      const { buildAlignmentReportPages, REPORT_SHEET, REPORT_LABEL } = await import(
+        './alignmentReport'
+      )
+      const { renderToCanvas, canvasesToPdf, safeFileName, saveBlob } = await import(
+        '@/features/boundary-survey/floorPlanExport'
+      )
+      const pages = buildAlignmentReportPages(kind, {
+        siteName: currentFarm?.name ?? '',
+        routeName: selected.name,
+        spOffset,
+        vertices: alignmentXY,
+        vertexNames: selected.alignmentPoints.map(
+          (p) => coordinates.find((c) => c.id === p.coordId)?.pointNumber ?? '',
+        ),
+        segments,
+        stations: stations.map((st) => ({ label: st.label, distance: st.distance })),
+        widthStakes: selected.widthStakes.map((w) => ({
+          distance: w.distance,
+          offset: w.offset,
+          note: w.note,
+        })),
+      })
+      // A4 横 は 200dpi で 2339 × 1654 px。 罫線 と 数字 が つぶれない 最低限
+      const cvs = pages.map((items) => renderToCanvas(items, 200, REPORT_SHEET))
+      const blob = await canvasesToPdf(cvs, REPORT_SHEET)
+      saveBlob(blob, `${safeFileName(selected.name)}_${REPORT_LABEL[kind]}.pdf`)
+    } catch (e) {
+      console.error('[alignment report]', e)
+      window.alert(e instanceof Error ? e.message : '計算書の出力に失敗しました')
+    } finally {
+      setReportBusy(null)
+    }
+  }
+  /** 各セクション の 右上 に 置く 出力ボタン */
+  const reportButton = (kind: AlignmentReportKind, label: string) => (
+    <button
+      type="button"
+      onClick={() => void handleExportReport(kind)}
+      disabled={!selected || reportBusy != null}
+      className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+      title={`${label} を PDF (A4 横) で 出力`}
+    >
+      {reportBusy === kind ? '出力中…' : label}
+    </button>
+  )
+
   /** 直近 の 取込 結果 (「横断 > 現況」 の 表 の 下 に 出す) */
   const [stationImportMsg, setStationImportMsg] = useState<string | null>(null)
 
@@ -4249,6 +4302,7 @@ export function OpenChannelAlignmentPage() {
             storageKey="oc:section:linear-points"
             defaultOpen
             onOpenChange={setLinearPointsExpanded}
+            actions={reportButton('route', '計算書')}
           >
             {/* 線形物 の 選択プルダウン + 名前編集 + 新規追加 + 削除 */}
             <div className="flex items-center gap-1">
@@ -4567,7 +4621,11 @@ export function OpenChannelAlignmentPage() {
             <>
 
               {/* 中間点計算 */}
-              <CollapsibleSection title="中間点計算" storageKey="oc:section:stations">
+              <CollapsibleSection
+                title="中間点計算"
+                storageKey="oc:section:stations"
+                actions={reportButton('station', '計算書')}
+              >
                 <div className="text-xs text-slate-500">
                   線形上の 任意位置の 座標を 算出します。SP 値 = BP の SP (
                   {spOffset.toFixed(2)}) + BP からの 内部距離。
@@ -4844,7 +4902,11 @@ export function OpenChannelAlignmentPage() {
                   SP 値 と 中心線 から の 垂直方向 オフセット (右 +/左 -) を
                   入力する と、平面 座標 XY が 算出される。 追加 は テーブル
                   末尾 の 空行 に 直接 入力 (Enter or + ボタン で 確定)。 */}
-              <CollapsibleSection title="幅杭計算" storageKey="oc:section:width-stakes">
+              <CollapsibleSection
+                title="幅杭計算"
+                storageKey="oc:section:width-stakes"
+                actions={reportButton('widthStake', '計算書')}
+              >
                 <div className="text-xs text-slate-500">
                   SP 値 と 中心線 から の 垂直方向 オフセット (m) を 入力。
                   <br />
