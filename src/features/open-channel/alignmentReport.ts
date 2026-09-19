@@ -11,6 +11,9 @@
 //
 // 座標系 は 平面直角 (x=北 / y=東)。 方向角 は 北 を 0 と した 時計回り な ので
 // atan2(Δy, Δx) が そのまま 方向角 に なる。
+//
+// 実物 の 成果 に ある 「No 杭 + L」 と 「点番」 は 出さない。 NodeCloud は 測点 を
+// SP (= BP の SP + BP からの 距離) と 点名 で 扱って いて、どちら も 持たない ため。
 
 import type { DrawItem } from '@/features/boundary-survey/floorPlanDraw'
 import {
@@ -29,12 +32,6 @@ export const REPORT_SHEET = { w: 297, h: 210 }
 /** 線 の 太さ (mm)。 実物 の 罫線 に 近い 細さ */
 const LW = 0.18
 const LAYER = 'CALC'
-
-/**
- * 杭 No の 刻み (m)。 実物 の 成果 は 100 m 区切り で No を 振って いる
- * (例: 追加距離 4940.000 → 49 + 40.000)。
- */
-const STAKE_PITCH_M = 100
 
 export type AlignmentReportKind = 'route' | 'station' | 'widthStake'
 
@@ -87,13 +84,6 @@ export function formatDms(deg: number): string {
 function azimuthDeg(dx: number, dy: number): number {
   const a = (Math.atan2(dy, dx) * 180) / Math.PI
   return a < 0 ? a + 360 : a
-}
-
-/** 追加距離 (SP) を 「49 + 40.000」 に */
-export function formatStation(sp: number): string {
-  const no = Math.floor(sp / STAKE_PITCH_M)
-  const rest = sp - no * STAKE_PITCH_M
-  return `${no} + ${rest.toFixed(3)}`
 }
 
 // ========================================================================
@@ -256,8 +246,8 @@ function buildRoutePages(input: AlignmentReportInput): DrawItem[][] {
     p1,
     14,
     y + 2.5,
-    `BP点杭No＋L：\u3000${formatStation(spOffset)}\u3000\u3000追加距離：\u3000${f3(spOffset)}` +
-      `\u3000\u3000杭ピッチ：\u3000${f3(STAKE_PITCH_M)}\u3000\u3000路線長：\u3000${f3(total)}`,
+    `BP点SP：\u3000${f3(spOffset)}\u3000\u3000EP点SP：\u3000${f3(spOffset + total)}` +
+      `\u3000\u3000路線長：\u3000${f3(total)}`,
     2.8,
   )
   y += 6.5
@@ -268,20 +258,19 @@ function buildRoutePages(input: AlignmentReportInput): DrawItem[][] {
 
   const ipCols: Col[] = [
     { label: 'IP', w: 10 },
-    { label: '点番', w: 11 },
-    { label: '点\u3000名', w: 26, align: 'start' },
-    { label: 'Ｘ座標', w: 22, align: 'end' },
-    { label: 'Ｙ座標', w: 22, align: 'end' },
-    { label: '距\u3000離', w: 18, align: 'end' },
-    { label: '方\u3000向\u3000角', w: 20 },
-    { label: 'IA', w: 18 },
+    { label: '点\u3000名', w: 32, align: 'start' },
+    { label: 'Ｘ座標', w: 24, align: 'end' },
+    { label: 'Ｙ座標', w: 24, align: 'end' },
+    { label: '距\u3000離', w: 20, align: 'end' },
+    { label: '方\u3000向\u3000角', w: 22 },
+    { label: 'IA', w: 20 },
     { label: 'タイプ', w: 18 },
-    { label: 'R1', w: 15, align: 'end' },
-    { label: 'R2', w: 15, align: 'end' },
-    { label: 'A1', w: 13, align: 'end' },
-    { label: 'A2', w: 13, align: 'end' },
-    { label: 'A3', w: 13, align: 'end' },
-    { label: 'TL', w: 15, align: 'end' },
+    { label: 'R1', w: 16, align: 'end' },
+    { label: 'R2', w: 16, align: 'end' },
+    { label: 'A1', w: 14, align: 'end' },
+    { label: 'A2', w: 14, align: 'end' },
+    { label: 'A3', w: 14, align: 'end' },
+    { label: 'TL', w: 17, align: 'end' },
   ]
   let ipNo = 0
   const ipRows: Cell[][] = vertices.map((v, i) => {
@@ -303,7 +292,6 @@ function buildRoutePages(input: AlignmentReportInput): DrawItem[][] {
     if (v.kind === 'ip') ipNo += 1
     return [
       v.kind === 'ip' ? String(ipNo) : '',
-      String(i + 1),
       { t: vertexNames[i] ?? '', align: 'start' },
       { t: f3(v.x), align: 'end' },
       { t: f3(v.y), align: 'end' },
@@ -332,15 +320,13 @@ function buildRoutePages(input: AlignmentReportInput): DrawItem[][] {
     { label: '', w: 20 },
     { label: '', w: 16 },
     { label: '', w: 14 },
-    { label: '', w: 18 },
-    { label: '', w: 14 },
-    { label: '', w: 18 },
-    { label: '', w: 32, align: 'start' },
     { label: '', w: 16 },
-    { label: '', w: 24, align: 'end' },
+    { label: '', w: 40, align: 'start' },
     { label: '', w: 16 },
-    { label: '', w: 24, align: 'end' },
-    { label: '', w: 41 },
+    { label: '', w: 26, align: 'end' },
+    { label: '', w: 16 },
+    { label: '', w: 26, align: 'end' },
+    { label: '', w: 63 },
   ]
   // 箱 が 増える と 表 の 場所 が 無くなる ので、半分 より 下 に は 置かない
   const BOX_LIMIT_Y = REPORT_SHEET.h * 0.5
@@ -354,8 +340,6 @@ function buildRoutePages(input: AlignmentReportInput): DrawItem[][] {
         v.kind === 'bp' ? 'BP' : v.kind === 'ep' ? 'EP' : 'IP',
         'IPNo.',
         '',
-        'IP点番',
-        { t: String(i + 1), align: 'end' },
         'IP点名',
         { t: vertexNames[i] ?? '', align: 'start' },
         'Ｘ座標',
@@ -400,16 +384,14 @@ function buildRoutePages(input: AlignmentReportInput): DrawItem[][] {
 
   // 主要点 (BP / BC / EC / TS / SC / CS / ST / EP)
   const mainCols: Col[] = [
-    { label: '点番', w: 12 },
-    { label: '点\u3000\u3000名', w: 34, align: 'start' },
-    { label: 'ステーション', w: 30 },
-    { label: '単距離', w: 20, align: 'end' },
-    { label: '追加距離', w: 22, align: 'end' },
-    { label: 'Ｘ座標', w: 24, align: 'end' },
-    { label: 'Ｙ座標', w: 24, align: 'end' },
-    { label: '接線方向角', w: 24 },
-    { label: '横断方向角', w: 24 },
-    { label: '中\u3000心\u3000角', w: 25 },
+    { label: '点\u3000\u3000名', w: 44, align: 'start' },
+    { label: 'ＳＰ', w: 26, align: 'end' },
+    { label: '単距離', w: 22, align: 'end' },
+    { label: 'Ｘ座標', w: 26, align: 'end' },
+    { label: 'Ｙ座標', w: 26, align: 'end' },
+    { label: '接線方向角', w: 26 },
+    { label: '横断方向角', w: 26 },
+    { label: '中\u3000心\u3000角', w: 28 },
   ]
   const MARKER_LABEL: Record<string, string> = {
     bc: 'BC',
@@ -441,11 +423,9 @@ function buildRoutePages(input: AlignmentReportInput): DrawItem[][] {
     const g = at(segments, r.d)
     const prev = i > 0 ? mains[i - 1].d : null
     return [
-      String(i + 1),
       { t: r.name, align: 'start' },
-      formatStation(r.d + spOffset),
-      { t: prev == null ? '' : f3(r.d - prev), align: 'end' },
       { t: f3(r.d + spOffset), align: 'end' },
+      { t: prev == null ? '' : f3(r.d - prev), align: 'end' },
       { t: f3(g.x), align: 'end' },
       { t: f3(g.y), align: 'end' },
       Number.isFinite(g.az) ? formatDms(g.az) : '',
@@ -498,18 +478,16 @@ function buildStationPages(input: AlignmentReportInput): DrawItem[][] {
   }
 
   const cols: Col[] = [
-    { label: '点\u3000番', w: 13 },
-    { label: '点\u3000\u3000\u3000名', w: 34, align: 'start' },
-    { label: 'ステーション', w: 28 },
-    { label: '単距離', w: 18, align: 'end' },
-    { label: '追加距離', w: 20, align: 'end' },
-    { label: 'Ｘ座標', w: 23, align: 'end' },
-    { label: 'Ｙ座標', w: 23, align: 'end' },
-    { label: '接線方向角', w: 21 },
-    { label: '弦方向角', w: 21 },
-    { label: '弦\u3000長', w: 17, align: 'end' },
-    { label: '横\u3000断\u3000角', w: 21 },
-    { label: '横断方向角', w: 21 },
+    { label: '点\u3000\u3000\u3000名', w: 38, align: 'start' },
+    { label: 'ＳＰ', w: 24, align: 'end' },
+    { label: '単距離', w: 20, align: 'end' },
+    { label: 'Ｘ座標', w: 25, align: 'end' },
+    { label: 'Ｙ座標', w: 25, align: 'end' },
+    { label: '接線方向角', w: 23 },
+    { label: '弦方向角', w: 23 },
+    { label: '弦\u3000長', w: 18, align: 'end' },
+    { label: '横\u3000断\u3000角', w: 23 },
+    { label: '横断方向角', w: 23 },
   ]
 
   const all: Cell[][] = rows.map((r, i) => {
@@ -526,11 +504,9 @@ function buildStationPages(input: AlignmentReportInput): DrawItem[][] {
     }
     const crossAz = g.az + 90
     return [
-      String(i + 1),
       { t: r.name, align: 'start' },
-      formatStation(r.d + spOffset),
-      { t: prev ? f3(r.d - prev.d) : '', align: 'end' },
       { t: f3(r.d + spOffset), align: 'end' },
+      { t: prev ? f3(r.d - prev.d) : '', align: 'end' },
       { t: f3(g.x), align: 'end' },
       { t: f3(g.y), align: 'end' },
       Number.isFinite(g.az) ? formatDms(g.az) : '',
@@ -568,21 +544,18 @@ function buildWidthStakePages(input: AlignmentReportInput): DrawItem[][] {
   }
   const centers = Array.from(byDistance.keys()).sort((a, b) => a - b)
 
-  // 合計 267mm。 A4 横 の 使える 幅 (297 − 余白 14×2 = 269) に 収める
+  // 合計 245mm。 A4 横 の 使える 幅 (297 − 余白 14×2 = 269) に 収める
   const cols: Col[] = [
-    { label: 'センター点番', w: 18 },
-    { label: '点\u3000\u3000名', w: 26, align: 'start' },
-    { label: 'ステーション', w: 26 },
-    { label: '追加距離', w: 20, align: 'end' },
-    { label: 'Ｘ座標', w: 22, align: 'end' },
-    { label: 'Ｙ座標', w: 22, align: 'end' },
-    { label: '接線方向角', w: 21 },
+    { label: 'センター点名', w: 34, align: 'start' },
+    { label: 'ＳＰ', w: 24, align: 'end' },
+    { label: 'Ｘ座標', w: 25, align: 'end' },
+    { label: 'Ｙ座標', w: 25, align: 'end' },
+    { label: '接線方向角', w: 23 },
     { label: '左右', w: 11 },
-    { label: '巾', w: 16, align: 'end' },
-    { label: '点番', w: 13 },
-    { label: '点\u3000\u3000名', w: 28, align: 'start' },
-    { label: 'Ｘ座標', w: 22, align: 'end' },
-    { label: 'Ｙ座標', w: 22, align: 'end' },
+    { label: '巾', w: 17, align: 'end' },
+    { label: '点\u3000\u3000名', w: 36, align: 'start' },
+    { label: 'Ｘ座標', w: 25, align: 'end' },
+    { label: 'Ｙ座標', w: 25, align: 'end' },
   ]
 
   /** 中心線 から 直角 に offset (右 +) だけ 出た 点 */
@@ -594,9 +567,8 @@ function buildWidthStakePages(input: AlignmentReportInput): DrawItem[][] {
     return { x: p.x + offset * -t.y, y: p.y + offset * t.x }
   }
 
-  let stakeNo = 0
   const all: Cell[][] = []
-  centers.forEach((d, i) => {
+  centers.forEach((d) => {
     const g = at(segments, d)
     const grp = byDistance.get(d)
     const st = stations.find((s) => Math.abs(s.distance - d) < 1e-6)
@@ -606,25 +578,21 @@ function buildWidthStakePages(input: AlignmentReportInput): DrawItem[][] {
       const width = side === 'left' ? grp?.left : grp?.right
       const signed = width == null ? null : side === 'left' ? -width : width
       const pt = signed == null ? null : sidePoint(d, signed)
-      if (pt) stakeNo += 1
       // センター の 情報 は 上 の 行 (左) にだけ 出す
       const head: Cell[] =
         k === 0
           ? [
-              String(i + 1),
               { t: centerName, align: 'start' },
-              formatStation(d + spOffset),
               { t: f3(d + spOffset), align: 'end' },
               { t: f3(g.x), align: 'end' },
               { t: f3(g.y), align: 'end' },
               Number.isFinite(g.az) ? formatDms(g.az) : '',
             ]
-          : ['', '', '', '', '', '', '']
+          : ['', '', '', '', '']
       all.push([
         ...head,
         side === 'left' ? '左' : '右',
         { t: width == null ? '' : f3(width), align: 'end' },
-        pt ? String(stakeNo) : '',
         {
           t: pt ? (grp?.note.get(side === 'left' ? -1 : 1) ?? `${centerName}${side === 'left' ? 'L' : 'R'}${width}`) : '',
           align: 'start',
