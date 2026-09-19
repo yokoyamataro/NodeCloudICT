@@ -107,7 +107,7 @@ import {
 import { MobileStakingRecordsSheet } from './MobileStakingRecordsSheet'
 import { MobileSurveySetPicker } from './MobileSurveySetPicker'
 import { useSurveySetStore } from '@/stores/surveySetStore'
-import { NO_SLIDE, type SurveySlide } from '@/lib/surveyCalibration'
+import { fetchSurveySlide, NO_SLIDE, type SurveySlide } from '@/lib/surveyCalibration'
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
 import { useLayerOrder } from '@/features/orthophoto/OverviewLayerPanel'
 import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
@@ -874,6 +874,12 @@ export function MobileStakingPage() {
   const sessionSetId = useSurveySetStore((s) => s.activeSetId)
   const setSessionSetId = useSurveySetStore((s) => s.setActiveSetId)
   const surveySets = useSurveySetStore((s) => s.sets)
+  /** 工区 の 既定 スライド量。 セット に 属さ ない 記録 の 土俵 */
+  const [farmSlide, setFarmSlide] = useState<SurveySlide>(NO_SLIDE)
+  useEffect(() => {
+    if (!farmId) return
+    void fetchSurveySlide(farmId).then(setFarmSlide)
+  }, [farmId])
   /** セット を 決めた 後 に 続き で 走らせる 測定 */
   const [pendingStart, setPendingStart] = useState<{ forceFreePoint?: boolean } | null>(null)
   const touchSurveySet = useSurveySetStore((s) => s.touchSet)
@@ -2960,8 +2966,10 @@ export function MobileStakingPage() {
    */
   const sessionSlide = useMemo<SurveySlide>(() => {
     const hit = sessionSetId ? surveySets.find((x) => x.id === sessionSetId) : null
-    return hit?.slide ?? NO_SLIDE
-  }, [sessionSetId, surveySets])
+    // セット を まだ 選んで いない (= 未振り分け に 入る) 間 は 工区 の 既定。
+    // 実測記録 の 画面 の slideOfRecord と 同じ 決め方 に 揃える。
+    return hit?.slide ?? farmSlide
+  }, [sessionSetId, surveySets, farmSlide])
   const hasSlide =
     sessionSlide.dx !== 0 || sessionSlide.dy !== 0 || sessionSlide.dz !== 0
 

@@ -608,6 +608,7 @@ function SurveySetBar() {
       <div className="text-[10px] text-slate-500 pl-16">
         実測 − 補正値 = 設計 の 土俵。 入れる と 実測 の 表示 も、ターゲット の
         誘導 と 比高 も 補正後 の 値 に なります (X=北 / Y=東、単位 m)。
+        {!active && ' セット 未選択 の 間 は 工区 の 既定 が 効きます。'}
       </div>
     </div>
   )

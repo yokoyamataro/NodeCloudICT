@@ -464,6 +464,7 @@ export function StakingRecordsPage() {
   const sets = useSurveySetStore((st) => st.sets)
   const fetchSets = useSurveySetStore((st) => st.fetchByFarm)
   const createSet = useSurveySetStore((st) => st.createSet)
+  const updateSet = useSurveySetStore((st) => st.updateSet)
   useEffect(() => {
     if (currentFarm) void fetchSets(currentFarm.id)
   }, [currentFarm, fetchSets])
@@ -473,14 +474,11 @@ export function StakingRecordsPage() {
   const [xOffset, setXOffset] = useState<number>(0)
   const [yOffset, setYOffset] = useState<number>(0)
   const [zOffset, setZOffset] = useState<number>(0)
-  const [xOffsetInput, setXOffsetInput] = useState<string>('0')
-  const [yOffsetInput, setYOffsetInput] = useState<string>('0')
-  const [zOffsetInput, setZOffsetInput] = useState<string>('0')
   useEffect(() => {
     if (!currentFarm) {
-      setXOffset(0); setXOffsetInput('0')
-      setYOffset(0); setYOffsetInput('0')
-      setZOffset(0); setZOffsetInput('0')
+      setXOffset(0)
+      setYOffset(0)
+      setZOffset(0)
       return
     }
     let cancelled = false
@@ -520,9 +518,9 @@ export function StakingRecordsPage() {
       const x = dbX ?? 0
       const y = dbY ?? 0
       const z = dbZ ?? 0
-      setXOffset(x); setXOffsetInput(String(x))
-      setYOffset(y); setYOffsetInput(String(y))
-      setZOffset(z); setZOffsetInput(String(z))
+      setXOffset(x)
+      setYOffset(y)
+      setZOffset(z)
       if (zOffsetKey) {
         try { localStorage.setItem(zOffsetKey, String(z)) } catch { /* ignore */ }
       }
@@ -541,17 +539,17 @@ export function StakingRecordsPage() {
     return () => { cancelled = true }
   }, [currentFarm, zOffsetKey])
 
-  // 補正値 の 保存 (X / Y / Z いずれか の 単一 フィールド 更新)。
+  // 工区 の 既定 の 保存 (X / Y / Z いずれか の 単一 フィールド 更新)。
   const commitOffset = async (
     axis: 'x' | 'y' | 'z',
     s: string,
   ) => {
     const n = parseFloat(s)
     const next = Number.isFinite(n) ? n : 0
-    if (axis === 'x') { setXOffset(next); setXOffsetInput(String(next)) }
-    if (axis === 'y') { setYOffset(next); setYOffsetInput(String(next)) }
+    if (axis === 'x') setXOffset(next)
+    if (axis === 'y') setYOffset(next)
     if (axis === 'z') {
-      setZOffset(next); setZOffsetInput(String(next))
+      setZOffset(next)
       if (zOffsetKey) {
         try { localStorage.setItem(zOffsetKey, String(next)) } catch { /* ignore */ }
       }
@@ -611,6 +609,40 @@ export function StakingRecordsPage() {
       prev === 'all' || prev === 'none' || sets.some((x) => x.id === prev) ? prev : 'all',
     )
   }, [currentFarm?.id, sets])
+
+  /**
+   * スライド量 の 保存先。 いま 見て いる タブ に 合わせる:
+   *   セット の タブ … その セット (survey_record_sets)
+   *   すべて / 未振り分け … 工区 の 既定 (design_survey_calibration)
+   * 記録 1 件 に 効く のは どちら か 片方 だけ (slideOfRecord と 同じ 決め方) な ので、
+   * 両方 に 値 が 入って いて も 二重 に 掛かる こと は ない。
+   */
+  const slideTargetSet =
+    setTab === 'all' || setTab === 'none' ? null : (sets.find((x) => x.id === setTab) ?? null)
+  /** 入力中 の 生 文字列 (触って いない 軸 は null = 保存値 を 3 桁 で 表示) */
+  const [slideDraft, setSlideDraft] = useState<{
+    x: string | null
+    y: string | null
+    z: string | null
+  }>({ x: null, y: null, z: null })
+  // タブ を 変えたら 対象 が 変わる ので 下書き は 捨てる
+  useEffect(() => {
+    setSlideDraft({ x: null, y: null, z: null })
+  }, [setTab])
+
+  const commitSlide = async (axis: 'x' | 'y' | 'z', raw: string) => {
+    setSlideDraft((d) => ({ ...d, [axis]: null }))
+    const n = parseFloat(raw.trim())
+    if (!Number.isFinite(n)) return
+    const next = Math.round(n * 1000) / 1000
+    if (slideTargetSet) {
+      const key = axis === 'x' ? 'dx' : axis === 'y' ? 'dy' : 'dz'
+      if (slideTargetSet.slide[key] === next) return
+      await updateSet(slideTargetSet.id, { slide: { ...slideTargetSet.slide, [key]: next } })
+      return
+    }
+    await commitOffset(axis, String(next))
+  }
 
   const filtered = useMemo(() => {
     let base = records
@@ -1208,60 +1240,56 @@ export function StakingRecordsPage() {
 
       {/* 選択行 の 座標管理 登録 バー。 左端 に スライド量 (X/Y/Z) 入力 を 配置 */}
       <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 text-xs flex-wrap">
-        {/* スライド量: 実測値 に 加算 する 定数 オフセット (X / Y / Z 独立)。
-            GPS 系統差 や 基準点 の ずれ を 素早く 吸収 する 簡易 補正。
-            工区別 に DB (design_survey_calibration) に 永続化。 */}
-        <span
-          className="text-[11px] text-slate-500"
-          title="実測値 に この 値 (m) を 加算した 「補正 XYZ」を 表示。 表 の 平均 と 差 も 補正 後 の 値 で 計算"
-        >
-          スライド量 (m):
-        </span>
+        {/* スライド量。 実測 は セット 単位 で ずれる ので、いま 見て いる
+            タブ の 対象 を 直す:
+              セット の タブ … その セット の 値 (survey_record_sets)
+              すべて / 未振り分け … 工区 の 既定 (design_survey_calibration)
+            どの 記録 に どちら が 効く か は slideOfRecord と 同じ 決め方 (片方 だけ)
+            な ので、二重 に 掛かる こと は ない。 */}
+        <span className="text-[11px] text-slate-500">スライド量 (m)</span>
         <span className="text-[10px] text-slate-400">
-          ※ セット未振り分けの点に使う既定値
+          {slideTargetSet ? `対象: ${setLabel(slideTargetSet)}` : '対象: 工区の既定 (未振り分け用)'}
         </span>
-        <label className="flex items-center gap-1">
-          <span className="text-slate-500">X</span>
-          <input
-            type="number"
-            step={0.001}
-            value={xOffsetInput}
-            onChange={(e) => setXOffsetInput(e.target.value)}
-            onBlur={(e) => void commitOffset('x', e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
-            }}
-            className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
-          />
-        </label>
-        <label className="flex items-center gap-1">
-          <span className="text-slate-500">Y</span>
-          <input
-            type="number"
-            step={0.001}
-            value={yOffsetInput}
-            onChange={(e) => setYOffsetInput(e.target.value)}
-            onBlur={(e) => void commitOffset('y', e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
-            }}
-            className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
-          />
-        </label>
-        <label className="flex items-center gap-1">
-          <span className="text-slate-500">Z</span>
-          <input
-            type="number"
-            step={0.001}
-            value={zOffsetInput}
-            onChange={(e) => setZOffsetInput(e.target.value)}
-            onBlur={(e) => void commitOffset('z', e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
-            }}
-            className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
-          />
-        </label>
+        {(['x', 'y', 'z'] as const).map((axis) => (
+          <label key={axis} className="flex items-center gap-1">
+            <span className="text-slate-500">{axis.toUpperCase()}</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={
+                slideDraft[axis] ??
+                (slideTargetSet
+                  ? slideTargetSet.slide[axis === 'x' ? 'dx' : axis === 'y' ? 'dy' : 'dz']
+                  : axis === 'x'
+                    ? xOffset
+                    : axis === 'y'
+                      ? yOffset
+                      : zOffset
+                ).toFixed(3)
+              }
+              onFocus={() =>
+                setSlideDraft((d) => ({
+                  ...d,
+                  [axis]: String(
+                    slideTargetSet
+                      ? slideTargetSet.slide[axis === 'x' ? 'dx' : axis === 'y' ? 'dy' : 'dz']
+                      : axis === 'x'
+                        ? xOffset
+                        : axis === 'y'
+                          ? yOffset
+                          : zOffset,
+                  ),
+                }))
+              }
+              onChange={(e) => setSlideDraft((d) => ({ ...d, [axis]: e.target.value }))}
+              onBlur={(e) => void commitSlide(axis, e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
+              }}
+              className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
+            />
+          </label>
+        ))}
         {/* 実測 から 座標管理 へ 直接 登録 する 導線 は 廃止。 実測 は 実測 の まま
             残し、座標 に する なら Excel / SIMA を 通す。 */}
         <span className="text-slate-400 mx-1">|</span>
