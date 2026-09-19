@@ -7,6 +7,7 @@
 // - 地図で線形（直線 + 曲線）をプレビュー
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -3018,10 +3019,21 @@ export function OpenChannelAlignmentPage() {
   }, [currentFarm, projects])
   const converter = useMemo(() => new CoordinateConverter(zone), [zone])
 
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // どの 線形 を 開く か は URL (/open-channel/alignment/:channelId)。
+  // サイドバー の サブメニュー が 線形 そのもの な ので、画面 内 の プルダウン は 廃止。
+  const navigate = useNavigate()
+  const { channelId } = useParams<{ channelId?: string }>()
+  const selectedId = channelId ?? null
+  /** 線形 を 切り替える (新規追加 の 直後 など に 使う) */
+  const gotoChannel = (id: string | null) =>
+    navigate(id ? `/open-channel/alignment/${id}` : '/open-channel/alignment', { replace: true })
+  // URL が 無い / 消えた 線形 を 指して いる ときは 先頭 に 寄せる
   useEffect(() => {
-    if (!selectedId && channels.length > 0) setSelectedId(channels[0].id)
-    if (selectedId && !channels.find((c) => c.id === selectedId)) setSelectedId(channels[0]?.id ?? null)
+    if (channels.length === 0) return
+    if (!selectedId || !channels.find((c) => c.id === selectedId)) {
+      gotoChannel(channels[0].id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channels, selectedId])
 
   const selected = channels.find((c) => c.id === selectedId) ?? null
@@ -4270,20 +4282,11 @@ export function OpenChannelAlignmentPage() {
                 </>
               ) : (
                 <>
-                  <select
-                    value={selectedId ?? ''}
-                    onChange={(e) => setSelectedId(e.target.value || null)}
-                    className="flex-1 min-w-0 px-2 py-1 border rounded text-sm"
-                  >
-                    {channels.length === 0 && (
-                      <option value="">（線形物なし）</option>
-                    )}
-                    {channels.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                  {/* 線形 の 切替 は 左メニュー の サブメニュー。 ここ は 今 開いて
+                      いる 線形 の 名前 と、名前 の 変更 / 追加 / 削除 だけ。 */}
+                  <span className="flex-1 min-w-0 truncate text-sm font-semibold text-slate-800">
+                    {selected?.name ?? '（線形なし）'}
+                  </span>
                   <button
                     onClick={handleStartEditName}
                     disabled={!selected}
@@ -4293,7 +4296,11 @@ export function OpenChannelAlignmentPage() {
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
                   <button
-                    onClick={() => farmId && addChannel(farmId)}
+                    onClick={async () => {
+                      if (!farmId) return
+                      const row = await addChannel(farmId)
+                      if (row) gotoChannel(row.id)
+                    }}
                     title="新規追加"
                     className="shrink-0 p-1 border rounded hover:bg-slate-50"
                   >

@@ -29,12 +29,19 @@ function sxfLineType(style: LineStyle | undefined): number {
 // 画布 に 描く (tif / pdf の 元)
 // ========================================================================
 
-/** 用紙 を 画布 に 描く。 dpi は 400 が 既定 (登記 の 提出 に 合わせる) */
-export function renderToCanvas(items: DrawItem[], dpi = 400): HTMLCanvasElement {
+/**
+ * 用紙 を 画布 に 描く。 dpi は 400 が 既定 (登記 の 提出 に 合わせる)。
+ * sheet を 渡せば B4 以外 (計算書 の A4 横 など) にも 使える。
+ */
+export function renderToCanvas(
+  items: DrawItem[],
+  dpi = 400,
+  sheet: { w: number; h: number } = SHEET,
+): HTMLCanvasElement {
   const pxPerMm = dpi / 25.4
   const cv = document.createElement('canvas')
-  cv.width = Math.round(SHEET.w * pxPerMm)
-  cv.height = Math.round(SHEET.h * pxPerMm)
+  cv.width = Math.round(sheet.w * pxPerMm)
+  cv.height = Math.round(sheet.h * pxPerMm)
   const g = cv.getContext('2d')
   if (!g) return cv
 
@@ -188,12 +195,22 @@ export function canvasToTiff(cv: HTMLCanvasElement, dpi = 400): Blob {
  * 画像 に して しまう。 提出 に 使う のは tif な ので、pdf は 確認用。
  */
 export async function canvasToPdf(cv: HTMLCanvasElement): Promise<Blob> {
-  const dataUrl = cv.toDataURL('image/jpeg', 0.92)
-  const jpeg = base64ToBytes(dataUrl.slice(dataUrl.indexOf(',') + 1))
+  return canvasesToPdf([cv])
+}
 
+/**
+ * 画布 を 並べて 複数ページ の PDF に する。
+ * 計算書 の ように 行 が 溢れて 何枚 にも なる もの 用。
+ * sheet を 渡せば B4 以外 の 用紙 (A4 横 など) にも なる。
+ */
+export async function canvasesToPdf(
+  cvs: HTMLCanvasElement[],
+  sheet: { w: number; h: number } = SHEET,
+): Promise<Blob> {
+  if (cvs.length === 0) throw new Error('ページ が ありません')
   // 用紙 は mm → pt (1 pt = 1/72 inch)
-  const wPt = (SHEET.w * 72) / 25.4
-  const hPt = (SHEET.h * 72) / 25.4
+  const wPt = (sheet.w * 72) / 25.4
+  const hPt = (sheet.h * 72) / 25.4
 
   const enc = new TextEncoder()
   const chunks: Uint8Array[] = []
@@ -215,28 +232,45 @@ export async function canvasToPdf(cv: HTMLCanvasElement): Promise<Blob> {
     put('endobj\n')
   }
 
+  // 1 = Catalog, 2 = Pages, 以降 ページ ごと に Page / Contents / Image の 3 つ
+  const pageObj = (i: number) => 3 + i * 3
+  const contentObj = (i: number) => 4 + i * 3
+  const imageObj = (i: number) => 5 + i * 3
+  const lastObj = 2 + cvs.length * 3
+
   put('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n')
   obj(1, '<< /Type /Catalog /Pages 2 0 R >>')
-  obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>')
   obj(
-    3,
-    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${wPt.toFixed(2)} ${hPt.toFixed(2)}] ` +
-      `/Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>`,
+    2,
+    `<< /Type /Pages /Kids [${cvs
+      .map((_, i) => `${pageObj(i)} 0 R`)
+      .join(' ')}] /Count ${cvs.length} >>`,
   )
-  const content = `q ${wPt.toFixed(2)} 0 0 ${hPt.toFixed(2)} 0 0 cm /Im0 Do Q`
-  obj(4, `<< /Length ${content.length} >>`, enc.encode(content))
-  obj(
-    5,
-    `<< /Type /XObject /Subtype /Image /Width ${cv.width} /Height ${cv.height} ` +
-      `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>`,
-    jpeg,
-  )
+  cvs.forEach((cv, i) => {
+    const dataUrl = cv.toDataURL('image/jpeg', 0.92)
+    const jpeg = base64ToBytes(dataUrl.slice(dataUrl.indexOf(',') + 1))
+    obj(
+      pageObj(i),
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${wPt.toFixed(2)} ${hPt.toFixed(2)}] ` +
+        `/Resources << /XObject << /Im0 ${imageObj(i)} 0 R >> >> /Contents ${contentObj(i)} 0 R >>`,
+    )
+    const content = `q ${wPt.toFixed(2)} 0 0 ${hPt.toFixed(2)} 0 0 cm /Im0 Do Q`
+    obj(contentObj(i), `<< /Length ${content.length} >>`, enc.encode(content))
+    obj(
+      imageObj(i),
+      `<< /Type /XObject /Subtype /Image /Width ${cv.width} /Height ${cv.height} ` +
+        `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>`,
+      jpeg,
+    )
+  })
 
   const xref = pos
-  let table = `xref\n0 6\n0000000000 65535 f \n`
-  for (let i = 1; i <= 5; i += 1) table += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`
+  let table = `xref\n0 ${lastObj + 1}\n0000000000 65535 f \n`
+  for (let i = 1; i <= lastObj; i += 1) {
+    table += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`
+  }
   put(table)
-  put(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`)
+  put(`trailer\n<< /Size ${lastObj + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`)
 
   return new Blob(chunks as BlobPart[], { type: 'application/pdf' })
 }

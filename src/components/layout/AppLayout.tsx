@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   Map,
@@ -51,6 +51,7 @@ import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { usePipeWiringStore } from '@/stores/pipeWiringStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
+import { useOpenChannelStore } from '@/stores/openChannelStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import {
   useGlobalSaveRegistry,
@@ -268,7 +269,9 @@ const navigation: NavGroup[] = [
     ],
   },
   {
-    name: '線形物',
+    // 子 は 「路線線形 ごと に 1 つ」。 工区 の 線形 を 読んで 差し替える ので、
+    // ここ の children は 線形 が 1 本 も 無い とき の 入口 だけ。
+    name: '路線線形',
     href: '/open-channel',
     icon: Waves,
     children: [
@@ -325,6 +328,30 @@ export function AppLayout() {
   const { currentProject, projects, fetchProjects } = useProjectListStore()
   const fetchUserRoles = useProjectListStore((s) => s.fetchUserRoles)
   const { currentFarm, setCurrentFarm, farms, fetchFarms } = useFarmStore()
+  // 路線線形 の サブメニュー は 工区 の 線形 そのもの。 画面 内 の プルダウン を
+  // やめて ここ に 並べる ので、サイドバー 側 で 一覧 を 持つ。
+  const openChannels = useOpenChannelStore((s) => s.channels)
+  const fetchOpenChannels = useOpenChannelStore((s) => s.fetchChannels)
+  useEffect(() => {
+    if (!currentFarm?.id) return
+    void fetchOpenChannels(currentFarm.id)
+  }, [currentFarm?.id, fetchOpenChannels])
+  /** 路線線形 の children を 実際 の 線形 に 差し替えた メニュー */
+  const navItems = useMemo<NavGroup[]>(() => {
+    if (openChannels.length === 0) return navigation
+    return navigation.map((g) =>
+      g.href === '/open-channel'
+        ? {
+            ...g,
+            children: openChannels.map((c) => ({
+              name: c.name,
+              href: `/open-channel/alignment/${c.id}`,
+              icon: Square,
+            })),
+          }
+        : g,
+    )
+  }, [openChannels])
   const [chatOpen, setChatOpen] = useState(false)
   /** 共同作業者 の 丸 を 押して 開いた ときの 宛先。 入力欄 に @名前 を 入れて おく */
   const [chatMention, setChatMention] = useState<string | null>(null)
@@ -706,7 +733,7 @@ export function AppLayout() {
           </div>
           <nav className="flex-1 p-4 overflow-y-auto">
             <ul className="space-y-1">
-              {navigation
+              {navItems
                 .filter((item) =>
                   isNavVisibleForCategory(item.href, currentProject?.category ?? null),
                 )

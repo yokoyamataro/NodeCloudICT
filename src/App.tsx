@@ -378,6 +378,8 @@ function AppRoutes() {
         {/* 線形物（水路・道路） */}
         <Route path="open-channel">
           <Route path="alignment" element={<OpenChannelAlignmentPage />} />
+          {/* 路線線形 は サイドバー の サブメニュー から 1 本 ずつ 開く */}
+          <Route path="alignment/:channelId" element={<OpenChannelAlignmentPage />} />
         </Route>
         <Route path="files" element={<FarmFilesPage />} />
         {/* 設定。 工区情報 が これまで の 設定、土地家屋調査士設定 は 組織 の 共通 */}
