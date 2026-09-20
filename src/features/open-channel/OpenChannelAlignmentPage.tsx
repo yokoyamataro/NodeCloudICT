@@ -9,6 +9,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { AlignmentReportKind } from './alignmentReport'
+import { CrossSectionDxfModal } from './CrossSectionDxfModal'
 import { Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -4128,6 +4129,29 @@ export function OpenChannelAlignmentPage() {
     }))
   }, [selected, stations, segments])
 
+  /** 横断図 DXF の ダイアログ。 出す 測点 を 決めて から 開く */
+  const [dxfSheetTarget, setDxfSheetTarget] = useState<'selected' | 'control' | 'all' | null>(null)
+  /**
+   * DXF に 出す 断面。 計画 は 計画断面 の 変化点 (個別断面 が あれば それ)、
+   * 現況 / 出来形 は 測点 に 入れた 点列。
+   */
+  const dxfSections = useMemo(() => {
+    if (!dxfSheetTarget) return []
+    const pick =
+      dxfSheetTarget === 'selected'
+        ? stations.filter((s) => s.id === selectedStationId)
+        : dxfSheetTarget === 'control'
+          ? stations.filter((s) => s.isControlStation)
+          : stations
+    const vertexByStation = new Map(stationVertexLists.map((v) => [v.station.id, v.vertices]))
+    return pick.map((s) => ({
+      title: s.label,
+      planned: (vertexByStation.get(s.id) ?? []).map((v) => ({ offset: v.offset, z: v.z })),
+      current: (s.currentSection ?? []).map((p) => ({ offset: p.offset, z: p.elevation })),
+      asbuilt: (s.asbuiltSection ?? []).map((p) => ({ offset: p.offset, z: p.elevation })),
+    }))
+  }, [dxfSheetTarget, stations, selectedStationId, stationVertexLists])
+
   // 表示対象を overlayMode で絞り込む
   const visibleStationVertices = useMemo(() => {
     if (overlayMode === 'none') return []
@@ -4934,17 +4958,9 @@ export function OpenChannelAlignmentPage() {
                       >
                         SIMA
                       </button>
-                      <button
-                        onClick={handleExportLandXml}
-                        disabled={!stationTin || stationTin.triangles.length === 0}
-                        className="px-2 py-1 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-50"
-                        title="隣接測点の同要素番号同士を結んで TIN を作成"
-                      >
-                        LandXML (TIN)
-                      </button>
                       {stationTin && (
                         <span className="text-[10px] text-slate-400 ml-auto">
-                          {stationTin.points.length} 点 / {stationTin.triangles.length} 三角形
+                          計画 TIN {stationTin.points.length} 点 / {stationTin.triangles.length} 三角形
                         </span>
                       )}
                     </div>
@@ -5254,6 +5270,25 @@ export function OpenChannelAlignmentPage() {
                 title="横断 (現況・計画・出来形)"
                 storageKey="oc:section:cross"
                 actions={
+                  <span className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setDxfSheetTarget(controlOnly ? 'control' : 'all')}
+                    disabled={stations.length === 0}
+                    className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                    title="横断図 を DXF で 出力 (用紙 / 縮尺 / DL / 中心位置 を 指定)"
+                  >
+                    DXF出力
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportLandXml}
+                    disabled={!stationTin || stationTin.triangles.length === 0}
+                    className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                    title="計画断面 を つないだ TIN を LandXML で 出力 (隣り合う 測点 の 同じ 要素 同士 を 結ぶ)"
+                  >
+                    LandXML
+                  </button>
                   <button
                     type="button"
                     onClick={toggleControlOnly}
@@ -5267,6 +5302,7 @@ export function OpenChannelAlignmentPage() {
                     管理測点のみ表示
                     <span className="ml-1 opacity-70">{controlStationCount}</span>
                   </button>
+                  </span>
                 }
               >
                 <div className="flex items-center gap-1 flex-wrap">
@@ -6067,6 +6103,15 @@ export function OpenChannelAlignmentPage() {
           </div>
           )}
         </div>
+      )}
+
+      {/* 横断図 の DXF 出力 */}
+      {dxfSheetTarget && selected && (
+        <CrossSectionDxfModal
+          channelName={selected.name}
+          sections={dxfSections}
+          onClose={() => setDxfSheetTarget(null)}
+        />
       )}
 
       {/* DXF トレース モーダル */}
