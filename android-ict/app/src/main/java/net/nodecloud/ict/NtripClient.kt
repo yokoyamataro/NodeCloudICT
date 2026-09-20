@@ -59,6 +59,7 @@ class NtripClient(
             try {
                 val req = buildString {
                     append("GET / HTTP/1.0\r\n")
+                    append("Host: $host:$port\r\n")
                     append("User-Agent: NTRIP NodeCloudICT/1.0\r\n")
                     if (!user.isNullOrEmpty()) {
                         val cred = Base64.encodeToString(
@@ -206,13 +207,21 @@ class NtripClient(
             "$user:$pass".toByteArray(Charsets.UTF_8),
             Base64.NO_WRAP,
         )
+        // NTRIP 1.0 で 要求 する。
+        //
+        // これ まで は 要求行 が HTTP/1.0 な のに `Ntrip-Version: Ntrip/2.0` を
+        // 付けて いた。 古い キャスター は 無視 する が、商用 の キャスター は
+        // 2.0 と 見なして HTTP/1.1 応答 (場合 に よって は Transfer-Encoding:
+        // chunked) を 返す。 チャンク長 が RTCM に 混ざる ので、繋がって いる のに
+        // 補正 が 効か ない / すぐ 切れる こと が ある。 RTKLIB と 同じ 素直 な
+        // NTRIP 1.0 に 揃える。 Host は 中継 が 見る ので 付けて おく。
         val req = buildString {
             append("GET $mp HTTP/1.0\r\n")
+            append("Host: $host:$port\r\n")
             append("User-Agent: NTRIP NodeCloudICT/1.0\r\n")
             append("Accept: */*\r\n")
             append("Connection: close\r\n")
             append("Authorization: Basic $cred\r\n")
-            append("Ntrip-Version: Ntrip/2.0\r\n")
             append("\r\n")
         }
         Log.d(TAG, "NTRIP sending request to $mp")
@@ -225,11 +234,21 @@ class NtripClient(
         when {
             first.startsWith("ICY 200 OK") -> { /* NTRIP 1.0: 追加ヘッダなし */ }
             first.startsWith("HTTP/1.") && first.contains(" 200 ") -> {
-                // NTRIP 2.0 / HTTP: ヘッダを 空行まで読み捨て
+                // NTRIP 2.0 / HTTP: ヘッダを 空行まで読み捨て。
+                // NTRIP 1.0 で 要求 して いる ので 本来 来ない が、キャスター に
+                // よって は chunked で 返す。 そのまま 流す と チャンク長 が RTCM に
+                // 混ざる ので、はっきり 落とす。
+                var chunked = false
                 while (true) {
                     val h = readAsciiLine(ins) ?: break
                     if (h.isEmpty()) break
+                    if (h.lowercase().startsWith("transfer-encoding:") &&
+                        h.lowercase().contains("chunked")
+                    ) {
+                        chunked = true
+                    }
                 }
+                if (chunked) throw IOException("キャスターが chunked で応答しました (未対応)")
             }
             first.contains(" 401") -> throw IOException("NTRIP 認証失敗 (user/pass を確認)")
             first.contains(" 404") -> throw IOException("NTRIP mountpoint が 見つかりません: $mp")

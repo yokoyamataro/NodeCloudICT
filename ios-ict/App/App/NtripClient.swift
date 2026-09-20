@@ -130,16 +130,25 @@ final class NtripClient {
         }
     }
 
+    /// NTRIP 1.0 で 要求 する。
+    ///
+    /// これ まで は 要求行 が HTTP/1.0 な のに `Ntrip-Version: Ntrip/2.0` を
+    /// 付けて いた。 古い キャスター は 無視 する が、商用 の キャスター は
+    /// 2.0 と 見なして HTTP/1.1 応答 (場合 に よって は Transfer-Encoding:
+    /// chunked) を 返す。 その チャンク 長 を RTCM と して 食わせて しまう ため、
+    /// 繋がって いる のに 補正 が 効か ない / すぐ 切れる こと が ある。
+    /// RTKLIB と 同じ 素直 な NTRIP 1.0 に 揃える。
+    /// Host は HTTP/1.0 では 必須 で は ない が、間 に 入る 中継 が 見る ので 付ける。
     private func sendRequest() {
         let mp = mountpoint.hasPrefix("/") ? mountpoint : "/\(mountpoint)"
         let cred = Data("\(user):\(pass)".utf8).base64EncodedString()
         var req = ""
         req += "GET \(mp) HTTP/1.0\r\n"
+        req += "Host: \(host):\(port)\r\n"
         req += "User-Agent: \(Self.userAgent)\r\n"
         req += "Accept: */*\r\n"
         req += "Connection: close\r\n"
         req += "Authorization: Basic \(cred)\r\n"
-        req += "Ntrip-Version: Ntrip/2.0\r\n"
         req += "\r\n"
         connection?.send(content: Data(req.utf8), completion: .contentProcessed { _ in })
     }
@@ -193,6 +202,14 @@ final class NtripClient {
                 if headerBuffer.count > 65536 {
                     fail("ntrip_io", "NTRIP ヘッダが長すぎます", fatal: true)
                 }
+                return
+            }
+            // NTRIP 1.0 で 要求 して いる ので 本来 来ない が、キャスター に よって は
+            // chunked で 返す。 そのまま 流す と チャンク長 が RTCM に 混ざって
+            // 「繋がって いる のに 効か ない」 に なる ので、はっきり 落とす。
+            let headerText = String(decoding: headerBuffer[..<sep.lowerBound], as: UTF8.self).lowercased()
+            if headerText.contains("transfer-encoding: chunked") {
+                fail("ntrip_io", "キャスターが chunked で応答しました (未対応)", fatal: true)
                 return
             }
             let rest = headerBuffer[sep.upperBound...]
