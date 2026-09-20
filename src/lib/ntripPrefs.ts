@@ -35,6 +35,49 @@ export const DEFAULT_NTRIP_CONFIG: NtripConfig = {
   sendGga: true,
 }
 
+/**
+ * キャスター の 宛先 を 整える。
+ *
+ * 貼り付け で `https://ntrip.example.jp:2101/` の ような 形 が 入る こと が 多い。
+ * 末尾 の `/` が 1 つ 付いた だけ で 名前解決 に 失敗 し、「タイムアウト」 に しか
+ * 見えない ので、入力 の 段階 で 落として おく。
+ *   ・前後 の 空白
+ *   ・http:// https:// ntrip:// の 頭
+ *   ・最初 の `/` 以降 (パス)。 そこ が mountpoint の こと が ある ので 返す
+ *   ・`host:port` の 形 なら port を 取り出す
+ */
+export function parseNtripHost(raw: string): {
+  host: string
+  port?: number
+  mountpoint?: string
+} {
+  let t = raw.trim()
+  t = t.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '')
+  let mountpoint: string | undefined
+  const slash = t.indexOf('/')
+  if (slash >= 0) {
+    const rest = t.slice(slash + 1).trim()
+    if (rest) mountpoint = rest.replace(/\/+$/, '')
+    t = t.slice(0, slash)
+  }
+  let port: number | undefined
+  // IPv6 の [::1]:2101 は 扱わ ない (NTRIP では まず 使わ ない)
+  const colon = t.lastIndexOf(':')
+  if (colon > 0 && !t.includes(']')) {
+    const n = parseInt(t.slice(colon + 1), 10)
+    if (Number.isFinite(n) && n > 0 && n < 65536) {
+      port = n
+      t = t.slice(0, colon)
+    }
+  }
+  return { host: t.trim(), port, mountpoint }
+}
+
+/** mountpoint の 前後 の 空白 と 頭 / 末尾 の `/` を 落とす */
+export function normalizeMountpoint(raw: string): string {
+  return raw.trim().replace(/^\/+/, '').replace(/\/+$/, '')
+}
+
 function isValidConfig(o: unknown): o is NtripConfig {
   const c = o as Record<string, unknown> | null
   return (
@@ -48,10 +91,12 @@ function isValidConfig(o: unknown): o is NtripConfig {
 function coerceConfig(raw: unknown): NtripConfig | null {
   if (!isValidConfig(raw)) return null
   const o = raw as unknown as Record<string, unknown>
+  // 古い 保存値 に 末尾 の / が 残って いる こと が ある ので 読む とき に 直す
+  const h = parseNtripHost(raw.host)
   return {
-    host: raw.host,
-    port: raw.port,
-    mountpoint: raw.mountpoint,
+    host: h.host,
+    port: h.port ?? raw.port,
+    mountpoint: normalizeMountpoint(raw.mountpoint || h.mountpoint || ''),
     user: typeof o.user === 'string' ? (o.user as string) : '',
     pass: typeof o.pass === 'string' ? (o.pass as string) : '',
     sendGga: typeof o.sendGga === 'boolean' ? (o.sendGga as boolean) : true,

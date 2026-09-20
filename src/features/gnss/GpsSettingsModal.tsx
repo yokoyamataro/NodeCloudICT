@@ -53,6 +53,8 @@ import {
   addNtripProfile,
   deleteNtripProfile,
   loadNtripStore,
+  normalizeMountpoint,
+  parseNtripHost,
   renameNtripProfile,
   saveNtripStore,
   setActiveNtripProfile,
@@ -1204,9 +1206,10 @@ function NtripTab() {
     setFetching(true)
     setError(null)
     try {
+      const h = parseNtripHost(cfg.host)
       const r = await fetchNtripSourceTable({
-        host: cfg.host,
-        port: cfg.port,
+        host: h.host,
+        port: h.port ?? cfg.port,
         user: cfg.user || undefined,
         pass: cfg.pass || undefined,
       })
@@ -1223,25 +1226,36 @@ function NtripTab() {
   }
 
   const handleConnect = async () => {
-    if (!cfg.host || !cfg.port || !cfg.mountpoint) {
+    // 宛先 は ここ で 確定 させる。 貼り付け の https:// や 末尾 の / が 残って
+    // いる と 名前解決 に 失敗 し、「タイムアウト」 と しか 出ない
+    const parsed = parseNtripHost(cfg.host)
+    const eff: NtripConfig = {
+      ...cfg,
+      host: parsed.host,
+      port: parsed.port ?? cfg.port,
+      mountpoint: normalizeMountpoint(cfg.mountpoint || parsed.mountpoint || ''),
+    }
+    if (!eff.host || !eff.port || !eff.mountpoint) {
       setError('host / port / mountpoint は 必須です')
       return
     }
+    // 画面 と 保存値 も 整えた もの に 揃える
+    setCfg(eff)
     setConnecting(true)
     setError(null)
     try {
       const store = loadNtripStore()
       const active = store.profiles.find((p) => p.id === store.activeId)
       if (active) {
-        active.config = cfg
+        active.config = eff
         active.name = profileName || active.name
         saveNtripStore(store)
       } else {
-        const p = addNtripProfile(profileName || cfg.mountpoint || cfg.host || '(名称未設定)', cfg)
+        const p = addNtripProfile(profileName || eff.mountpoint || eff.host || '(名称未設定)', eff)
         setActiveId(p.id)
       }
       setProfiles(loadNtripStore().profiles)
-      await startNtrip(cfg)
+      await startNtrip(eff)
       const s = await getNtripStatus()
       setStatus(s)
     } catch (e) {
@@ -1351,7 +1365,18 @@ function NtripTab() {
           type="text"
           value={cfg.host}
           onChange={(e) => setCfg({ ...cfg, host: e.target.value })}
-          placeholder="例: rtk2go.com / MADOCA など"
+          onBlur={(e) => {
+            // 貼り付け の https:// や 末尾 の / を 落とす。 末尾 の / が 1 つ
+            // 付いた だけ で 名前解決 に 失敗 し、「タイムアウト」 に しか 見えない
+            const p = parseNtripHost(e.target.value)
+            setCfg((c) => ({
+              ...c,
+              host: p.host,
+              port: p.port ?? c.port,
+              mountpoint: c.mountpoint || p.mountpoint || '',
+            }))
+          }}
+          placeholder="例: ntrip.example.jp (http:// や 末尾の / は不要)"
           className="mt-1 w-full border border-slate-300 rounded px-2 py-1 font-mono"
           autoCapitalize="off"
           autoCorrect="off"
