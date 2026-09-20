@@ -18,8 +18,12 @@ export interface SheetPoint {
 
 /** 1 測点 分 の 中身 */
 export interface SheetSection {
+  /** 測点 の id (選択 の 鍵) */
+  id: string
   /** 見出し (測点名) */
   title: string
+  /** 管理測点 か (既定 の 絞り込み に 使う) */
+  isControl?: boolean
   planned: SheetPoint[]
   current: SheetPoint[]
   asbuilt: SheetPoint[]

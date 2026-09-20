@@ -4129,28 +4129,24 @@ export function OpenChannelAlignmentPage() {
     }))
   }, [selected, stations, segments])
 
-  /** 横断図 DXF の ダイアログ。 出す 測点 を 決めて から 開く */
-  const [dxfSheetTarget, setDxfSheetTarget] = useState<'selected' | 'control' | 'all' | null>(null)
+  /** 横断図 DXF の ダイアログ */
+  const [dxfModalOpen, setDxfModalOpen] = useState(false)
   /**
-   * DXF に 出す 断面。 計画 は 計画断面 の 変化点 (個別断面 が あれば それ)、
+   * DXF に 出せる 断面 (全測点)。 どれ を 出す か は ダイアログ で 選ぶ。
+   * 計画 は 計画断面 の 変化点 (個別断面 が あれば それ)、
    * 現況 / 出来形 は 測点 に 入れた 点列。
    */
   const dxfSections = useMemo(() => {
-    if (!dxfSheetTarget) return []
-    const pick =
-      dxfSheetTarget === 'selected'
-        ? stations.filter((s) => s.id === selectedStationId)
-        : dxfSheetTarget === 'control'
-          ? stations.filter((s) => s.isControlStation)
-          : stations
     const vertexByStation = new Map(stationVertexLists.map((v) => [v.station.id, v.vertices]))
-    return pick.map((s) => ({
+    return stations.map((s) => ({
+      id: s.id,
       title: s.label,
+      isControl: s.isControlStation === true,
       planned: (vertexByStation.get(s.id) ?? []).map((v) => ({ offset: v.offset, z: v.z })),
       current: (s.currentSection ?? []).map((p) => ({ offset: p.offset, z: p.elevation })),
       asbuilt: (s.asbuiltSection ?? []).map((p) => ({ offset: p.offset, z: p.elevation })),
     }))
-  }, [dxfSheetTarget, stations, selectedStationId, stationVertexLists])
+  }, [stations, stationVertexLists])
 
   // 表示対象を overlayMode で絞り込む
   const visibleStationVertices = useMemo(() => {
@@ -5273,7 +5269,7 @@ export function OpenChannelAlignmentPage() {
                   <span className="flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => setDxfSheetTarget(controlOnly ? 'control' : 'all')}
+                    onClick={() => setDxfModalOpen(true)}
                     disabled={stations.length === 0}
                     className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                     title="横断図 を DXF で 出力 (用紙 / 縮尺 / DL / 中心位置 を 指定)"
@@ -6106,11 +6102,14 @@ export function OpenChannelAlignmentPage() {
       )}
 
       {/* 横断図 の DXF 出力 */}
-      {dxfSheetTarget && selected && (
+      {dxfModalOpen && selected && (
         <CrossSectionDxfModal
           channelName={selected.name}
           sections={dxfSections}
-          onClose={() => setDxfSheetTarget(null)}
+          initialSelected={
+            selectedStationId ? [selectedStationId] : dxfSections.map((x) => x.id)
+          }
+          onClose={() => setDxfModalOpen(false)}
         />
       )}
 

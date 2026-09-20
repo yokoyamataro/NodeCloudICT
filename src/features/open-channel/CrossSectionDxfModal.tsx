@@ -58,13 +58,28 @@ function NumField({
 export function CrossSectionDxfModal({
   channelName,
   sections,
+  initialSelected,
   onClose,
 }: {
   channelName: string
-  /** 出す 測点。 呼び側 で 絞って 渡す */
+  /** 出せる 測点 (全部)。 どれ を 出す か は ここ で 選ぶ */
   sections: SheetSection[]
+  /** 最初 に チェック して おく 測点 */
+  initialSelected?: string[]
   onClose: () => void
 }) {
+  /** 出す 測点。 空 に は しない (何 も 出ない 出力 を 作らない) */
+  const [picked, setPicked] = useState<Set<string>>(
+    () => new Set(initialSelected ?? sections.map((s) => s.id)),
+  )
+  const chosen = useMemo(() => sections.filter((s) => picked.has(s.id)), [sections, picked])
+  const togglePick = (id: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   const [paper, setPaper] = useState<keyof typeof PAPER_SIZES>('A3')
   const [landscape, setLandscape] = useState(true)
   const base = PAPER_SIZES[paper]
@@ -73,8 +88,8 @@ export function CrossSectionDxfModal({
 
   // 自動 の 既定。 用紙 を 変えたら 出し直す
   const auto = useMemo(
-    () => suggestSheetOptions(sections, paperW, paperH),
-    [sections, paperW, paperH],
+    () => suggestSheetOptions(chosen, paperW, paperH),
+    [chosen, paperW, paperH],
   )
   /** 手で 直した 分 だけ 覚える。 未設定 は 自動値 */
   const [override, setOverride] = useState<{
@@ -96,7 +111,7 @@ export function CrossSectionDxfModal({
 
   /** 枠 に 収まる か。 はみ出す なら 数字 で 出す */
   const fit = useMemo(() => {
-    const pts = sections.flatMap((s) => [
+    const pts = chosen.flatMap((s) => [
       ...(showPlanned ? s.planned : []),
       ...(showCurrent ? s.current : []),
       ...(showAsbuilt ? s.asbuilt : []),
@@ -112,13 +127,13 @@ export function CrossSectionDxfModal({
       rightMm: centerX + (half * 1000) / hScale,
       topMm: centerY + ((top - dl) * 1000) / vScale,
     }
-  }, [sections, hScale, vScale, dl, centerX, centerY, showPlanned, showCurrent, showAsbuilt])
+  }, [chosen, hScale, vScale, dl, centerX, centerY, showPlanned, showCurrent, showAsbuilt])
 
   const overflow =
     fit != null && (fit.rightMm > paperW || fit.topMm > paperH || centerX - fit.widthMm / 2 < 0)
 
   const handleExport = () => {
-    const entities = buildCrossSectionSheets(sections, {
+    const entities = buildCrossSectionSheets(chosen, {
       paperW,
       paperH,
       hScale,
@@ -140,7 +155,9 @@ export function CrossSectionDxfModal({
       <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[85vh] flex flex-col">
         <div className="px-3 py-2 border-b flex items-center gap-2">
           <h3 className="text-sm font-semibold">横断図 の DXF 出力</h3>
-          <span className="text-[11px] text-slate-500">{sections.length} 測点</span>
+          <span className="text-[11px] text-slate-500">
+            {chosen.length} / {sections.length} 測点
+          </span>
           <button
             onClick={onClose}
             className="ml-auto p-1 rounded text-slate-400 hover:bg-slate-100"
@@ -154,6 +171,67 @@ export function CrossSectionDxfModal({
           <div className="text-[11px] text-slate-500">
             最初 の 値 は 断面 の 中身 から 出した もの です。 そのまま 直せます。
             1 測点 = 1 枠 で、複数 なら 横 に 並べて 1 ファイル に します。
+          </div>
+
+          {/* 出す 測点 */}
+          <div className="border rounded">
+            <div className="px-2 py-1 bg-slate-50 border-b flex items-center gap-1 flex-wrap">
+              <span className="text-slate-500">出す 断面</span>
+              <button
+                type="button"
+                onClick={() => setPicked(new Set(sections.map((s) => s.id)))}
+                className="px-1.5 py-0.5 border rounded bg-white text-[11px]"
+              >
+                全部
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setPicked(new Set(sections.filter((s) => s.isControl).map((s) => s.id)))
+                }
+                disabled={!sections.some((s) => s.isControl)}
+                className="px-1.5 py-0.5 border rounded bg-white text-[11px] disabled:opacity-40"
+              >
+                管理測点
+              </button>
+              <button
+                type="button"
+                onClick={() => setPicked(new Set())}
+                className="px-1.5 py-0.5 border rounded bg-white text-[11px]"
+              >
+                なし
+              </button>
+            </div>
+            <ul className="max-h-40 overflow-auto divide-y">
+              {sections.map((s) => {
+                const n =
+                  (showPlanned ? (s.planned.length > 0 ? 1 : 0) : 0) +
+                  (showCurrent ? (s.current.length > 0 ? 1 : 0) : 0) +
+                  (showAsbuilt ? (s.asbuilt.length > 0 ? 1 : 0) : 0)
+                return (
+                  <li key={s.id}>
+                    <label className="flex items-center gap-2 px-2 py-1 hover:bg-slate-50">
+                      <input
+                        type="checkbox"
+                        checked={picked.has(s.id)}
+                        onChange={() => togglePick(s.id)}
+                      />
+                      <span className="font-mono">{s.title}</span>
+                      {s.isControl && (
+                        <span className="text-[10px] px-1 rounded bg-slate-200 text-slate-600">
+                          管理
+                        </span>
+                      )}
+                      <span className="ml-auto text-[10px] text-slate-400">
+                        計画 {s.planned.length} / 現況 {s.current.length} / 出来形{' '}
+                        {s.asbuilt.length}
+                      </span>
+                      {n === 0 && <span className="text-[10px] text-amber-700">中身なし</span>}
+                    </label>
+                  </li>
+                )
+              })}
+            </ul>
           </div>
 
           {/* 用紙 */}
@@ -306,7 +384,7 @@ export function CrossSectionDxfModal({
           </button>
           <button
             onClick={handleExport}
-            disabled={sections.length === 0}
+            disabled={chosen.length === 0}
             className="ml-auto px-3 py-1.5 text-xs rounded bg-blue-600 text-white disabled:opacity-40"
           >
             DXF を 出力
