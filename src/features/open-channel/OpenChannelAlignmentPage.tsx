@@ -1439,6 +1439,12 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
    * 表 と 同じ 並び で 受け取る (計画 なら plannedSectionRaw)。
    */
   editPoints?: MeasuredCrossPoint[] | null
+  /**
+   * 計画 の とき は true。 計画 の 線 は 要素 (幅 + 勾配) から 組み直した もの な ので、
+   * 点列 の 標高 を そのまま 置く と 中心高 の 取り方 の 差 で 線 から ずれる。
+   * 図 に 出て いる 折れ線 の 折点 に そのまま 重ねる。
+   */
+  editOnPath?: boolean
   /** 図 と 表 で 共有 する 選択 */
   selectedPointId?: string | null
   onSelectPoint?: (id: string | null) => void
@@ -1451,6 +1457,7 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
     asbuiltSection,
     show,
     editPoints,
+    editOnPath,
     selectedPointId,
     onSelectPoint,
   },
@@ -1917,11 +1924,14 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
             <g>
               {editPoints.map((p, i) => {
                 const on = selectedPointId === p.id
+                // 計画 は 図 に 出て いる 折れ線 の 折点 に 重ねる (数 が 合う とき)
+                const onPath =
+                  editOnPath && points.length === editPoints.length ? points[i] : null
                 return (
                   <circle
                     key={`ep-${p.id ?? i}`}
-                    cx={tx(p.offset)}
-                    cy={ty(p.elevation - centerHeight)}
+                    cx={tx(onPath ? onPath.x : p.offset)}
+                    cy={ty(onPath ? onPath.y : p.elevation - centerHeight)}
                     r={on ? 6 : 4}
                     fill={on ? '#db2777' : '#fff'}
                     stroke={on ? '#db2777' : '#64748b'}
@@ -6441,13 +6451,20 @@ export function OpenChannelAlignmentPage() {
                         }
                         asbuiltSection={selectedStation?.asbuiltSection ?? null}
                         show={crossLayers}
-                        editPoints={
-                          selectedStation
-                            ? ((selectedStation[
-                                sectionKeyOf(sectionTargetOfEditTarget(editTarget))
-                              ] as MeasuredCrossPoint[] | null) ?? null)
-                            : null
-                        }
+                        editPoints={(() => {
+                          if (!selectedStation) return null
+                          const t = sectionTargetOfEditTarget(editTarget)
+                          const saved =
+                            (selectedStation[sectionKeyOf(t)] as MeasuredCrossPoint[] | null) ??
+                            null
+                          // 現況 は 未保存 の 間 図 に 実測点 が 出て いる ので、
+                          // マーク も その 点列 に 合わせる (線 と 食い違わ せない)
+                          if (t === 'current' && !saved?.length && autoCurrentSection.length > 0) {
+                            return autoCurrentSection
+                          }
+                          return saved
+                        })()}
+                        editOnPath={editTarget === 'plan'}
                         selectedPointId={selectedPointId}
                         onSelectPoint={setSelectedPointId}
                       />
