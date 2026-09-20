@@ -145,22 +145,22 @@ function standardCsToMeasuredPoints(
 /**
  * 点列 を 標準断面 (element 列、percent / vertical) に 逆変換 する。
  * DXF トレース 保存 → station.crossSection 側 の 同期 に 使用。
- *   - offset > 0 は 右側、< 0 は 左側 (中心 に 近い 順 に 並べ、隣接 差 = 1 要素)
- *   - dx = 0 は vertical、dx > 0 は percent (勾配 = dy/dx * 100)
+ *   - offset > 0 は 右側、< 0 は 左側
+ *   - dx = 0 は vertical、それ 以外 は percent (勾配 = dy/dx * 100)
  * 中心 (offset=0) が 点 に 含まれ ない 場合 は 中心 = (0, centerHeight) を 仮想 起点 に する。
+ *
+ * 点列 は 「左外 → 中心 → 右外」 の 並び で 渡って くる 前提 で、その 並び を
+ * 崩さ ない (離れ 順 に 並べ 替え ない)。 オーバーハング (外 へ 出て から 内 へ
+ * 戻る) が ある と 離れ で は 順序 が 決まら ない ため。 内 へ 戻る 区間 は
+ * 幅 が 負 の 要素 に なる (elementStep は 符号 を そのまま 使う)。
  */
 function measuredPointsToStandardCs(
   points: MeasuredCrossPoint[],
   centerHeight: number,
 ): StandardCrossSection {
-  const right = points
-    .filter((p) => p.offset > 1e-9)
-    .slice()
-    .sort((a, b) => a.offset - b.offset)
-  const left = points
-    .filter((p) => p.offset < -1e-9)
-    .slice()
-    .sort((a, b) => b.offset - a.offset)
+  // 右 は 中心 → 外 の 並び。 左 は 外 → 中心 で 入って くる ので 反転 する
+  const right = points.filter((p) => p.offset > 1e-9)
+  const left = points.filter((p) => p.offset < -1e-9).slice().reverse()
   const centerPt = points.find((p) => Math.abs(p.offset) < 1e-9)
   const centerY = centerPt ? centerPt.elevation : centerHeight
 
@@ -172,12 +172,14 @@ function measuredPointsToStandardCs(
     let prevX = 0
     let prevY = centerY
     ordered.forEach((p, i) => {
-      const dx = Math.abs(p.offset - prevX)
+      // 外向き を 正 に した 幅。 内 へ 戻る 区間 は 負 に なり、
+      // elementStep が そのまま 逆向き に 積む ので 形 が 保たれる
+      const dx = (p.offset - prevX) * sideSign
       const dy = p.elevation - prevY
       const id = `pcs-${sideSign > 0 ? 'r' : 'l'}-${i}-${Math.random()
         .toString(36)
         .slice(2, 6)}`
-      if (dx < 1e-9) {
+      if (Math.abs(dx) < 1e-9) {
         els.push({ id, name: '', width: 0, slopeValue: dy, slopeUnit: 'vertical' })
       } else {
         els.push({
@@ -1133,15 +1135,30 @@ function SectionPointsEditor({
   const newId = () => `mp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
   /** 空白行 から の 追加。 離れ 順 に 入れて おく */
+  /**
+   * 点 を 足す。 並べ 替え は しない。
+   * 断面 は オーバーハング (外 へ 出て から 内 へ 戻る) が ある ので、
+   * 離れ 順 に 直して しまう と 形 が 潰れる。 並び は 入力順 が 正。
+   */
   const addPoint = (p: { offset: number; elevation: number; note?: string }) =>
-    commit([...rows, { id: newId(), ...p }].sort((a, b) => a.offset - b.offset))
+    commit([...rows, { id: newId(), ...p }])
+  /** 1 つ 上 / 下 と 入れ替える (入力順 モード) */
+  const movePoint = (idx: number, dir: -1 | 1) => {
+    const to = idx + dir
+    if (to < 0 || to >= rows.length) return
+    const next = [...rows]
+    const t = next[idx]
+    next[idx] = next[to]
+    next[to] = t
+    commit(next)
+  }
   /** 横断幅 以内 の 実測記録 を 表 に 入れる。 既に ある 分 は 足さない */
   const addFromRecords = () => {
     if (!autoPoints || autoPoints.length === 0) return
     const have = new Set(rows.map((p) => p.id))
     const add = autoPoints.filter((p) => !have.has(p.id))
     if (add.length === 0) return
-    commit([...rows, ...add].sort((a, b) => a.offset - b.offset))
+    commit([...rows, ...add])
   }
   const clearRows = () => {
     if (rows.length === 0) return
@@ -1154,13 +1171,29 @@ function SectionPointsEditor({
     commit(rows.map((p) => (p.id === id ? { ...p, ...patch } : p)))
 
   // 中心 / 左 / 右。 左右 は 中心 に 近い 順 (|離れ| の 小さい 順)
+  // 左右 に 分ける とき も 中 の 並び は 入力順 の まま。 |離れ| 順 に 直すと
+  // オーバーハング が 潰れる ので、揃えたい ときは 「離れ順」 を 押して もらう。
   const center = rows.filter((r) => r.offset === 0)
-  const leftRows = rows
-    .filter((r) => r.offset < 0)
-    .sort((a, b) => Math.abs(a.offset) - Math.abs(b.offset))
-  const rightRows = rows
-    .filter((r) => r.offset > 0)
-    .sort((a, b) => Math.abs(a.offset) - Math.abs(b.offset))
+  const leftRows = rows.filter((r) => r.offset < 0)
+  const rightRows = rows.filter((r) => r.offset > 0)
+  /** 入力順 で 1 本 に 並べる か (オーバーハング の 並べ 替え に 使う) */
+  const [orderedView, setOrderedView] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('oc:sectionOrderedView') === '1'
+    } catch {
+      return false
+    }
+  })
+  const toggleOrderedView = () => {
+    setOrderedView((v) => {
+      try {
+        localStorage.setItem('oc:sectionOrderedView', v ? '0' : '1')
+      } catch {
+        /* ignore */
+      }
+      return !v
+    })
+  }
 
   return (
     <div className="h-full flex flex-col gap-1.5">
@@ -1181,9 +1214,19 @@ function SectionPointsEditor({
             </button>
           )}
           <button
+            onClick={toggleOrderedView}
+            className={`px-1.5 py-0.5 text-[11px] border rounded ${
+              orderedView ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-slate-50'
+            }`}
+            title="入力順 で 1 本 に 並べ、↑↓ で 順序 を 入れ替える (オーバーハング 用)"
+          >
+            入力順
+          </button>
+          <button
             onClick={sortRows}
             disabled={rows.length < 2}
             className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50 disabled:opacity-40"
+            title="離れ の 小さい 順 に 並べ 直す (オーバーハング は 潰れる)"
           >
             離れ順
           </button>
@@ -1196,8 +1239,99 @@ function SectionPointsEditor({
           </button>
         </div>
       </div>
-      {/* 中心 から 左 / 右 に 分けて 並べる。 上 が 中心 寄り で、下 に 行く ほど 外。
-          現場 で 読む 順 と 同じ に する ため。 */}
+      {/* 入力順 モード: 1 本 の 並び を そのまま 出し、↑↓ で 入れ替える。
+          断面 が 外 へ 出て から 内 へ 戻る (オーバーハング) とき は、
+          離れ で は 並び が 決まら ない ので これ で 直す。 */}
+      {orderedView ? (
+        <div className="flex-1 min-h-0 overflow-auto">
+          <div className="border rounded overflow-hidden">
+            <div className="px-2 py-1 bg-slate-100 text-[11px] font-semibold text-slate-600">
+              入力順
+              <span className="ml-1 text-slate-400 font-normal">
+                {rows.length} 点 — 上 から 順 に 線 を 引きます
+              </span>
+            </div>
+            {rows.length === 0 ? (
+              <div className="px-2 py-4 text-center text-[11px] text-slate-400">なし</div>
+            ) : (
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 text-slate-600">
+                  <tr>
+                    <th className="px-1 py-1 w-8">#</th>
+                    <th className="px-1 py-1 text-right">離れ (m)</th>
+                    <th className="px-1 py-1 text-right">標高 (m)</th>
+                    <th className="px-1 py-1 text-left">点名</th>
+                    <th className="px-1 py-1 w-14">並べ替え</th>
+                    <th className="px-1 py-1 w-7" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={r.id} className="border-t">
+                      <td className="px-1 py-1 text-center text-slate-400">{i + 1}</td>
+                      <td className="px-1 py-1">
+                        <input
+                          type="number"
+                          step={0.01}
+                          value={r.offset}
+                          onChange={(e) =>
+                            updateRow(r.id, { offset: parseFloat(e.target.value) || 0 })
+                          }
+                          className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
+                        />
+                      </td>
+                      <td className="px-1 py-1">
+                        <ElevationField
+                          value={r.elevation}
+                          onCommit={(v) => updateRow(r.id, { elevation: v ?? 0 })}
+                          className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
+                        />
+                      </td>
+                      <td className="px-1 py-1">
+                        <input
+                          type="text"
+                          value={r.note ?? ''}
+                          onChange={(e) => updateRow(r.id, { note: e.target.value || undefined })}
+                          placeholder={sourceOf(r.id)}
+                          className="w-full px-1 py-0.5 border rounded"
+                        />
+                      </td>
+                      <td className="px-1 py-1 text-center whitespace-nowrap">
+                        <button
+                          onClick={() => movePoint(i, -1)}
+                          disabled={i === 0}
+                          className="px-1 border rounded hover:bg-slate-50 disabled:opacity-30"
+                          title="1 つ 上 へ"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          onClick={() => movePoint(i, 1)}
+                          disabled={i === rows.length - 1}
+                          className="ml-0.5 px-1 border rounded hover:bg-slate-50 disabled:opacity-30"
+                          title="1 つ 下 へ"
+                        >
+                          ↓
+                        </button>
+                      </td>
+                      <td className="px-1 py-1 text-center">
+                        <button
+                          onClick={() => removeRow(r.id)}
+                          className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                          title="この点を削除"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      ) : (
+      /* 中心 から 左 / 右 に 分けて 並べる。 中 の 並び は 入力順 の まま */
       <div className="flex-1 min-h-0 overflow-auto space-y-1.5">
         {center.length > 0 && (
           <SectionRowTable
@@ -1235,6 +1369,7 @@ function SectionPointsEditor({
           </div>
         )}
       </div>
+      )}
     </div>
   )
 }

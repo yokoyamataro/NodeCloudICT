@@ -7,6 +7,9 @@
 // 図 の 基準 は 「中心線 と DL の 交点」。 そこ を 紙 の どこ に 置く か を
 // center で 指定 する。 DL (データムライン) は 断面 の 下 に 引く 水平線 で、
 // 高さ の 読み 始め に なる。
+//
+// 点列 は 渡された 並び の まま 線 に する。 オーバーハング (外 へ 出て から
+// 内 へ 戻る) を 潰さない ため、離れ 順 に は 並べ 替え ない。
 
 import type { DxfEntity } from '@/lib/dxf'
 
@@ -184,9 +187,10 @@ export function buildCrossSectionSheets(
       layer: LAYER.center,
     })
 
-    // 断面 の 線
-    const toPaper = (ps: SheetPoint[]) =>
-      [...ps].sort((a, b) => a.offset - b.offset).map((p) => ({ x: X(p.offset), y: Y(p.z) }))
+    // 断面 の 線。 並べ 替え は しない。
+    // 断面 は オーバーハング (外 へ 出て から 内 へ 戻る) が ある ので、
+    // 離れ 順 に 直す と 形 が 潰れる。 点列 の 並び が そのまま 線 の 順。
+    const toPaper = (ps: SheetPoint[]) => ps.map((p) => ({ x: X(p.offset), y: Y(p.z) }))
     if (opt.showPlanned && sec.planned.length >= 2) {
       polyline(toPaper(sec.planned), LAYER.planned, out)
     }
