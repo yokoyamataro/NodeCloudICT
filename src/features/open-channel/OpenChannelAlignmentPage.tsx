@@ -1255,10 +1255,26 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
   currentSection?: MeasuredCrossPoint[] | null
   /** 出来形 断面 の 測定点列。ある場合 は 別 色 で 折れ線 + マーカー描画。 */
   asbuiltSection?: MeasuredCrossPoint[] | null
+  /**
+   * どの レイヤ を 出す か。 線 が 重なる と 読め ない ので、現況 / 計画 /
+   * 出来形 と、寸法 (勾配・幅) / 点名 の 文字 を それぞれ 消せる ように する。
+   */
+  show?: {
+    planned?: boolean
+    current?: boolean
+    asbuilt?: boolean
+    dimText?: boolean
+    pointText?: boolean
+  }
 }>(function CrossSectionView(
-  { cs, centerHeight, currentGroundHeight, currentSection, asbuiltSection },
+  { cs, centerHeight, currentGroundHeight, currentSection, asbuiltSection, show },
   ref,
 ) {
+  const showPlanned = show?.planned !== false
+  const showCurrent = show?.current !== false
+  const showAsbuilt = show?.asbuilt !== false
+  const showDimText = show?.dimText !== false
+  const showPointText = show?.pointText !== false
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 720, h: 340 })
 
@@ -1429,8 +1445,8 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
           {/* 世界レイヤ: パン/ズームで 変形。断面 本体・折点・寸法ラベル・プレビュー等 */}
           <g transform={`translate(${viewPan.x} ${viewPan.y}) scale(${viewZoom})`}>
 
-          {/* 現在 の 断面 */}
-          {points.length >= 2 && (
+          {/* 現在 の 断面 (計画) */}
+          {showPlanned && points.length >= 2 && (
             <path
               d={points
                 .map((p, i) => `${i === 0 ? 'M' : 'L'} ${tx(p.x)} ${ty(p.y)}`)
@@ -1443,7 +1459,7 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
           )}
 
           {/* 各 折点 */}
-          {points.map((p, i) => (
+          {showPlanned && points.map((p, i) => (
             <circle
               key={`v-${i}`}
               cx={tx(p.x)}
@@ -1459,7 +1475,7 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
               - 線 の 上 (画面 上 側) : 勾配 (2.00% / 1:1.5↑ / H+1.500 等)
               - 線 の 下 (画面 下 側) : 幅 (dW を m 無しで 2.00 と 表記)
               直高 区間 は 幅 0 の ため 下側 は 省略。 */}
-          {(() => {
+          {showDimText && (() => {
             type Seg = {
               from: { x: number; y: number }
               to: { x: number; y: number }
@@ -1535,7 +1551,7 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
               計画高 (y=0) 基準で 折れ線 (茶) + 点マーカー を 描画。
               測定点は 中心軸 (x=0) から 見て 右+ / 左- (WidthStake 同じ 慣習)。
               左計画線 は 描画時 x を 反転してるので、断面座標系 に 合わせるため x = offset。 */}
-          {currentSection && currentSection.length > 0 && centerHeight !== undefined && (() => {
+          {showCurrent && currentSection && currentSection.length > 0 && centerHeight !== undefined && (() => {
             const pts = currentSection
               .map((p) => ({ x: tx(p.offset), y: ty(p.elevation - centerHeight) }))
             const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
@@ -1567,7 +1583,7 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
                 ))}
                 {/* 点名 (note) を 点 の 上 に 添える。 重なって 読めなく なる のを
                     避ける ため、隣 と 近い 点 は 一段 上げて 互い違い に する。 */}
-                {currentSection.map((p, i) => {
+                {showPointText && currentSection.map((p, i) => {
                   if (!p.note) return null
                   const px = tx(p.offset)
                   const prev = currentSection[i - 1]
@@ -1591,7 +1607,7 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
             )
           })()}
           {/* 出来形 断面 (緑系) — 現状 保存だけ、次ステップで 使う */}
-          {asbuiltSection && asbuiltSection.length > 0 && centerHeight !== undefined && (() => {
+          {showAsbuilt && asbuiltSection && asbuiltSection.length > 0 && centerHeight !== undefined && (() => {
             const pts = asbuiltSection
               .map((p) => ({ x: tx(p.offset), y: ty(p.elevation - centerHeight) }))
             const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
@@ -1623,7 +1639,7 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
                 ))}
                 {/* 点名 (note) を 点 の 上 に 添える。 重なって 読めなく なる のを
                     避ける ため、隣 と 近い 点 は 一段 上げて 互い違い に する。 */}
-                {asbuiltSection.map((p, i) => {
+                {showPointText && asbuiltSection.map((p, i) => {
                   if (!p.note) return null
                   const px = tx(p.offset)
                   const prev = asbuiltSection[i - 1]
@@ -3617,6 +3633,37 @@ export function OpenChannelAlignmentPage() {
 
   /** 横断図 の 表示リセット を 表題行 の ボタン から 呼ぶ */
   const crossViewRef = useRef<CrossSectionViewHandle | null>(null)
+  /**
+   * 横断図 に 出す レイヤ。 線 が 重なる と 読め ない ので、現況 / 計画 /
+   * 出来形 と 文字 を それぞれ 消せる ように する。 端末 に 憶える。
+   */
+  const [crossLayers, setCrossLayers] = useState<{
+    planned: boolean
+    current: boolean
+    asbuilt: boolean
+    dimText: boolean
+    pointText: boolean
+  }>(() => {
+    const def = { planned: true, current: true, asbuilt: true, dimText: true, pointText: true }
+    try {
+      const raw = localStorage.getItem('oc:crossLayers')
+      return raw ? { ...def, ...(JSON.parse(raw) as Record<string, boolean>) } : def
+    } catch {
+      return def
+    }
+  })
+  const [crossLayerOpen, setCrossLayerOpen] = useState(false)
+  const toggleCrossLayer = (k: keyof typeof crossLayers) => {
+    setCrossLayers((prev) => {
+      const next = { ...prev, [k]: !prev[k] }
+      try {
+        localStorage.setItem('oc:crossLayers', JSON.stringify(next))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }
 
   // ---- 計算書 (PDF) の 出力
   const [reportBusy, setReportBusy] = useState<AlignmentReportKind | null>(null)
@@ -6025,6 +6072,48 @@ export function OpenChannelAlignmentPage() {
                             ))}
                           </div>
                           <div className="ml-auto flex gap-1">
+                            {/* どの レイヤ を 出す か。 線 が 重なる と 読め ない */}
+                            <div className="relative">
+                              <button
+                                onClick={() => setCrossLayerOpen((v) => !v)}
+                                className={`px-2 py-0.5 text-[11px] border rounded ${
+                                  crossLayerOpen
+                                    ? 'bg-slate-200 border-slate-400'
+                                    : 'bg-white text-slate-600 hover:bg-slate-50'
+                                }`}
+                                title="断面図 に 出す 線 と 文字 を 選ぶ"
+                              >
+                                表示
+                                <span className="ml-1 text-slate-400">
+                                  {Object.values(crossLayers).filter(Boolean).length}/5
+                                </span>
+                              </button>
+                              {crossLayerOpen && (
+                                <div className="absolute bottom-full mb-1 right-0 z-[1400] bg-white border rounded shadow-lg py-1 min-w-[9rem]">
+                                  {(
+                                    [
+                                      ['planned', '計画線'],
+                                      ['current', '現況線'],
+                                      ['asbuilt', '出来形線'],
+                                      ['dimText', '寸法 の 文字'],
+                                      ['pointText', '点名 の 文字'],
+                                    ] as const
+                                  ).map(([k, label]) => (
+                                    <label
+                                      key={k}
+                                      className="flex items-center gap-2 px-3 py-1 text-[11px] hover:bg-slate-50 cursor-pointer"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={crossLayers[k]}
+                                        onChange={() => toggleCrossLayer(k)}
+                                      />
+                                      <span>{label}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                             <button
                               onClick={() => crossViewRef.current?.resetView()}
                               className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-600 hover:bg-slate-50"
@@ -6088,6 +6177,7 @@ export function OpenChannelAlignmentPage() {
                               : null
                         }
                         asbuiltSection={selectedStation?.asbuiltSection ?? null}
+                        show={crossLayers}
                       />
                     </div>
                   </>
