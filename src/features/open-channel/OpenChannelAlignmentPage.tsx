@@ -930,6 +930,8 @@ function SectionRowTable({
   onUpdate,
   onRemove,
   onAdd,
+  selectedPointId,
+  onSelectPoint,
 }: {
   title: string
   /** 空白行 で 追加 する とき の 符号。 center は 追加行 を 出さない */
@@ -939,6 +941,9 @@ function SectionRowTable({
   onUpdate: (id: string, patch: Partial<MeasuredCrossPoint>) => void
   onRemove: (id: string) => void
   onAdd?: (p: { offset: number; elevation: number; note?: string }) => void
+  /** 図 と 共有 する 選択 */
+  selectedPointId?: string | null
+  onSelectPoint?: (id: string | null) => void
 }) {
   // 末尾 の 空白行 の 下書き。 離れ と 標高 が 揃った 時点 で 1 点 に する
   const [dOffset, setDOffset] = useState('')
@@ -986,7 +991,13 @@ function SectionRowTable({
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.id} className="border-t">
+              <tr
+                key={r.id}
+                onClick={() => onSelectPoint?.(selectedPointId === r.id ? null : r.id)}
+                className={`border-t cursor-pointer ${
+                  selectedPointId === r.id ? 'bg-pink-100' : ''
+                }`}
+              >
                 <td className="px-1 py-1">
                   <input
                     type="number"
@@ -1098,6 +1109,8 @@ function SectionPointsEditor({
   points,
   autoPoints,
   onChange,
+  selectedPointId,
+  onSelectPoint,
 }: {
   target: SectionTarget
   stationId: string
@@ -1106,6 +1119,9 @@ function SectionPointsEditor({
   /** 横断幅 以内 の 実測記録 (まだ 表 に 入って いない 分)。 現況 だけ */
   autoPoints?: MeasuredCrossPoint[]
   onChange: (points: MeasuredCrossPoint[]) => void
+  /** 図 と 表 で 共有 する 選択。 行 を 押す と 図 の マーク も 変わる */
+  selectedPointId?: string | null
+  onSelectPoint?: (id: string | null) => void
 }) {
   const [rows, setRows] = useState<MeasuredCrossPoint[]>(() => points.map((p) => ({ ...p })))
   // 測点 / 対象 が 変わったら 読み直す (同じ 断面 を 編集 中 は 触らない)
@@ -1113,11 +1129,16 @@ function SectionPointsEditor({
     setRows(points.map((p) => ({ ...p })))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stationId, target])
-  // 外 (地図ピック / DXF トレース / LandXML 取込) から 点数 が 変わった 場合 も 追従
+  // 外 (地図ピック / DXF トレース / 取込 / 図 の 上 で の 並べ替え) から
+  // 中身 が 変わった 場合 も 追従。 点数 だけ だと 並べ替え を 取り逃す ので
+  // id の 並び で 見る。
+  const pointsKey = points.map((p) => p.id).join('|')
   useEffect(() => {
-    setRows((prev) => (prev.length === points.length ? prev : points.map((p) => ({ ...p }))))
+    setRows((prev) =>
+      prev.map((p) => p.id).join('|') === pointsKey ? prev : points.map((p) => ({ ...p })),
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [points.length])
+  }, [pointsKey])
 
   const commit = (next: MeasuredCrossPoint[]) => {
     setRows(next)
@@ -1267,7 +1288,13 @@ function SectionPointsEditor({
                 </thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <tr key={r.id} className="border-t">
+                    <tr
+                      key={r.id}
+                      onClick={() => onSelectPoint?.(selectedPointId === r.id ? null : r.id)}
+                      className={`border-t cursor-pointer ${
+                        selectedPointId === r.id ? 'bg-pink-100' : 'hover:bg-slate-50'
+                      }`}
+                    >
                       <td className="px-1 py-1 text-center text-slate-400">{i + 1}</td>
                       <td className="px-1 py-1">
                         <input
@@ -1336,6 +1363,8 @@ function SectionPointsEditor({
         {center.length > 0 && (
           <SectionRowTable
             title="中心 (0)"
+            selectedPointId={selectedPointId}
+            onSelectPoint={onSelectPoint}
             side="center"
             rows={center}
             sourceOf={sourceOf}
@@ -1346,6 +1375,8 @@ function SectionPointsEditor({
         <div className="grid grid-cols-2 gap-1.5">
           <SectionRowTable
             title="左 (L)"
+            selectedPointId={selectedPointId}
+            onSelectPoint={onSelectPoint}
             side="left"
             rows={leftRows}
             sourceOf={sourceOf}
@@ -1355,6 +1386,8 @@ function SectionPointsEditor({
           />
           <SectionRowTable
             title="右 (R)"
+            selectedPointId={selectedPointId}
+            onSelectPoint={onSelectPoint}
             side="right"
             rows={rightRows}
             sourceOf={sourceOf}
@@ -1401,8 +1434,26 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
     dimText?: boolean
     pointText?: boolean
   }
+  /**
+   * いま 編集 して いる 対象 の 点列。 図 の 上 で 選べる よう に する ため、
+   * 表 と 同じ 並び で 受け取る (計画 なら plannedSectionRaw)。
+   */
+  editPoints?: MeasuredCrossPoint[] | null
+  /** 図 と 表 で 共有 する 選択 */
+  selectedPointId?: string | null
+  onSelectPoint?: (id: string | null) => void
 }>(function CrossSectionView(
-  { cs, centerHeight, currentGroundHeight, currentSection, asbuiltSection, show },
+  {
+    cs,
+    centerHeight,
+    currentGroundHeight,
+    currentSection,
+    asbuiltSection,
+    show,
+    editPoints,
+    selectedPointId,
+    onSelectPoint,
+  },
   ref,
 ) {
   const showPlanned = show?.planned !== false
@@ -1859,6 +1910,32 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
           >
             右
           </text>
+
+          {/* 編集中 の 点。 図 の 上 で 押して 選べる ように、他 の 線 より 上 に 置く。
+              選んで いる 点 は 色 と 大きさ を 変えて 表 の 行 と 対 に する。 */}
+          {editPoints && editPoints.length > 0 && centerHeight !== undefined && (
+            <g>
+              {editPoints.map((p, i) => {
+                const on = selectedPointId === p.id
+                return (
+                  <circle
+                    key={`ep-${p.id ?? i}`}
+                    cx={tx(p.offset)}
+                    cy={ty(p.elevation - centerHeight)}
+                    r={on ? 6 : 4}
+                    fill={on ? '#db2777' : '#fff'}
+                    stroke={on ? '#db2777' : '#64748b'}
+                    strokeWidth={on ? 2 : 1.2}
+                    style={{ cursor: 'pointer' }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onSelectPoint?.(on ? null : (p.id ?? null))
+                    }}
+                  />
+                )
+              })}
+            </g>
+          )}
 
           {/* 断面点 の 吹き出し。 点名 / 地盤高 / 幅 を 出す。
               枠 から はみ出す 側 は 反対 に 回す。 */}
@@ -3788,6 +3865,26 @@ export function OpenChannelAlignmentPage() {
     }
   })
   const [crossLayerOpen, setCrossLayerOpen] = useState(false)
+  /** 図 と 表 で 共有 する 断面点 の 選択 */
+  const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
+  // 測点 / 対象 を 変えたら 選択 は 外す
+  useEffect(() => {
+    setSelectedPointId(null)
+  }, [selectedStationId, editTarget])
+  /** 選んで いる 点 を 並び の 前 / 後ろ へ 1 つ 動かす */
+  const moveSelectedPoint = (dir: -1 | 1) => {
+    if (!selectedStation || !selectedPointId) return
+    const t = sectionTargetOfEditTarget(editTarget)
+    const key = sectionKeyOf(t)
+    const arr = [...(((selectedStation[key] as MeasuredCrossPoint[] | null) ?? []).map((p) => p))]
+    const i = arr.findIndex((p) => p.id === selectedPointId)
+    const to = i + dir
+    if (i < 0 || to < 0 || to >= arr.length) return
+    const tmp = arr[i]
+    arr[i] = arr[to]
+    arr[to] = tmp
+    handleReplaceStationSection(selectedStation.id, t, arr)
+  }
   const toggleCrossLayer = (k: keyof typeof crossLayers) => {
     setCrossLayers((prev) => {
       const next = { ...prev, [k]: !prev[k] }
@@ -6087,6 +6184,8 @@ export function OpenChannelAlignmentPage() {
                       onChange={(next) =>
                         handleReplaceStationSection(selectedStation.id, t, next)
                       }
+                      selectedPointId={selectedPointId}
+                      onSelectPoint={setSelectedPointId}
                     />
                   )
                 })()
@@ -6207,6 +6306,35 @@ export function OpenChannelAlignmentPage() {
                             ))}
                           </div>
                           <div className="ml-auto flex gap-1">
+                            {/* 図 で 選んだ 点 を 並び の 前 / 後ろ へ。
+                                オーバーハング は 離れ で 順序 が 決まら ない ので、
+                                図 を 見ながら 直せる ように する。 */}
+                            {selectedPointId && (
+                              <span className="flex items-center gap-0.5 mr-1">
+                                <span className="text-[10px] text-pink-700">選択中</span>
+                                <button
+                                  onClick={() => moveSelectedPoint(-1)}
+                                  className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50"
+                                  title="並び の 1 つ 前 へ"
+                                >
+                                  ←前
+                                </button>
+                                <button
+                                  onClick={() => moveSelectedPoint(1)}
+                                  className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50"
+                                  title="並び の 1 つ 後ろ へ"
+                                >
+                                  後→
+                                </button>
+                                <button
+                                  onClick={() => setSelectedPointId(null)}
+                                  className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50 text-slate-500"
+                                  title="選択 を 外す"
+                                >
+                                  解除
+                                </button>
+                              </span>
+                            )}
                             {/* どの レイヤ を 出す か。 線 が 重なる と 読め ない */}
                             <div className="relative">
                               <button
@@ -6313,6 +6441,15 @@ export function OpenChannelAlignmentPage() {
                         }
                         asbuiltSection={selectedStation?.asbuiltSection ?? null}
                         show={crossLayers}
+                        editPoints={
+                          selectedStation
+                            ? ((selectedStation[
+                                sectionKeyOf(sectionTargetOfEditTarget(editTarget))
+                              ] as MeasuredCrossPoint[] | null) ?? null)
+                            : null
+                        }
+                        selectedPointId={selectedPointId}
+                        onSelectPoint={setSelectedPointId}
                       />
                     </div>
                   </>
