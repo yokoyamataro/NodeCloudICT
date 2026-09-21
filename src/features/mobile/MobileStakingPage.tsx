@@ -129,7 +129,7 @@ import { useLandxmlEventsStore } from '@/stores/landxmlEventsStore'
 import { buildChannelOverlay, type ChannelStation } from '@/lib/openChannel/overlayRender'
 import { computeStationVertices } from '@/lib/openChannel/stationVertices'
 import { buildSegments } from '@/lib/openChannel/alignment'
-import { watchSamples } from '@/lib/geolocation'
+import { watchSamples, computeCorrectedElevation } from '@/lib/geolocation'
 import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
 import {
   MobileParcelListPanel,
@@ -2497,24 +2497,18 @@ export function MobileStakingPage() {
 
   const selfElevation = useMemo<number | null>(() => {
     if (currentAlt === null || currentPos === null) return null
-    if (effUseGeoid && geoidGrid) {
-      const hEllip = currentAlt + (currentGeoidalSep ?? 0)
-      const rRow = (geoidGrid.latMax - currentPos[0]) / geoidGrid.dLat
-      const rCol = (currentPos[1] - geoidGrid.lonMin) / geoidGrid.dLon
-      if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
-        const r0 = Math.floor(rRow), c0 = Math.floor(rCol)
-        const r1 = Math.min(r0 + 1, geoidGrid.nrows - 1)
-        const c1 = Math.min(c0 + 1, geoidGrid.ncols - 1)
-        const tr = rRow - r0, tc = rCol - c0
-        const v00 = geoidGrid.values[r0 * geoidGrid.ncols + c0]
-        const v01 = geoidGrid.values[r0 * geoidGrid.ncols + c1]
-        const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
-        const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
-        const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
-        if (Number.isFinite(N)) return hEllip - N - effAntennaHeight - sessionSlide.dz
-      }
-    }
-    return currentAlt - effAntennaHeight - sessionSlide.dz
+    // 統一ヘルパ: 内蔵GPS は 生 altitude、外部GPS + ジオイド ON は MSL(JPGEO2024)、
+    // 外部GPS + ジオイド OFF は 楕円体高 (アンテナ高 引き)。 詳細は geolocation.ts。
+    const z = computeCorrectedElevation({
+      altitude: currentAlt,
+      lat: currentPos[0],
+      lng: currentPos[1],
+      geoidalSep: currentGeoidalSep,
+      antennaHeight: effAntennaHeight,
+      useGeoidCorrection: effUseGeoid,
+      geoidGrid,
+    })
+    return z - sessionSlide.dz
   }, [
     currentAlt,
     currentGeoidalSep,
@@ -3819,19 +3813,19 @@ export function MobileStakingPage() {
     // ブラウザ / Android GPS では geoidalSep が null → altitude を そのまま 楕円体高扱い
     const avgAltRaw = altCount > 0 ? sumAlt / altCount : null
     const avgGeoidalSep = geoidalSepCount > 0 ? sumGeoidalSep / geoidalSepCount : 0
-    const avgEllipsoidal = avgAltRaw !== null ? avgAltRaw + avgGeoidalSep : null
 
-    // 標高 = 楕円体高 − JPGEO2024 のジオイド高 − アンテナ高
-    let geoidN: number | null = null
-    if (effUseGeoid && geoidGrid) {
-      const { lookupGeoid } = await import('@/lib/geoid')
-      geoidN = lookupGeoid(geoidGrid, avgLat, avgLng)
-    }
-    const avgAlt = avgEllipsoidal !== null
-      ? (geoidN !== null
-          ? avgEllipsoidal - geoidN - effAntennaHeight
-          // ジオイド補正 OFF: 受信機の MSL 標高 (avgAltRaw) から アンテナ高だけ
-          : (avgAltRaw !== null ? avgAltRaw - effAntennaHeight : null))
+    // 統一ヘルパで 補正 (内蔵GPS は 生値、外部GPS は 楕円体高 or MSL)。
+    // 保存する Z は 現在の 表示 と 同じ 意味 に する (画面 と 記録 の 食い違い 回避)。
+    const avgAlt = avgAltRaw !== null
+      ? computeCorrectedElevation({
+          altitude: avgAltRaw,
+          lat: avgLat,
+          lng: avgLng,
+          geoidalSep: avgGeoidalSep,
+          antennaHeight: effAntennaHeight,
+          useGeoidCorrection: effUseGeoid,
+          geoidGrid,
+        })
       : null
 
     const { x, y } = converter.toXY(avgLat, avgLng)
@@ -8070,43 +8064,21 @@ export function MobileStakingPage() {
                 Z
                 <span className="text-slate-800 ml-0.5">
                   {(() => {
-                    if (currentAlt == null) return '-'
-                    // 標高計算:
-                    //   1) 受信機の altitude_m の意味を推定
-                    //      Drogger 等: GGA field 9 = 受信機内蔵ジオイド基準の MSL
-                    //                 GGA field 11 = 内蔵ジオイド と 楕円体の差 (geoidalSep)
-                    //                 → 楕円体高 h = altitude + geoidalSep
-                    //      ブラウザ/Android GPS: altitude は 楕円体高 (WGS84)
-                    //                             geoidalSep は null
-                    //   2) JPGEO2024 の N を 楕円体高から引いて 正しい MSL に変換
-                    //   3) アンテナ高を引いて 地表標高
-                    //
-                    // 簡易測定モード では 生値のまま
-                    let H: number | null = null
-                    if (currentPos && effUseGeoid && geoidGrid) {
-                      // 受信機の altitude を 楕円体高 に 戻す
-                      // (Drogger は MSL 送信 → geoidalSep を足す、ブラウザは 既に 楕円体)
-                      const hEllip = currentAlt + (currentGeoidalSep ?? 0)
-                      const rRow = (geoidGrid.latMax - currentPos[0]) / geoidGrid.dLat
-                      const rCol = (currentPos[1] - geoidGrid.lonMin) / geoidGrid.dLon
-                      if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
-                        const r0 = Math.floor(rRow), c0 = Math.floor(rCol)
-                        const r1 = Math.min(r0 + 1, geoidGrid.nrows - 1)
-                        const c1 = Math.min(c0 + 1, geoidGrid.ncols - 1)
-                        const tr = rRow - r0, tc = rCol - c0
-                        const v00 = geoidGrid.values[r0 * geoidGrid.ncols + c0]
-                        const v01 = geoidGrid.values[r0 * geoidGrid.ncols + c1]
-                        const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
-                        const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
-                        const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
-                        if (Number.isFinite(N)) H = hEllip - N - effAntennaHeight
-                      }
-                    } else if (currentPos) {
-                      // ジオイド補正 OFF: 受信機の MSL 標高 から アンテナ高だけ引く
-                      // (Drogger の GGA field 9 は 既に MSL なので JPGEO2024 補正は 不要)
-                      H = currentAlt - effAntennaHeight
-                    }
-                    return (H ?? currentAlt).toFixed(3)
+                    if (currentAlt == null || !currentPos) return '-'
+                    // 統一ヘルパ (詳細 は geolocation.ts):
+                    //   内蔵 GPS → 生 altitude を そのまま
+                    //   外部 GPS + ジオイドON → hEllip - N_JPGEO2024 - アンテナ高 (MSL)
+                    //   外部 GPS + ジオイドOFF → hEllip - アンテナ高 (楕円体高)
+                    const H = computeCorrectedElevation({
+                      altitude: currentAlt,
+                      lat: currentPos[0],
+                      lng: currentPos[1],
+                      geoidalSep: currentGeoidalSep,
+                      antennaHeight: effAntennaHeight,
+                      useGeoidCorrection: effUseGeoid,
+                      geoidGrid,
+                    })
+                    return H.toFixed(3)
                   })()}
                 </span>
               </span>

@@ -24,6 +24,8 @@
 import { Geolocation, type Position } from '@capacitor/geolocation'
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { isMobilityApp } from './appVariant'
+import type { GeoidGrid } from './geoid'
+import { lookupGeoid } from './geoid'
 
 export type LocationSource = 'browser' | 'android_gps' | 'drogger'
 
@@ -52,6 +54,58 @@ export function getActiveSource(): LocationSource {
   // ネイティブ: mobility APK なら Android GPS、ICT APK なら Drogger
   if (isMobilityApp()) return 'android_gps'
   return 'drogger'
+}
+
+/**
+ * 表示標高 [m] を 計算する 統一ヘルパ。 3 系統 で 動作:
+ *
+ *   1) 内蔵 GPS (browser / android_gps): 生 altitude を そのまま 返す
+ *      アンテナ高 補正 も ジオイド 補正 も しない。 内蔵 GPS は 単独測位 の
+ *      数 m 精度 な ので、細かい 補正 は 意味 が ない ため。
+ *
+ *   2) 外部 GPS (drogger) + ジオイド補正 ON:
+ *      楕円体高 hEllip = altitude + geoidalSep
+ *      標高 (MSL) = hEllip − N_JPGEO2024 − antennaHeight
+ *
+ *   3) 外部 GPS (drogger) + ジオイド補正 OFF:
+ *      楕円体高 hEllip = altitude + geoidalSep
+ *      表示 = hEllip − antennaHeight   ← 楕円体高 (アンテナ高 引いた 生値)
+ *
+ *  geoidGrid が null / 範囲外 の 場合 は ON 指定 でも OFF 相当 (楕円体高 で 返す) 。
+ */
+export interface ElevationCorrectionInput {
+  altitude: number
+  lat: number
+  lng: number
+  /** GGA field 11 (Drogger のみ、内蔵 GPS は null) */
+  geoidalSep: number | null
+  antennaHeight: number
+  useGeoidCorrection: boolean
+  geoidGrid: GeoidGrid | null
+}
+
+/**
+ * source を 明示的 に 渡す 版 (呼出側 で 判定済み なら)。 未指定なら
+ * getActiveSource() で 自動判定。
+ */
+export function computeCorrectedElevation(
+  input: ElevationCorrectionInput,
+  source: LocationSource = getActiveSource(),
+): number {
+  // 内蔵 GPS: 生 altitude を 返す (何も 補正 しない)
+  if (source !== 'drogger') return input.altitude
+
+  // 外部 GPS: まず 楕円体高 に 揃える
+  const hEllip = input.altitude + (input.geoidalSep ?? 0)
+
+  if (input.useGeoidCorrection && input.geoidGrid) {
+    const N = lookupGeoid(input.geoidGrid, input.lat, input.lng)
+    if (N != null) {
+      return hEllip - N - input.antennaHeight // MSL (JPGEO2024)
+    }
+  }
+  // ジオイド補正 OFF or ジオイド範囲外: 楕円体高 (アンテナ高 引き)
+  return hEllip - input.antennaHeight
 }
 
 

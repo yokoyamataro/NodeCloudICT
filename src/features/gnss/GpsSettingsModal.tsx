@@ -30,6 +30,7 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useStakingStore } from '@/stores/stakingStore'
 import { CoordinateConverter } from '@/lib/coordinates'
+import { computeCorrectedElevation } from '@/lib/geolocation'
 import { useDroggerConnection } from '@/stores/droggerConnectionStore'
 import {
   DroggerLocation,
@@ -392,31 +393,19 @@ function GpsConnectionTab() {
             <div className="text-[10px] text-slate-500">標高 (地表)</div>
             <div>{(() => {
               if (status.altitude == null || status.lat == null || status.lon == null) return '-'
-              // MobileStakingPage と同じ式:
-              //   楕円体高 h = altitude + geoidalSep
-              //   正 MSL H = h − N_JPGEO2024
-              //   地表 = H − アンテナ高
-              let H: number | null = null
-              if (useGeoidCorrection && geoidGrid) {
-                const hEllip = status.altitude + (status.geoidalSep ?? 0)
-                const rRow = (geoidGrid.latMax - status.lat) / geoidGrid.dLat
-                const rCol = (status.lon - geoidGrid.lonMin) / geoidGrid.dLon
-                if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
-                  const r0 = Math.floor(rRow), c0 = Math.floor(rCol)
-                  const r1 = Math.min(r0 + 1, geoidGrid.nrows - 1)
-                  const c1 = Math.min(c0 + 1, geoidGrid.ncols - 1)
-                  const tr = rRow - r0, tc = rCol - c0
-                  const v00 = geoidGrid.values[r0 * geoidGrid.ncols + c0]
-                  const v01 = geoidGrid.values[r0 * geoidGrid.ncols + c1]
-                  const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
-                  const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
-                  const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
-                  if (Number.isFinite(N)) H = hEllip - N - antennaHeight
-                }
-              } else {
-                H = status.altitude - antennaHeight
-              }
-              return `${(H ?? status.altitude).toFixed(3)}m`
+              // 統一ヘルパ (詳細は geolocation.ts):
+              //   内蔵GPS → 生 altitude、外部GPS + ジオイド ON → MSL(JPGEO2024)、
+              //   外部GPS + ジオイド OFF → 楕円体高 (アンテナ高 引き)
+              const H = computeCorrectedElevation({
+                altitude: status.altitude,
+                lat: status.lat,
+                lng: status.lon,
+                geoidalSep: status.geoidalSep,
+                antennaHeight,
+                useGeoidCorrection,
+                geoidGrid,
+              })
+              return `${H.toFixed(3)}m`
             })()}</div>
           </div>
           {/* 方位 (RMC の COG)。静止中は 値が 定まらないので 薄く 出す */}
@@ -778,17 +767,21 @@ function SurveyCheckSection() {
       const cx = xy.x - slide.dx
       const cy = xy.y - slide.dy
 
-      // 標高。 ジオイド 補正 を 使う 設定 なら 楕円体高 から 引く
+      // 標高。 統一ヘルパで 内蔵/外部GPS + ジオイドON/OFF を 一括判定
       let elev: number | null = null
       if (alt != null) {
-        if (useGeoidCorrection) {
-          const { loadGeoid, correctElevation } = await import('@/lib/geoid')
-          const grid = await loadGeoid()
-          const hEllip = alt + (seps.length > 0 ? avg(seps) : 0)
-          elev = correctElevation(grid, hEllip, lat, lon, antennaHeight)
-        } else {
-          elev = alt - antennaHeight
-        }
+        const grid = useGeoidCorrection
+          ? await (await import('@/lib/geoid')).loadGeoid()
+          : null
+        elev = computeCorrectedElevation({
+          altitude: alt,
+          lat,
+          lng: lon,
+          geoidalSep: seps.length > 0 ? avg(seps) : null,
+          antennaHeight,
+          useGeoidCorrection,
+          geoidGrid: grid,
+        })
       }
       const cz = elev != null ? elev - slide.dz : null
 

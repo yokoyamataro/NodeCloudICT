@@ -20,6 +20,7 @@ import { useSurveyStore } from '@/stores/surveyStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { CoordinateConverter } from '@/lib/coordinates'
+import { computeCorrectedElevation } from '@/lib/geolocation'
 import { parseLandXml, type ParsedSurface } from '@/lib/landxml/parser'
 import { indexTin, queryZ, type TinIndex, type TinSurfaceLike } from '@/lib/landxml/tinInterpolation'
 import { buildTrenchTin } from '@/lib/landxml/surface'
@@ -324,27 +325,20 @@ export function MobileUnderdrainConstructionPage() {
   }, [pos, converter])
 
   // 自己標高（補正済み）
+  // このページは navigator.geolocation ベース (内蔵GPS)。 統一ヘルパは
+  // getActiveSource() が 'drogger' でない限り 生 altitude を そのまま返す ため、
+  // 内蔵GPS 使用時は antennaHeight / useGeoid の 設定は 効かない (仕様)。
   const selfElevation = useMemo<number | null>(() => {
     if (alt === null || pos === null) return null
-    if (useGeoid && geoidGrid) {
-      // インライン補間
-      const rRow = (geoidGrid.latMax - pos[0]) / geoidGrid.dLat
-      const rCol = (pos[1] - geoidGrid.lonMin) / geoidGrid.dLon
-      if (rRow < 0 || rCol < 0 || rRow >= geoidGrid.nrows || rCol >= geoidGrid.ncols) {
-        return alt - antennaHeight
-      }
-      const r0 = Math.floor(rRow), c0 = Math.floor(rCol)
-      const r1 = Math.min(r0 + 1, geoidGrid.nrows - 1)
-      const c1 = Math.min(c0 + 1, geoidGrid.ncols - 1)
-      const tr = rRow - r0, tc = rCol - c0
-      const v00 = geoidGrid.values[r0 * geoidGrid.ncols + c0]
-      const v01 = geoidGrid.values[r0 * geoidGrid.ncols + c1]
-      const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
-      const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
-      const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
-      if (Number.isFinite(N)) return alt - N - antennaHeight
-    }
-    return alt - antennaHeight
+    return computeCorrectedElevation({
+      altitude: alt,
+      lat: pos[0],
+      lng: pos[1],
+      geoidalSep: null, // 内蔵GPS は GGA field 11 なし
+      antennaHeight,
+      useGeoidCorrection: useGeoid,
+      geoidGrid,
+    })
   }, [alt, pos, antennaHeight, useGeoid, geoidGrid])
 
   // TIN 標高（自己位置における）
