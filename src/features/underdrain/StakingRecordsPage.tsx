@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Plus, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { Loader2, Plus, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X, ChevronsLeft, ChevronsRight, Settings2 } from 'lucide-react'
 import { Marker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useFarmStore } from '@/stores/farmStore'
@@ -579,6 +579,8 @@ export function StakingRecordsPage() {
   /** セッション の 追加。 タブ行 の 右端 の ボタン から。 作ったら その タブ に 移る。
    *  名前 は 「NNN{A,B,C}」 の デフォルト (JST 年通算日 + 同日内 連番) */
   const [creatingSet, setCreatingSet] = useState(false)
+  /** セッション 詳細 (名前 / 日付 / 担当者 / 基準局 …) の モーダル 表示 */
+  const [sessionDetailOpen, setSessionDetailOpen] = useState(false)
   const handleCreateSet = async () => {
     if (!currentFarm) return
     setCreatingSet(true)
@@ -1202,12 +1204,23 @@ export function StakingRecordsPage() {
               </button>
             )
           })}
+          {/* 詳細情報 (名前・日付・担当者・基準局・スライド量) は モーダル で 編集。
+              タブ 表示 を 二重 に せず、必要な 時 だけ 開く */}
+          <button
+            type="button"
+            onClick={() => setSessionDetailOpen(true)}
+            className="ml-auto mb-1 shrink-0 px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-50 flex items-center gap-1"
+            title="セッション の 詳細 (名前 / 日付 / 担当者 / スライド量) を 編集"
+          >
+            <Settings2 className="h-3 w-3" />
+            詳細
+          </button>
           <button
             type="button"
             onClick={() => void handleCreateSet()}
             disabled={creatingSet}
-            className="ml-auto mb-1 shrink-0 px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
-            title="セッション を 追加 (測量日 は 今日。 名前 や 担当者 は 下 の 一覧 で)"
+            className="mb-1 shrink-0 px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
+            title="セッション を 追加 (測量日 は 今日、名前 は 自動生成)"
           >
             {creatingSet ? (
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -1218,24 +1231,6 @@ export function StakingRecordsPage() {
           </button>
         </div>
       )}
-
-      {/* 記録セット。 スライド量 は セット ごと に 持つ */}
-      <details className="border-b bg-slate-50">
-        <summary className="px-3 py-1.5 text-xs font-medium text-slate-700 cursor-pointer select-none">
-          セッション
-          <span className="ml-2 text-[11px] text-slate-500 font-normal">
-            {sets.length} 件
-            {(countBySet.get(null) ?? 0) > 0 && (
-              <span className="ml-1 text-amber-700">
-                / 未振り分け {countBySet.get(null)} 点
-              </span>
-            )}
-          </span>
-        </summary>
-        <div className="px-3 pb-3">
-          <SurveyRecordSetsPanel farmId={currentFarm?.id ?? null} countBySet={countBySet} />
-        </div>
-      </details>
 
       {/* 選択行 の 座標管理 登録 バー。 左端 に スライド量 (X/Y/Z) 入力 を 配置 */}
       <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 text-xs flex-wrap">
@@ -2086,6 +2081,45 @@ export function StakingRecordsPage() {
           </div>
         )
       })()}
+
+      {/* セッション 詳細 モーダル (名前 / 日付 / 担当者 / 基準局 / スライド量) */}
+      {sessionDetailOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-[3000] flex items-center justify-center p-4"
+          onClick={() => setSessionDetailOpen(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 px-3 py-2 border-b">
+              <Settings2 className="h-4 w-4 text-slate-500" />
+              <h3 className="text-sm font-semibold">セッション 詳細</h3>
+              <span className="text-[11px] text-slate-500">
+                {sets.length} 件
+                {(countBySet.get(null) ?? 0) > 0 && (
+                  <span className="ml-1 text-amber-700">
+                    / 未振り分け {countBySet.get(null)} 点
+                  </span>
+                )}
+              </span>
+              <button
+                onClick={() => setSessionDetailOpen(false)}
+                className="ml-auto p-1 hover:bg-slate-100 rounded"
+                title="閉じる"
+              >
+                <X className="h-4 w-4 text-slate-500" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-auto p-3">
+              <SurveyRecordSetsPanel
+                farmId={currentFarm?.id ?? null}
+                countBySet={countBySet}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
