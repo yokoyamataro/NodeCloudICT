@@ -163,8 +163,9 @@ export function parseRegistryCsv(text: string): RegistryCsvParseResult {
         kind: cols[2] ?? '',
         status: cols[3] ?? '',
         location: cols[4] ?? '',
-        parcelNumber: cols[5] ?? '',
-        realEstateNumber: cols[6] ?? '',
+        // 地番 / 不動産番号 は 全角数字 を 半角 に 直す
+        parcelNumber: fw2hw(cols[5] ?? ''),
+        realEstateNumber: fw2hw(cols[6] ?? ''),
         extra: cols[10] ?? '',
       }
       continue
@@ -183,9 +184,10 @@ export function parseRegistryCsv(text: string): RegistryCsvParseResult {
     if ((m = RE_DISPLAY.exec(kindText))) {
       ensure(seq).displayHistories.push({
         order: parseInt(m[1], 10) || 0,
-        parcelNumber: cols[2] ?? '',
+        // 地番 / 地積 は 全角数字 を 半角 に 直す
+        parcelNumber: fw2hw(cols[2] ?? ''),
         landCategory: cols[4] ?? '',
-        areaText: cols[5] ?? '',
+        areaText: fw2hw(cols[5] ?? ''),
         reason: cols[6] ?? '',
         causeDate: cols[7] ?? '',
       })
