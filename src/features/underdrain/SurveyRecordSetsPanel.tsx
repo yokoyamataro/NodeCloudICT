@@ -71,7 +71,7 @@ export function SurveyRecordSetsPanel({
     const n = countBySet.get(s.id) ?? 0
     const msg =
       n > 0
-        ? `「${setLabel(s)}」を 消します。 この セット の 記録 ${n} 点 は 未振り分け に なります (記録 自体 は 残ります)。 よろしいですか？`
+        ? `「${setLabel(s)}」を 消します。 この セッション の 記録 ${n} 点 は 未振り分け に なります (記録 自体 は 残ります)。 よろしいですか？`
         : `「${setLabel(s)}」を 消します。 よろしいですか？`
     if (!window.confirm(msg)) return
     await deleteSet(s.id)
@@ -82,8 +82,8 @@ export function SurveyRecordSetsPanel({
   return (
     <div className="space-y-2 text-xs">
       <div className="text-slate-500">
-        実測 の 記録セット。 スライド量 は セット ごと に 持ちます。
-        別 の 日 / 別 の 担当者 / 基準局 や 設定 を 変えた ときは 新しい セット に します。
+        セッション (実測記録の 束)。 スライド量 は セッション ごと に 持ちます。
+        別 の 日 / 別 の 担当者 / 基準局 や 設定 を 変えた ときは 新しい セッション に します。
       </div>
 
       {unassigned > 0 && (
@@ -99,7 +99,7 @@ export function SurveyRecordSetsPanel({
         </div>
       ) : sets.length === 0 ? (
         <div className="text-slate-400">
-          セットがありません。 タブ の 右端 の 「+ セット」 から 作ります。
+          セッションがありません。 タブ の 右端 の 「+ セッション」 から 作ります。
         </div>
       ) : (
         <ul className="border rounded divide-y">
@@ -142,7 +142,7 @@ export function SurveyRecordSetsPanel({
                     type="button"
                     onClick={() => void handleDelete(s)}
                     className="p-0.5 text-slate-400 hover:text-red-600"
-                    title="このセットを削除"
+                    title="このセッションを削除"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -234,7 +234,7 @@ export function SurveyRecordSetsPanel({
                     {s.isDefault && (
                       <div className="flex items-center gap-1 text-[11px] text-amber-700">
                         <Check className="h-3 w-3" />
-                        新しい記録はこのセットに入ります
+                        新しい記録はこのセッションに入ります
                       </div>
                     )}
                   </div>

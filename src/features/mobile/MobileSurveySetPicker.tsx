@@ -70,9 +70,9 @@ export function MobileSurveySetPicker({
       <div className="bg-white w-full rounded-t-xl shadow-xl max-h-[85vh] flex flex-col">
         <div className="px-3 py-2 border-b flex items-center gap-2 shrink-0">
           <div className="min-w-0">
-            <div className="text-sm font-semibold">実測記録セット を 選ぶ</div>
+            <div className="text-sm font-semibold">セッション を 選ぶ</div>
             <div className="text-[11px] text-slate-500">
-              スライド量 は セット ごと。 日 や 担当者、基準局 が 変わった ら 新しく。
+              スライド量 は セッション ごと。 日 や 担当者、基準局 が 変わった ら 新しく。
             </div>
           </div>
           <button
@@ -118,7 +118,7 @@ export function MobileSurveySetPicker({
           )}
 
           <div className="border rounded p-2 space-y-2">
-            <div className="text-xs font-semibold text-slate-700">新しい セット で 始める</div>
+            <div className="text-xs font-semibold text-slate-700">新しい セッション で 始める</div>
             <label className="flex items-center gap-2 text-xs">
               <span className="text-slate-500 w-12 shrink-0">名前</span>
               <input
@@ -145,7 +145,7 @@ export function MobileSurveySetPicker({
               className="w-full flex items-center justify-center gap-1 px-3 py-2 border rounded bg-white text-slate-700 disabled:opacity-40"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              新しい セット を 作って 開始
+              新しい セッション を 作って 開始
             </button>
             <div className="text-[11px] text-slate-400">
               測量日 は 今日。 基準局 や スライド量 は 後 から 直せます。
@@ -159,7 +159,7 @@ export function MobileSurveySetPicker({
             disabled={!picked || busy}
             className="w-full px-3 py-2.5 rounded bg-blue-600 text-white font-medium disabled:opacity-40"
           >
-            この セット で 開始
+            この セッション で 開始
           </button>
         </div>
       </div>

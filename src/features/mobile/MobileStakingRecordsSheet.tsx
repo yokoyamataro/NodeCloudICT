@@ -264,14 +264,14 @@ export function MobileStakingRecordsSheet({
             onClick={() => void handleCreateSet()}
             disabled={creatingSet}
             className="ml-auto mb-1 shrink-0 px-2 py-0.5 text-xs border rounded bg-white text-slate-600 disabled:opacity-40 flex items-center gap-1"
-            title="記録セット を 追加 (測量日 は 今日)"
+            title="セッション を 追加 (測量日 は 今日)"
           >
             {creatingSet ? (
               <Loader2 className="h-3 w-3 animate-spin" />
             ) : (
               <Plus className="h-3 w-3" />
             )}
-            セット
+            セッション
           </button>
         </div>
         {/* スライド量。 セット を 選んで いれば その セット、それ 以外 は 工区 の 既定。
@@ -324,7 +324,7 @@ export function MobileStakingRecordsSheet({
       <div className="flex-1 min-h-0 overflow-auto">
         {shown.length === 0 ? (
           <div className="py-8 text-center text-sm text-slate-500">
-            {loading ? '読み込み中…' : 'この セット の 実測記録 は ありません'}
+            {loading ? '読み込み中…' : 'この セッション の 実測記録 は ありません'}
           </div>
         ) : (
           <table className="min-w-full w-max text-[11px]">
@@ -451,7 +451,7 @@ export function MobileStakingRecordsSheet({
       </div>
 
       <div className="px-3 py-1.5 border-t bg-slate-50 text-[11px] text-slate-500 shrink-0">
-        セット の 追加 や 記録 の 付け替え、削除 は PC の 「実測記録」 画面 から。
+        セッション の 追加 や 記録 の 付け替え、削除 は PC の 「実測記録」 画面 から。
       </div>
     </div>
   )

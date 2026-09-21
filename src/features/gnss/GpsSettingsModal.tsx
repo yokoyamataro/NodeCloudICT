@@ -553,11 +553,11 @@ function SurveySetBar() {
   const [creating, setCreating] = useState(false)
   const active = sets.find((s) => s.id === activeSetId) ?? null
 
-  /** セット を 追加 して、そのまま 作業中 に する。 名前 は その場 で 聞く */
+  /** セッション を 追加 して、そのまま 作業中 に する。 名前 は その場 で 聞く */
   const handleCreate = async () => {
     if (!farmId) return
     const today = new Date().toISOString().slice(0, 10)
-    const name = window.prompt('記録セット の 名前 (空 なら 測量日 と 担当者 で 表示)', '')
+    const name = window.prompt('セッション名 (空 なら 測量日 と 担当者 で 表示)', '')
     // キャンセル は 作らない。 空文字 の OK は 名前なし で 作る
     if (name === null) return
     setCreating(true)
@@ -572,17 +572,17 @@ function SurveySetBar() {
     }
   }
 
-  /** 選んで いる セット の 名前 を 変える */
+  /** 選んで いる セッション の 名前 を 変える */
   const handleRename = async () => {
     if (!active) return
-    const next = window.prompt('記録セット の 名前', active.name ?? '')
+    const next = window.prompt('セッション名', active.name ?? '')
     if (next === null) return
     await updateSet(active.id, { name: next.trim() || null })
   }
 
   return (
     <div className="border-t pt-3 space-y-2">
-      <div className="text-slate-700 font-semibold">補正値 と 実測セット</div>
+      <div className="text-slate-700 font-semibold">補正値 と セッション</div>
 
       <div className="flex items-center gap-2">
         <span className="w-16 shrink-0 text-slate-500">補正値</span>
@@ -605,12 +605,12 @@ function SurveySetBar() {
       <div className="text-[10px] text-slate-500 pl-16">
         実測 − 補正値 = 設計 の 土俵。 入れる と 実測 の 表示 も、ターゲット の
         誘導 と 比高 も 補正後 の 値 に なります (X=北 / Y=東、単位 m)。
-        {!active && ' セット 未選択 の 間 は 工区 の 既定 が 効きます。'}
+        {!active && ' セッション 未選択 の 間 は 工区 の 既定 が 効きます。'}
       </div>
 
-      {/* 補正値 は セット ごと な ので、対象 の セット は すぐ 下 に */}
+      {/* 補正値 は セッション ごと な ので、対象 の セッション は すぐ 下 に */}
       <div className="flex items-center gap-2">
-        <span className="w-16 shrink-0 text-slate-500">セット</span>
+        <span className="w-16 shrink-0 text-slate-500">セッション</span>
         <select
           value={activeSetId ?? ''}
           onChange={(e) => {
@@ -632,7 +632,7 @@ function SurveySetBar() {
           onClick={() => void handleRename()}
           disabled={!active}
           className="shrink-0 px-2 py-1.5 border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-30"
-          title="この セット の 名前 を 変える"
+          title="この セッション の 名前 を 変える"
           aria-label="名前を変える"
         >
           <Pencil className="h-3 w-3" />
@@ -642,7 +642,7 @@ function SurveySetBar() {
           onClick={() => void handleCreate()}
           disabled={creating}
           className="shrink-0 px-2 py-1.5 border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
-          title="記録セット を 追加 (測量日 は 今日)。 作った セット が すぐ 作業中 に なる"
+          title="セッション を 追加 (測量日 は 今日)。 作った セッション が すぐ 作業中 に なる"
         >
           {creating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
           追加
@@ -832,7 +832,7 @@ function SurveyCheckSection() {
       <div className="text-[10px] text-slate-500">
         既知 の 点 の 上 で {CHECK_SECONDS} 秒 観測 し、補正実測値 と 元 の 座標 の 差 を
         見ます。 水平 {(CHECK_TOL_H * 100).toFixed(0)}cm / 高さ {(CHECK_TOL_V * 100).toFixed(0)}cm
-        以内 なら 正常。 結果 は 作業中 の セット に 残り ます。
+        以内 なら 正常。 結果 は 作業中 の セッション に 残り ます。
       </div>
       <label className="flex items-center gap-2">
         <span className="w-16 shrink-0 text-slate-500">
@@ -949,7 +949,7 @@ function GnssSettingsSection() {
           「N↑ / 進行↑」 ボタン に 一本化 した。 静止中 の 向き に 要る
           方位センサー の 許可 を その 場 で 求められる ため。 */}
 
-      {/* 実測 の 記録セット と 補正値 */}
+      {/* セッション と 補正値 */}
       <SurveySetBar />
 
       {/* 補正値 が 効いて いる か を 既知点 で 確かめる */}

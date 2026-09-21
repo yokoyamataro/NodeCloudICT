@@ -685,7 +685,7 @@ export function StakingRecordsPage() {
     const label = setId
       ? (name && name.trim() !== ''
           ? name
-          : (sets.find((x) => x.id === setId)?.measuredOn ?? 'セット'))
+          : (sets.find((x) => x.id === setId)?.measuredOn ?? 'セッション'))
       : '未振り分け'
     setSetMoveStatus(`${ids.length} 件 を 「${label}」 に 移しました`)
   }
@@ -1206,14 +1206,14 @@ export function StakingRecordsPage() {
             onClick={() => void handleCreateSet()}
             disabled={creatingSet}
             className="ml-auto mb-1 shrink-0 px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
-            title="記録セット を 追加 (測量日 は 今日。 名前 や 担当者 は 下 の 一覧 で)"
+            title="セッション を 追加 (測量日 は 今日。 名前 や 担当者 は 下 の 一覧 で)"
           >
             {creatingSet ? (
               <Loader2 className="h-3 w-3 animate-spin" />
             ) : (
               <Plus className="h-3 w-3" />
             )}
-            セット
+            セッション
           </button>
         </div>
       )}
@@ -1221,9 +1221,9 @@ export function StakingRecordsPage() {
       {/* 記録セット。 スライド量 は セット ごと に 持つ */}
       <details className="border-b bg-slate-50">
         <summary className="px-3 py-1.5 text-xs font-medium text-slate-700 cursor-pointer select-none">
-          記録セット
+          セッション
           <span className="ml-2 text-[11px] text-slate-500 font-normal">
-            {sets.length} セット
+            {sets.length} 件
             {(countBySet.get(null) ?? 0) > 0 && (
               <span className="ml-1 text-amber-700">
                 / 未振り分け {countBySet.get(null)} 点
@@ -1295,7 +1295,7 @@ export function StakingRecordsPage() {
           選択 {selectedGroupKeys.size} 件 →
         </span>
         <label className="flex items-center gap-1">
-          <span className="text-slate-500">セットへ移動</span>
+          <span className="text-slate-500">セッションへ移動</span>
           <select
             value=""
             disabled={selectedGroupKeys.size === 0 || sets.length === 0}
@@ -1310,7 +1310,7 @@ export function StakingRecordsPage() {
               e.currentTarget.value = ''
             }}
             className="px-1 py-1 border rounded bg-white disabled:opacity-40"
-            title="選択中の点の実測記録を、この記録セットへ移す"
+            title="選択中の点の実測記録を、このセッションへ移す"
           >
             <option value="">選択…</option>
             {sets.map((st) => (
@@ -1377,7 +1377,7 @@ export function StakingRecordsPage() {
                 <th
                   className="px-2 py-2 border-b border-r text-center w-8"
                   rowSpan={2}
-                  title="記録セット を 移す 行 を 選択"
+                  title="セッション を 移す 行 を 選択"
                 >
                   <input
                     type="checkbox"
@@ -1542,7 +1542,7 @@ export function StakingRecordsPage() {
                         return (
                           <span
                             className="ml-1 text-[10px] text-slate-500"
-                            title="記録セット"
+                            title="セッション"
                           >
                             {st ? setLabel(st) : '未振り分け'}
                           </span>

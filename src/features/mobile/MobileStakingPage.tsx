@@ -3681,17 +3681,23 @@ export function MobileStakingPage() {
     recStartMsRef.current = Date.now()
     recEndMsRef.current = recStartMsRef.current + avgSeconds * 1000
 
-    // 1 サンプルあたりのおおよその間隔（GPS の watchPosition は機種で揺れるが
-    // ハイエンドで概ね 1 秒に 1 回）。棄却 1 回につきこの時間だけ終了時刻を後ろへ。
+    // 記録間隔 は 1 サンプル / 秒 (下の SAMPLE_INTERVAL_MS で throttle)。
+    // 棄却 1 回 に つき この時間 だけ 終了時刻 を 後ろ へ 延長 する。
     const REJECT_EXTEND_MS = 1000
 
     // watchSamples は async。startup 中に cleanup が来るケースを cancelled で守る
     let recHandle: { clear: () => void } | null = null
     let recCancelled = false
+    // 1 秒 1 サンプル に throttle (NMEA が 10Hz でも 記録は 1Hz)。
+    // 前回 保存した サンプル の 時刻 (Date.now())。 SAMPLE_INTERVAL_MS 未満 は 破棄。
+    const SAMPLE_INTERVAL_MS = 1000
+    let lastAcceptMs = 0
     void (async () => {
       const h = await watchSamples(
         (s, err) => {
           if (err || !s) return
+          const now = Date.now()
+          if (now - lastAcceptMs < SAMPLE_INTERVAL_MS) return
           const sample = {
             lat: s.lat,
             lng: s.lon,
@@ -3714,13 +3720,14 @@ export function MobileStakingPage() {
             const avgLng = sumLng / accepted.length
             const d = distanceMeters({ lat: sample.lat, lng: sample.lng }, { lat: avgLat, lng: avgLng })
             if (d > 0.03) {
-              // 棄却して時間を延ばす
+              // 棄却して時間を延ばす (throttle 内 に カウント しない ため lastAcceptMs は 更新しない)
               recEndMsRef.current += REJECT_EXTEND_MS
               setRejectedCount((n) => n + 1)
               return
             }
           }
           accepted.push(sample)
+          lastAcceptMs = now
         },
         { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
       )
@@ -4481,7 +4488,7 @@ export function MobileStakingPage() {
           className={`shrink-0 relative px-2 py-1.5 rounded font-medium ${
             showStakingRecords ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
           }`}
-          title="実測一覧（記録セットごとに確認）"
+          title="実測一覧（セッションごとに確認）"
         >
           実測
         </button>
