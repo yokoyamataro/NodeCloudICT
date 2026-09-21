@@ -212,8 +212,12 @@ class DroggerBleManager(private val context: Context) {
         val copy = data.copyOf(len)
         handler.post {
             if (gatt == null || writeChar == null) return@post
-            // ATT ヘッダ 3 バイトを 引いた 分が 1 回で 送れる 最大長
-            val max = (mtu - 3).coerceAtLeast(20)
+            // ATT ヘッダ 3 バイトを 引いた 分が 1 回で 送れる 最大長。
+            // ただし Bluetooth 仕様 の 最大属性値長 (MAX_ATTRIBUTE_VALUE_LENGTH) は
+            // 512 バイト。 requestMtu(517) が 通った 端末 (Pixel 10 / Android 16 等) では
+            // mtu-3=514 で this を 超え、Android 14+ の writeCharacteristic が
+            // IllegalArgumentException を throw して アプリ が 落ちる。 上限 512 で 頭打ち。
+            val max = (mtu - 3).coerceIn(20, 512)
             var off = 0
             while (off < copy.size) {
                 val end = minOf(off + max, copy.size)
