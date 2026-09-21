@@ -74,7 +74,58 @@ function toSet(r: Record<string, unknown>): SurveyRecordSet {
 export function setLabel(s: SurveyRecordSet): string {
   if (s.name && s.name.trim() !== '') return s.name
   const parts = [s.measuredOn ?? '', s.operator ?? ''].filter(Boolean)
-  return parts.length > 0 ? parts.join(' ') : '(無題のセット)'
+  return parts.length > 0 ? parts.join(' ') : '(無題のセッション)'
+}
+
+/**
+ * JST の 「年通算日 (1月1日=001)」 3 桁 を 返す。 例: 1月30日 → '030'
+ */
+export function jstDayOfYear(now: Date = new Date()): string {
+  // JST = UTC + 9h
+  const jstMs = now.getTime() + 9 * 60 * 60 * 1000
+  const jst = new Date(jstMs)
+  // Date は UTC 前提 で 加算 済み な ので 各 get は UTC 系 で 呼ぶ
+  const year = jst.getUTCFullYear()
+  const jan1 = Date.UTC(year, 0, 1)
+  const day = Math.floor((jstMs - jan1) / (24 * 60 * 60 * 1000)) + 1
+  return String(day).padStart(3, '0')
+}
+
+/** JST 基準 の 「今日 (YYYY-MM-DD)」 */
+export function jstTodayIso(now: Date = new Date()): string {
+  const jstMs = now.getTime() + 9 * 60 * 60 * 1000
+  const jst = new Date(jstMs)
+  const y = jst.getUTCFullYear()
+  const m = String(jst.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(jst.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+/**
+ * 既存 の セッション 群 から 「今日 (JST)」の 次 の セッション 名 を 生成 する。
+ *   NNN{A,B,C,...}   例: 030A / 030B / 030C
+ * 既存 の 同日 セッション 数 に 応じて A → Z → AA → AB ... と 続く。
+ * 26 を 超え たら 2 文字 表記 に 拡張 (ほぼ 発生 し ない が 一応)。
+ */
+export function generateDefaultSessionName(
+  existingSets: SurveyRecordSet[],
+  now: Date = new Date(),
+): string {
+  const today = jstTodayIso(now)
+  const day = jstDayOfYear(now)
+  const sameDay = existingSets.filter((s) => s.measuredOn === today)
+  const suffix = alphaSuffix(sameDay.length) // 既存 N 個 → 次 は N+1 番目
+  return `${day}${suffix}`
+}
+
+/** 0-indexed 番号 → A/B/.../Z/AA/AB/... */
+function alphaSuffix(index: number): string {
+  const A = 'A'.charCodeAt(0)
+  if (index < 26) return String.fromCharCode(A + index)
+  // 27 番目 以降 は 2 文字。 index=26 → AA、27 → AB, ...
+  const first = Math.floor(index / 26) - 1
+  const second = index % 26
+  return String.fromCharCode(A + first) + String.fromCharCode(A + second)
 }
 
 interface State {

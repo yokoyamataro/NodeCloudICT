@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Plus, X } from 'lucide-react'
 import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
 import { deriveRow, groupStakingRecords, type StakingGroup } from '@/lib/stakingGroups'
-import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
+import { setLabel, useSurveySetStore, generateDefaultSessionName, jstTodayIso } from '@/stores/surveySetStore'
 import {
   fetchSurveySlide,
   saveSurveySlide,
@@ -182,14 +182,16 @@ export function MobileStakingRecordsSheet({
   const tabSet = tab === 'none' ? null : (sets.find((s) => s.id === tab) ?? null)
   const tabSlide: SurveySlide = tabSet?.slide ?? farmSlide
 
-  /** セット の 追加。 作ったら その タブ に 移る */
+  /** セッション の 追加。 作ったら その タブ に 移る。 名前 は 「NNN{A,B,C}」 の
+   *  デフォルト を 与える (JST 年通算日 + 同日内 の 連番) */
   const createSet = useSurveySetStore((s) => s.createSet)
   const [creatingSet, setCreatingSet] = useState(false)
   const handleCreateSet = async () => {
     setCreatingSet(true)
     try {
-      const today = new Date().toISOString().slice(0, 10)
-      const row = await createSet(farmId, { measuredOn: today })
+      const today = jstTodayIso()
+      const name = generateDefaultSessionName(sets)
+      const row = await createSet(farmId, { measuredOn: today, name })
       if (row) setTab(row.id)
     } finally {
       setCreatingSet(false)

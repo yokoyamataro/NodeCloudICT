@@ -9,7 +9,7 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { CoordinateConverter, COORDINATE_TYPE_NAMES, type CoordinateType } from '@/lib/coordinates'
 import { supabase } from '@/lib/supabase'
-import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
+import { setLabel, useSurveySetStore, generateDefaultSessionName, jstTodayIso } from '@/stores/surveySetStore'
 import { deriveRow, groupStakingRecords, type StakingGroup } from '@/lib/stakingGroups'
 
 import { SurveyRecordSetsPanel } from './SurveyRecordSetsPanel'
@@ -576,15 +576,16 @@ export function StakingRecordsPage() {
    * それ以外 は セット の id。 セット を 分けた 以上、既定 は 1 つ ずつ 見る 方 が
    * 分かり やすい ので、既定 の セット を 初期選択 に する。
    */
-  /** セット の 追加。 タブ行 の 右端 の ボタン から。 作ったら その タブ に 移る */
+  /** セッション の 追加。 タブ行 の 右端 の ボタン から。 作ったら その タブ に 移る。
+   *  名前 は 「NNN{A,B,C}」 の デフォルト (JST 年通算日 + 同日内 連番) */
   const [creatingSet, setCreatingSet] = useState(false)
   const handleCreateSet = async () => {
     if (!currentFarm) return
     setCreatingSet(true)
     try {
-      // 既定 は 「今日」。 名前 や 担当者 は 下 の 一覧 で 入れて もらう
-      const today = new Date().toISOString().slice(0, 10)
-      const row = await createSet(currentFarm.id, { measuredOn: today })
+      const today = jstTodayIso()
+      const name = generateDefaultSessionName(sets)
+      const row = await createSet(currentFarm.id, { measuredOn: today, name })
       if (row) setSetTab(row.id)
     } finally {
       setCreatingSet(false)

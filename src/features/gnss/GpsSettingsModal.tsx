@@ -24,7 +24,7 @@ import {
   WifiOff,
 } from 'lucide-react'
 import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
-import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
+import { setLabel, useSurveySetStore, generateDefaultSessionName, jstTodayIso } from '@/stores/surveySetStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -137,7 +137,7 @@ export function GpsSettingsModal({ open, onClose }: Props) {
         <div className="flex border-b bg-slate-50 text-[11px]">
           <TabButton active={tab === 'gps'} onClick={() => setTab('gps')} icon={<Wifi className="h-3 w-3" />} label="GPS接続" />
           <TabButton active={tab === 'ntrip'} onClick={() => setTab('ntrip')} icon={<Radio className="h-3 w-3" />} label="NTRIP接続" />
-          <TabButton active={tab === 'measure'} onClick={() => setTab('measure')} icon={<Satellite className="h-3 w-3" />} label="計測設定" />
+          <TabButton active={tab === 'measure'} onClick={() => setTab('measure')} icon={<Satellite className="h-3 w-3" />} label="セッション設定" />
         </div>
 
         <div className="p-4">
@@ -553,16 +553,20 @@ function SurveySetBar() {
   const [creating, setCreating] = useState(false)
   const active = sets.find((s) => s.id === activeSetId) ?? null
 
-  /** セッション を 追加 して、そのまま 作業中 に する。 名前 は その場 で 聞く */
+  /** セッション を 追加 して、そのまま 作業中 に する。 デフォルト名 (NNN{A,B,C})
+   *  を 提案 し、必要 なら その場 で リネーム できる。 */
   const handleCreate = async () => {
     if (!farmId) return
-    const today = new Date().toISOString().slice(0, 10)
-    const name = window.prompt('セッション名 (空 なら 測量日 と 担当者 で 表示)', '')
-    // キャンセル は 作らない。 空文字 の OK は 名前なし で 作る
+    const today = jstTodayIso()
+    const suggested = generateDefaultSessionName(sets)
+    const name = window.prompt('セッション名', suggested)
     if (name === null) return
     setCreating(true)
     try {
-      const row = await createSet(farmId, { measuredOn: today, name: name.trim() || null })
+      const row = await createSet(farmId, {
+        measuredOn: today,
+        name: name.trim() || suggested,
+      })
       if (row) {
         setActiveSetId(row.id)
         void touchSet(row.id, { start: true })
@@ -708,11 +712,17 @@ function SurveyCheckSection() {
   const sets = useSurveySetStore((s) => s.sets)
   const activeSetId = useSurveySetStore((s) => s.activeSetId)
   const touchSet = useSurveySetStore((s) => s.touchSet)
+  const updateSet = useSurveySetStore((s) => s.updateSet)
   const addRecord = useStakingStore((s) => s.addRecord)
   const antennaHeight = useGnssSettingsStore((s) => s.antennaHeight)
   const useGeoidCorrection = useGnssSettingsStore((s) => s.useGeoidCorrection)
 
-  const slide = sets.find((s) => s.id === activeSetId)?.slide ?? { dx: 0, dy: 0, dz: 0 }
+  const activeSet = sets.find((s) => s.id === activeSetId) ?? null
+  const slide = activeSet?.slide ?? { dx: 0, dy: 0, dz: 0 }
+  // 自動補正 対象 軸 (XYZ / XYのみ / Zのみ)
+  const [autoAxis, setAutoAxis] = useState<'xyz' | 'xy' | 'z'>('xyz')
+  const [autoBusy, setAutoBusy] = useState(false)
+  const [autoStatus, setAutoStatus] = useState<string | null>(null)
   // 基準点 が 無い 工区 も ある ので、その ときは 全部 から 選ばせる
   const controls = coordinates.filter((c) => c.type === 'control')
   const pickable = controls.length > 0 ? controls : coordinates
@@ -889,10 +899,86 @@ function SurveyCheckSection() {
           </div>
           <div className="text-[10px] opacity-80">{result.n} エポック の 平均</div>
           {!result.ok && (
-            <div className="text-[11px]">
-              補正値 を 見直す か、基準点 の 座標 / アンテナ高 を 確かめて ください。
+            <div className="text-[11px] space-y-1.5 pt-1 border-t border-red-200">
+              <div>
+                補正値 を 見直す か、基準点 の 座標 / アンテナ高 を 確かめて ください。
+              </div>
+              {/* 自動補正: 現行 slide に 今回 の 差 を 足して 差 が 0 に なる 補正値 に する。
+                  対象 軸 を XYZ / XY のみ / Z のみ で 選べる (高さ だけ 追い込みたい 等) */}
+              {activeSet && (
+                <div className="rounded border border-red-200 bg-white/80 p-1.5 space-y-1">
+                  <div className="text-slate-700 font-semibold">補正値 を 自動計算</div>
+                  <div className="flex items-center gap-1">
+                    {(['xyz', 'xy', 'z'] as const).map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setAutoAxis(k)}
+                        className={`px-2 py-0.5 text-[11px] border rounded ${
+                          autoAxis === k
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        {k === 'xyz' ? 'XYZ' : k === 'xy' ? 'XYのみ' : 'Zのみ'}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={autoBusy}
+                    onClick={async () => {
+                      setAutoBusy(true)
+                      setAutoStatus(null)
+                      try {
+                        const newSlide = {
+                          dx:
+                            autoAxis === 'z'
+                              ? slide.dx
+                              : slide.dx + result.dx,
+                          dy:
+                            autoAxis === 'z'
+                              ? slide.dy
+                              : slide.dy + result.dy,
+                          dz:
+                            autoAxis === 'xy' || result.dz == null
+                              ? slide.dz
+                              : slide.dz + result.dz,
+                        }
+                        await updateSet(activeSet.id, { slide: newSlide })
+                        setAutoStatus(
+                          `更新しました → dX ${newSlide.dx.toFixed(3)} / dY ${newSlide.dy.toFixed(
+                            3,
+                          )} / dZ ${newSlide.dz.toFixed(3)} (もう一度 点検 で 収まる か 確認)`,
+                        )
+                        // 表示中 の 結果 は 古い ので 消す (再点検 を 促す)
+                        setResult(null)
+                      } catch (e) {
+                        setAutoStatus(
+                          e instanceof Error ? `更新失敗: ${e.message}` : '更新失敗',
+                        )
+                      } finally {
+                        setAutoBusy(false)
+                      }
+                    }}
+                    className="w-full px-2 py-1 rounded bg-red-600 text-white text-[11px] font-medium disabled:opacity-40 flex items-center justify-center gap-1"
+                  >
+                    {autoBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+                    現行 の 補正値 に 差 を 加算 して 更新
+                  </button>
+                  <div className="text-[10px] text-slate-500">
+                    現行 dX {slide.dx.toFixed(3)} / dY {slide.dy.toFixed(3)} / dZ{' '}
+                    {slide.dz.toFixed(3)}
+                  </div>
+                </div>
+              )}
             </div>
           )}
+        </div>
+      )}
+      {autoStatus && (
+        <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+          {autoStatus}
         </div>
       )}
     </div>
@@ -949,11 +1035,13 @@ function GnssSettingsSection() {
           「N↑ / 進行↑」 ボタン に 一本化 した。 静止中 の 向き に 要る
           方位センサー の 許可 を その 場 で 求められる ため。 */}
 
+      {/* 補正値 が 効いて いる か を 既知点 で 確かめる。
+          点検 の 結果 (差) を 補正値 に 反映 させる 動線 が 上→下 に なる よう、
+          セッション/補正値 セクション より 先 に 配置。 */}
+      <SurveyCheckSection />
+
       {/* セッション と 補正値 */}
       <SurveySetBar />
-
-      {/* 補正値 が 効いて いる か を 既知点 で 確かめる */}
-      <SurveyCheckSection />
     </div>
   )
 }
