@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Plus, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X, ChevronsLeft, ChevronsRight, Settings2 } from 'lucide-react'
+import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X, ChevronsLeft, ChevronsRight, Settings2 } from 'lucide-react'
 import { Marker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useFarmStore } from '@/stores/farmStore'
@@ -9,10 +9,11 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { CoordinateConverter, COORDINATE_TYPE_NAMES, type CoordinateType } from '@/lib/coordinates'
 import { supabase } from '@/lib/supabase'
-import { setLabel, useSurveySetStore, generateDefaultSessionName, jstTodayIso } from '@/stores/surveySetStore'
+import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
 import { deriveRow, groupStakingRecords, type StakingGroup } from '@/lib/stakingGroups'
 
-import { SurveyRecordSetsPanel } from './SurveyRecordSetsPanel'
+// SurveyRecordSetsPanel は 全 セッション 一覧 用 だった が、詳細モーダル は
+// 現在 セッション 1 件 のみ を 直接 表示 する 方針 に 変更したため 使わない。
 
 // 実測点 用 の 円形 divIcon を 生成。 Marker (HTML) として markerPane に
 // 描画 する ので、SVG の CircleMarker と 違って クリック 受け取り が 安定。
@@ -462,12 +463,11 @@ export function StakingRecordsPage() {
   // 工区 単位 の 値 (下 の xOffset 等) は セット が 無い 記録 の 受け皿 と して 残す。
   const sets = useSurveySetStore((st) => st.sets)
   const fetchSets = useSurveySetStore((st) => st.fetchByFarm)
-  const createSet = useSurveySetStore((st) => st.createSet)
   const updateSet = useSurveySetStore((st) => st.updateSet)
   useEffect(() => {
     if (currentFarm) void fetchSets(currentFarm.id)
   }, [currentFarm, fetchSets])
-  const moveRecordsToSet = useStakingStore((st) => st.moveRecordsToSet)
+  // 記録 の セッション間 移動 は 廃止 (moveRecordsToSet も 使わない)
 
   const zOffsetKey = currentFarm ? `staking:zOffset:${currentFarm.id}` : null
   const [xOffset, setXOffset] = useState<number>(0)
@@ -576,23 +576,9 @@ export function StakingRecordsPage() {
    * それ以外 は セット の id。 セット を 分けた 以上、既定 は 1 つ ずつ 見る 方 が
    * 分かり やすい ので、既定 の セット を 初期選択 に する。
    */
-  /** セッション の 追加。 タブ行 の 右端 の ボタン から。 作ったら その タブ に 移る。
-   *  名前 は 「NNN{A,B,C}」 の デフォルト (JST 年通算日 + 同日内 連番) */
-  const [creatingSet, setCreatingSet] = useState(false)
-  /** セッション 詳細 (名前 / 日付 / 担当者 / 基準局 …) の モーダル 表示 */
+  // PC からの セッション追加 は 廃止。 作成 は スマホ 側 (測定時) に 一元化。
+  /** セッション 詳細 (名前 / 日付 / 担当者 / 基準局 / スライド量) の モーダル 表示 */
   const [sessionDetailOpen, setSessionDetailOpen] = useState(false)
-  const handleCreateSet = async () => {
-    if (!currentFarm) return
-    setCreatingSet(true)
-    try {
-      const today = jstTodayIso()
-      const name = generateDefaultSessionName(sets)
-      const row = await createSet(currentFarm.id, { measuredOn: today, name })
-      if (row) setSetTab(row.id)
-    } finally {
-      setCreatingSet(false)
-    }
-  }
 
   const [setTab, setSetTab] = useState<string>('all')
   const setTabFarmRef = useRef<string | null>(null)
@@ -671,27 +657,7 @@ export function StakingRecordsPage() {
     const hit = r?.recordSetId ? slideOfSet.get(r.recordSetId) : undefined
     return hit ?? { dx: xOffset, dy: yOffset, dz: zOffset }
   }
-  /** 記録セット の 移動。 書いた あと 取り直して 結果 を 出す */
-  const [setMoveStatus, setSetMoveStatus] = useState<string | null>(null)
-  const handleMoveToSet = async (ids: string[], setId: string | null) => {
-    if (ids.length === 0) return
-    setSetMoveStatus(null)
-    await moveRecordsToSet(ids, setId)
-    const err = useStakingStore.getState().error
-    if (err) {
-      setSetMoveStatus(`移動できませんでした: ${err}`)
-      return
-    }
-    // 楽観更新 だけ に 頼らず、DB の 結果 を 見て 表示 を 揃える
-    if (currentFarm) await fetchRecords(currentFarm.id)
-    const name = setId ? (sets.find((x) => x.id === setId)?.name ?? null) : null
-    const label = setId
-      ? (name && name.trim() !== ''
-          ? name
-          : (sets.find((x) => x.id === setId)?.measuredOn ?? 'セッション'))
-      : '未振り分け'
-    setSetMoveStatus(`${ids.length} 件 を 「${label}」 に 移しました`)
-  }
+  // 記録 の セッション間移動 は 廃止 (誤操作 防止)。 セッション は 測定時 に 固定。
 
   /** この 工区 の 記録 の 数 (タブ の 「すべて」) */
 
@@ -1204,31 +1170,8 @@ export function StakingRecordsPage() {
               </button>
             )
           })}
-          {/* 詳細情報 (名前・日付・担当者・基準局・スライド量) は モーダル で 編集。
-              タブ 表示 を 二重 に せず、必要な 時 だけ 開く */}
-          <button
-            type="button"
-            onClick={() => setSessionDetailOpen(true)}
-            className="ml-auto mb-1 shrink-0 px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-50 flex items-center gap-1"
-            title="セッション の 詳細 (名前 / 日付 / 担当者 / スライド量) を 編集"
-          >
-            <Settings2 className="h-3 w-3" />
-            詳細
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleCreateSet()}
-            disabled={creatingSet}
-            className="mb-1 shrink-0 px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
-            title="セッション を 追加 (測量日 は 今日、名前 は 自動生成)"
-          >
-            {creatingSet ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Plus className="h-3 w-3" />
-            )}
-            セッション
-          </button>
+          {/* PC からの セッション追加 / 削除 / 記録移動 は 廃止。
+              セッション の 作成 は スマホ の 測定 時 に 一元化 (誤操作 防止)。 */}
         </div>
       )}
 
@@ -1285,47 +1228,25 @@ export function StakingRecordsPage() {
           </label>
         ))}
         {/* 実測 から 座標管理 へ 直接 登録 する 導線 は 廃止。 実測 は 実測 の まま
-            残し、座標 に する なら Excel / SIMA を 通す。 */}
+            残し、座標 に する なら Excel / SIMA を 通す。
+            セッション 間 の 移動 も 廃止 (誤操作 防止、セッション は 測定時 に 固定)。 */}
         <span className="text-slate-400 mx-1">|</span>
-        <span className="text-slate-500">
-          選択 {selectedGroupKeys.size} 件 →
-        </span>
-        <label className="flex items-center gap-1">
-          <span className="text-slate-500">セッションへ移動</span>
-          <select
-            value=""
-            disabled={selectedGroupKeys.size === 0 || sets.length === 0}
-            onChange={(e) => {
-              const v = e.target.value
-              if (!v) return
-              const ids = grouped
-                .filter((g) => selectedGroupKeys.has(g.key))
-                .flatMap((g) => [g.m1?.id, g.m2?.id].filter((x): x is string => !!x))
-              if (ids.length === 0) return
-              void handleMoveToSet(ids, v === '__none__' ? null : v)
-              e.currentTarget.value = ''
-            }}
-            className="px-1 py-1 border rounded bg-white disabled:opacity-40"
-            title="選択中の点の実測記録を、このセッションへ移す"
-          >
-            <option value="">選択…</option>
-            {sets.map((st) => (
-              <option key={st.id} value={st.id}>
-                {setLabel(st)}
-              </option>
-            ))}
-            <option value="__none__">（未振り分けに戻す）</option>
-          </select>
-        </label>
-        {setMoveStatus && (
-          <span
-            className={`text-[11px] ${
-              setMoveStatus.startsWith('移動できません') ? 'text-red-600' : 'text-emerald-700'
-            }`}
-          >
-            {setMoveStatus}
-          </span>
-        )}
+        <span className="text-slate-500">選択 {selectedGroupKeys.size} 件</span>
+        {/* 現在 タブ の セッション 詳細 (名前・日付・担当者・基準局・スライド量) */}
+        <button
+          type="button"
+          onClick={() => setSessionDetailOpen(true)}
+          disabled={setTab === 'none' || setTab === 'all'}
+          className="ml-auto shrink-0 px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
+          title={
+            setTab === 'none' || setTab === 'all'
+              ? 'セッション の タブ を 選ぶ と 有効 に なります'
+              : '現在の セッション の 詳細 (名前 / 日付 / 担当者 / スライド量) を 編集'
+          }
+        >
+          <Settings2 className="h-3 w-3" />
+          詳細
+        </button>
         {selectedGroupKeys.size > 0 && (
           <button
             onClick={() => setSelectedGroupKeys(new Set())}
@@ -2082,27 +2003,24 @@ export function StakingRecordsPage() {
         )
       })()}
 
-      {/* セッション 詳細 モーダル (名前 / 日付 / 担当者 / 基準局 / スライド量) */}
-      {sessionDetailOpen && (
+      {/* セッション 詳細 モーダル (開いている セッション 1 件のみ を 直接 表示 / 編集) */}
+      {sessionDetailOpen && slideTargetSet && (
         <div
           className="fixed inset-0 bg-black/50 z-[3000] flex items-center justify-center p-4"
           onClick={() => setSessionDetailOpen(false)}
         >
           <div
-            className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col"
+            className="bg-white rounded-lg shadow-xl w-full max-w-lg flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-2 px-3 py-2 border-b">
               <Settings2 className="h-4 w-4 text-slate-500" />
-              <h3 className="text-sm font-semibold">セッション 詳細</h3>
-              <span className="text-[11px] text-slate-500">
-                {sets.length} 件
-                {(countBySet.get(null) ?? 0) > 0 && (
-                  <span className="ml-1 text-amber-700">
-                    / 未振り分け {countBySet.get(null)} 点
-                  </span>
-                )}
-              </span>
+              <h3 className="text-sm font-semibold">
+                セッション 詳細
+                <span className="ml-2 text-[11px] text-slate-500 font-normal font-mono">
+                  {setLabel(slideTargetSet)}
+                </span>
+              </h3>
               <button
                 onClick={() => setSessionDetailOpen(false)}
                 className="ml-auto p-1 hover:bg-slate-100 rounded"
@@ -2111,11 +2029,85 @@ export function StakingRecordsPage() {
                 <X className="h-4 w-4 text-slate-500" />
               </button>
             </div>
-            <div className="flex-1 min-h-0 overflow-auto p-3">
-              <SurveyRecordSetsPanel
-                farmId={currentFarm?.id ?? null}
-                countBySet={countBySet}
-              />
+            <div className="p-3 space-y-2 text-xs">
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block">
+                  <span className="text-[11px] text-slate-500">名前</span>
+                  <input
+                    className="w-full px-2 py-1 border rounded font-mono"
+                    value={slideTargetSet.name ?? ''}
+                    onChange={(e) =>
+                      void updateSet(slideTargetSet.id, { name: e.target.value || null })
+                    }
+                    placeholder="空なら 日付 + 担当者"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] text-slate-500">測量日</span>
+                  <input
+                    type="date"
+                    className="w-full px-2 py-1 border rounded font-mono"
+                    value={slideTargetSet.measuredOn ?? ''}
+                    onChange={(e) =>
+                      void updateSet(slideTargetSet.id, {
+                        measuredOn: e.target.value || null,
+                      })
+                    }
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] text-slate-500">担当者</span>
+                  <input
+                    className="w-full px-2 py-1 border rounded"
+                    value={slideTargetSet.operator ?? ''}
+                    onChange={(e) =>
+                      void updateSet(slideTargetSet.id, {
+                        operator: e.target.value || null,
+                      })
+                    }
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] text-slate-500">基準局</span>
+                  <input
+                    className="w-full px-2 py-1 border rounded"
+                    value={slideTargetSet.baseStation ?? ''}
+                    onChange={(e) =>
+                      void updateSet(slideTargetSet.id, {
+                        baseStation: e.target.value || null,
+                      })
+                    }
+                    placeholder="例: ネットワーク型RTK / 自営局"
+                  />
+                </label>
+              </div>
+              <label className="block">
+                <span className="text-[11px] text-slate-500">設定のメモ</span>
+                <input
+                  className="w-full px-2 py-1 border rounded"
+                  value={slideTargetSet.settingsNote ?? ''}
+                  onChange={(e) =>
+                    void updateSet(slideTargetSet.id, {
+                      settingsNote: e.target.value || null,
+                    })
+                  }
+                  placeholder="例: アンテナ高 1.800 / FIX のみ採用"
+                />
+              </label>
+              <div className="text-[11px] text-slate-500 font-mono pt-1 border-t">
+                作業{' '}
+                {slideTargetSet.startedAt
+                  ? slideTargetSet.startedAt.slice(0, 16).replace('T', ' ')
+                  : '—'}{' '}
+                〜{' '}
+                {slideTargetSet.endedAt
+                  ? slideTargetSet.endedAt.slice(0, 16).replace('T', ' ')
+                  : '—'}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                スライド量 は 詳細 の 下 (タブ 直下 の 行) で 編集 できます。
+                名前 は 空 に すると 日付 + 担当者 で 表示 されます。
+              </div>
             </div>
           </div>
         </div>
