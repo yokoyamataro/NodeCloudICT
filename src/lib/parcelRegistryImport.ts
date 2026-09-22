@@ -9,6 +9,13 @@
 //     セット で 作成 し、後 で SIM 等 で 座標 を 埋める 想定。
 //   ・地権者 の 自動生成 は しない。 地権者管理 側 の 「地番から読込」
 //     で 手動 トリガ する。
+//
+// 注意:
+//   ・design_work_areas を INSERT する と、後付け トリガ で parcels 行 が
+//     自動作成 される (parcel_number = wa.name)。 CSV 側 の 追加 メタ
+//     (registration_kind, registry_seq, ...) は UPSERT で 上書き する。
+//   ・registered_land_category は 23 地目 の CHECK 制約 が あり、それ 以外
+//     の 値 は NULL に フォールバック する。
 
 import { supabase } from './supabase'
 import type { RegistryRecord } from './registryCsv'
@@ -21,6 +28,19 @@ export interface ParcelImportProgress {
 
 const CHUNK = 300
 
+// 不動産登記規則 第99条 の 23 地目 (parcels CHECK 制約 と 一致)
+const VALID_LAND_CATEGORIES = new Set<string>([
+  '田', '畑', '宅地', '学校用地', '鉄道用地', '塩田', '鉱泉地', '池沼', '山林',
+  '牧場', '原野', '墓地', '境内地', '運河用地', '水道用地', '用悪水路',
+  'ため池', '堤', '井溝', '保安林', '公衆用道路', '公園', '雑種地',
+])
+function sanitizeLandCategory(v: string | null): string | null {
+  if (!v) return null
+  const t = v.trim()
+  if (!t) return null
+  return VALID_LAND_CATEGORIES.has(t) ? t : null
+}
+
 // 型 未登録 の テーブル を 使う ため の キャスト。
 const sb = supabase as unknown as {
   from: (t: string) => {
@@ -28,6 +48,7 @@ const sb = supabase as unknown as {
     insert: (rows: unknown) => any
     delete: () => any
     update: (row: unknown) => any
+    upsert: (rows: unknown, opts?: { onConflict?: string }) => any
   }
 }
 
@@ -58,45 +79,53 @@ function latestRegisteredMeta(r: RegistryRecord): {
   return { land_category: cat, area_sqm: area }
 }
 
+// 対象 farm 内 の CSV 由来 parcels の work_area_id を 収集。
+async function fetchCsvParcelWorkAreaIds(farmId: string): Promise<string[]> {
+  // step 1: farm 内 の 境界測量 work_areas を 取得
+  const { data: was, error: e1 } = await sb
+    .from('design_work_areas')
+    .select('id')
+    .eq('farm_id', farmId)
+    .eq('work_type', 'boundary_survey')
+  if (e1) throw e1
+  const waIds = ((was ?? []) as Array<{ id: string }>).map((w) => w.id)
+  if (waIds.length === 0) return []
+  // step 2: それ ら の parcels で registry_seq が セット されて いる もの
+  const out: string[] = []
+  for (let i = 0; i < waIds.length; i += CHUNK) {
+    const slice = waIds.slice(i, i + CHUNK)
+    const { data, error: e2 } = await sb
+      .from('parcels')
+      .select('work_area_id')
+      .in('work_area_id', slice)
+      .not('registry_seq', 'is', null)
+    if (e2) throw e2
+    for (const row of (data ?? []) as Array<{ work_area_id: string }>) {
+      out.push(row.work_area_id)
+    }
+  }
+  return out
+}
+
 export async function hasFarmRegistryParcels(
   farmId: string,
 ): Promise<{ hasAny: boolean; count: number }> {
-  // work_type='boundary_survey' の parcels は work_areas 経由 で 判定
-  const { data, error } = await sb
-    .from('parcels')
-    .select('id, work_area_id, design_work_areas!inner(farm_id, work_type)', {
-      count: 'exact',
-      head: true,
-    })
-    .eq('design_work_areas.farm_id', farmId)
-    .eq('design_work_areas.work_type', 'boundary_survey')
-    .not('registry_seq', 'is', null)
-  if (error) throw error
-  const count = (data as unknown as { length?: number })?.length ?? 0
-  return { hasAny: count > 0, count }
+  const waIds = await fetchCsvParcelWorkAreaIds(farmId)
+  return { hasAny: waIds.length > 0, count: waIds.length }
 }
 
 // farm 内 の 「CSV 由来」 parcels (+ 対応 design_work_areas + 子 履歴 行) を 削除。
-// 削除条件: registry_seq IS NOT NULL の parcel 行 と、その 対応 work_area。
 export async function deleteFarmRegistryParcels(farmId: string): Promise<void> {
-  // まず 対象 の work_area_id 一覧 を 取得
-  const { data, error } = await sb
-    .from('parcels')
-    .select('id, work_area_id, design_work_areas!inner(farm_id)')
-    .eq('design_work_areas.farm_id', farmId)
-    .not('registry_seq', 'is', null)
-  if (error) throw error
-  const rows = (data ?? []) as Array<{ id: string; work_area_id: string }>
-  if (rows.length === 0) return
-  const waIds = rows.map((r) => r.work_area_id)
-  // design_work_areas を 削除 する と、CASCADE で parcels + 子 履歴 も 消える
+  const waIds = await fetchCsvParcelWorkAreaIds(farmId)
+  if (waIds.length === 0) return
+  // design_work_areas を 削除 する と CASCADE で parcels + 子 履歴 も 消える
   for (let i = 0; i < waIds.length; i += CHUNK) {
     const slice = waIds.slice(i, i + CHUNK)
-    const { error: err } = await sb
+    const { error } = await sb
       .from('design_work_areas')
       .delete()
       .in('id', slice)
-    if (err) throw err
+    if (error) throw error
   }
 }
 
@@ -109,6 +138,7 @@ export async function importParcelsFromCsv(
   if (records.length === 0) return { inserted: 0 }
 
   // 1) design_work_areas を bulk INSERT (name = 地番、point_ids=[])
+  //    INSERT 時 に トリガ で parcels 行 が 自動作成 される (parcel_number = name)。
   onProgress?.({ phase: '画地を作成中', done: 0, total: records.length })
   const waInserts = records.map((r) => ({
     farm_id: farmId,
@@ -147,55 +177,57 @@ export async function importParcelsFromCsv(
     }
   }
 
-  // 2) parcels を bulk INSERT (work_area_id + registry meta)
-  onProgress?.({ phase: '地番情報を作成中', done: 0, total: records.length })
-  const parcelInserts = records.map((r) => {
-    const meta = latestRegisteredMeta(r)
-    return {
-      work_area_id: seqToWaId.get(r.seq)!,
-      parcel_number: r.property?.parcelNumber ?? '',
-      location: r.property?.location ?? '',
-      registered_land_category: meta.land_category,
-      registered_area_sqm: meta.area_sqm,
-      registered_owner_name: r.ownerships[0]?.ownerName ?? null,
-      registered_owner_address: r.ownerships[0]?.address ?? null,
-      registration_kind: 'registered',
-      registry_seq: r.seq,
-      registry_kind: r.property?.kind ?? null,
-      registry_status: r.property?.status ?? null,
-      real_estate_number: r.property?.realEstateNumber ?? null,
-    }
-  })
-
-  const seqToParcelId = new Map<number, string>()
-  {
-    let cursor = 0
-    for (let i = 0; i < parcelInserts.length; i += CHUNK) {
-      const slice = parcelInserts.slice(i, i + CHUNK)
-      const { data, error } = await sb.from('parcels').insert(slice).select('id')
-      if (error) throw error
-      const returned = (data ?? []) as Array<{ id: string }>
-      for (const p of returned) {
-        const rec = records[cursor++]
-        if (rec) seqToParcelId.set(rec.seq, p.id)
+  // 2) parcels は トリガ で 既 に 作られて いる ので、CSV メタ を UPSERT で 上書き。
+  //    work_area_id を 一意 キー に する。
+  onProgress?.({ phase: '地番情報を反映中', done: 0, total: records.length })
+  const parcelUpserts = records
+    .filter((r) => seqToWaId.has(r.seq))
+    .map((r) => {
+      const meta = latestRegisteredMeta(r)
+      return {
+        work_area_id: seqToWaId.get(r.seq)!,
+        parcel_number: r.property?.parcelNumber ?? '',
+        location: r.property?.location ?? '',
+        registered_land_category: sanitizeLandCategory(meta.land_category),
+        registered_area_sqm: meta.area_sqm,
+        registered_owner_name: r.ownerships[0]?.ownerName ?? null,
+        registered_owner_address: r.ownerships[0]?.address ?? null,
+        registration_kind: 'registered',
+        registry_seq: r.seq,
+        registry_kind: r.property?.kind ?? null,
+        registry_status: r.property?.status ?? null,
+        real_estate_number: r.property?.realEstateNumber ?? null,
       }
-      onProgress?.({
-        phase: '地番情報を作成中',
-        done: Math.min(i + CHUNK, parcelInserts.length),
-        total: parcelInserts.length,
-      })
-      await new Promise<void>((resolve) => setTimeout(resolve, 0))
-    }
+    })
+
+  const waIdToParcelId = new Map<string, string>()
+  for (let i = 0; i < parcelUpserts.length; i += CHUNK) {
+    const slice = parcelUpserts.slice(i, i + CHUNK)
+    const { data, error } = await sb
+      .from('parcels')
+      .upsert(slice, { onConflict: 'work_area_id' })
+      .select('id, work_area_id')
+    if (error) throw error
+    const returned = (data ?? []) as Array<{ id: string; work_area_id: string }>
+    for (const p of returned) waIdToParcelId.set(p.work_area_id, p.id)
+    onProgress?.({
+      phase: '地番情報を反映中',
+      done: Math.min(i + CHUNK, parcelUpserts.length),
+      total: parcelUpserts.length,
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
   }
 
-  // 3) 子 履歴 行 を 組み立て
+  // 3) 子 履歴 行 を 組み立て (parcel_id で 紐付け)
   const locRows: unknown[] = []
   const dhRows: unknown[] = []
   const owRows: unknown[] = []
   const kouRows: unknown[] = []
   const otoRows: unknown[] = []
   for (const r of records) {
-    const pid = seqToParcelId.get(r.seq)
+    const waId = seqToWaId.get(r.seq)
+    if (!waId) continue
+    const pid = waIdToParcelId.get(waId)
     if (!pid) continue
     for (const l of r.locations) {
       locRows.push({

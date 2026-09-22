@@ -30,6 +30,17 @@ interface RawParcel {
   registered_owner_address: string | null
   registered_owner_name: string | null
   attribute_code: string | null
+  // 登記CSV 統合 (2026-09-23) 由来
+  registration_kind: string | null
+  registry_seq: number | null
+  registry_kind: string | null
+  registry_status: string | null
+  real_estate_number: string | null
+  merged_area_sqm: number | string | null   // numeric は string で 返る 可能性
+  merged_into_parcel_id: string | null
+  merged_at: string | null
+  split_from_parcel_id: string | null
+  split_at: string | null
   created_at: string
   updated_at: string
 }
@@ -49,6 +60,21 @@ const toParcel = (r: RawParcel): Parcel => ({
   registered_owner_address: r.registered_owner_address,
   registered_owner_name: r.registered_owner_name,
   attribute_code: r.attribute_code,
+  registration_kind: r.registration_kind,
+  registry_seq: r.registry_seq,
+  registry_kind: r.registry_kind,
+  registry_status: r.registry_status,
+  real_estate_number: r.real_estate_number,
+  merged_area_sqm:
+    r.merged_area_sqm == null
+      ? null
+      : typeof r.merged_area_sqm === 'string'
+      ? Number(r.merged_area_sqm)
+      : r.merged_area_sqm,
+  merged_into_parcel_id: r.merged_into_parcel_id,
+  merged_at: r.merged_at,
+  split_from_parcel_id: r.split_from_parcel_id,
+  split_at: r.split_at,
   created_at: r.created_at,
   updated_at: r.updated_at,
 })
@@ -159,6 +185,16 @@ export const useParcelStore = create<ParcelState>((set, get) => ({
         fields.registered_owner_address ?? prev?.registered_owner_address ?? null,
       registered_owner_name: fields.registered_owner_name ?? prev?.registered_owner_name ?? null,
       attribute_code: fields.attribute_code ?? prev?.attribute_code ?? null,
+      registration_kind: prev?.registration_kind ?? null,
+      registry_seq: prev?.registry_seq ?? null,
+      registry_kind: prev?.registry_kind ?? null,
+      registry_status: prev?.registry_status ?? null,
+      real_estate_number: prev?.real_estate_number ?? null,
+      merged_area_sqm: prev?.merged_area_sqm ?? null,
+      merged_into_parcel_id: prev?.merged_into_parcel_id ?? null,
+      merged_at: prev?.merged_at ?? null,
+      split_from_parcel_id: prev?.split_from_parcel_id ?? null,
+      split_at: prev?.split_at ?? null,
       created_at: prev?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }

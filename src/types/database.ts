@@ -496,6 +496,25 @@ export interface Parcel {
   registered_owner_name: string | null
   /** 属性コード (parcel_attribute_types.code を参照。NULL=未選択) */
   attribute_code: string | null
+  // ==== 登記CSV (法務局4600) 由来 の 追加 メタ (2026-09-23 統合) ====
+  /** 'registered' (CSV由来) | 'provisional' (仮) | 'confirmed' (確定 手動追加) */
+  registration_kind: string | null
+  /** CSV 内 の 連番 (物件番号) */
+  registry_seq: number | null
+  /** 物件種別 (土地 / 建物) */
+  registry_kind: string | null
+  /** 状態 (既存 / 登記済 等) */
+  registry_status: string | null
+  /** 不動産番号 (13桁) */
+  real_estate_number: string | null
+  /** 合筆後 の 地積 (残地 に のみ 値 が 入る) */
+  merged_area_sqm: number | null
+  /** 合筆消滅地 の 場合、統合先 の parcel_id */
+  merged_into_parcel_id: string | null
+  merged_at: string | null
+  /** 分筆新地 の 場合、分筆元 の parcel_id */
+  split_from_parcel_id: string | null
+  split_at: string | null
   created_at: string
   updated_at: string
 }

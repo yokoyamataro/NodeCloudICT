@@ -22,10 +22,15 @@ export const CADASTRAL_COLUMN_KEYS = [
   'attribute',
   'location',
   'parcel_number',
+  'registry_seq',
+  'registration_kind',
+  'registry_status',
+  'real_estate_number',
   'registered_land_category',
   'registered_area_sqm',
   'updated_land_category',
   'updated_area_sqm',
+  'merged_area_sqm',
   'registered_owner_name',
   'registered_owner_address',
   'landowners',
@@ -39,10 +44,15 @@ export const CADASTRAL_COLUMN_LABELS: Record<CadastralColumnKey, string> = {
   attribute: '属性',
   location: '所在',
   parcel_number: '地番',
+  registry_seq: '連番',
+  registration_kind: '区分',
+  registry_status: '状態',
+  real_estate_number: '不動産番号',
   registered_land_category: '登記地目',
   registered_area_sqm: '登記地積(m²)',
   updated_land_category: '変更地目',
   updated_area_sqm: '変更地積(m²)',
+  merged_area_sqm: '合筆後地積(m²)',
   registered_owner_name: '登記所有者氏名',
   registered_owner_address: '登記所有者住所',
   landowners: '地権者',
@@ -77,10 +87,15 @@ export const CADASTRAL_COLUMN_WIDTH: Record<CadastralColumnKey, string> = {
   attribute: 'w-24',
   location: 'w-40',
   parcel_number: 'w-28',
+  registry_seq: 'w-14',
+  registration_kind: 'w-16',
+  registry_status: 'w-16',
+  real_estate_number: 'w-36',
   registered_land_category: 'w-24',
   registered_area_sqm: 'w-24',
   updated_land_category: 'w-24',
   updated_area_sqm: 'w-24',
+  merged_area_sqm: 'w-24',
   registered_owner_name: 'w-32',
   registered_owner_address: 'w-48',
   landowners: 'w-44',
@@ -238,6 +253,63 @@ export function CadastralRowFields({
             className="w-full px-1.5 py-1 border rounded text-sm"
             placeholder="地番"
           />
+        )
+      case 'registry_seq':
+        return (
+          <span
+            className="block w-full px-1 py-1 text-right font-mono text-xs text-slate-500"
+            title="登記CSV の 連番"
+          >
+            {parcel?.registry_seq ?? ''}
+          </span>
+        )
+      case 'registration_kind': {
+        const kind = parcel?.registration_kind ?? 'registered'
+        const style =
+          kind === 'provisional'
+            ? 'bg-amber-100 text-amber-800 border-amber-300'
+            : kind === 'confirmed'
+            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+            : 'bg-slate-100 text-slate-600 border-slate-300'
+        const label =
+          kind === 'provisional' ? '仮' : kind === 'confirmed' ? '確定' : '登記'
+        return (
+          <span
+            className={`block text-center rounded border px-1 py-0.5 text-[10px] font-semibold ${style}`}
+            title={`登録区分: ${label}`}
+          >
+            {label}
+          </span>
+        )
+      }
+      case 'registry_status':
+        return (
+          <span
+            className="block w-full px-1 py-1 text-xs text-slate-700"
+            title="CSV 上 の 状態"
+          >
+            {parcel?.registry_status ?? ''}
+          </span>
+        )
+      case 'real_estate_number':
+        return (
+          <span
+            className="block w-full px-1 py-1 font-mono text-xs text-slate-500"
+            title={parcel?.real_estate_number ?? ''}
+          >
+            {parcel?.real_estate_number ?? ''}
+          </span>
+        )
+      case 'merged_area_sqm':
+        return (
+          <span
+            className="block w-full px-1 py-1 text-right font-mono text-xs text-slate-700"
+            title="合筆後の地積"
+          >
+            {parcel?.merged_area_sqm != null
+              ? truncate2(parcel.merged_area_sqm)
+              : ''}
+          </span>
         )
       case 'registered_land_category':
         return (
