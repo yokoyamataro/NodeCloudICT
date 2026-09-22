@@ -1,11 +1,11 @@
 // 法務局備付地図作成作業 ページ。
 //
-// 第 1 段: 登記 CSV (法務局 4600 形式 / Shift-JIS) を 選択 → 一覧 表示 まで。
-// パース は @/lib/registryCsv、保存 は しない (メモリ のみ)。
+// CSV 取込 → registry_* テーブル (project 単位) に 保存 まで 実装。
+// project_owners / property_owner_shares の 名寄せ は 未実装 (次段階)。
 // 行 クリック で 右側 に 所在履歴 / 表示履歴 / 所有権 / 甲区 / 乙区 を 詳細表示。
 
-import { useMemo, useRef, useState } from 'react'
-import { FileSpreadsheet, Loader2, Upload, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FileSpreadsheet, Loader2, Trash2, Upload, X } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import {
   latestDisplay,
@@ -14,16 +14,26 @@ import {
   readRegistryCsvFile,
   type RegistryRecord,
 } from '@/lib/registryCsv'
+import {
+  deleteProjectRegistry,
+  loadRegistryFromDb,
+  projectHasRegistryData,
+  saveRegistryCsv,
+  type SaveProgress,
+} from '@/lib/registryCsvSave'
 
 export function RegistryMapWorkPage() {
   const { currentFarm } = useFarmStore()
+  const projectId = currentFarm?.project_id ?? null
   const fileRef = useRef<HTMLInputElement>(null)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<'load' | 'import' | 'delete' | null>(null)
   const [records, setRecords] = useState<RegistryRecord[]>([])
   const [source, setSource] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null)
+  const [progress, setProgress] = useState<SaveProgress | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
     const q = query.trim()
@@ -41,23 +51,106 @@ export function RegistryMapWorkPage() {
   const selected =
     selectedSeq != null ? records.find((r) => r.seq === selectedSeq) ?? null : null
 
+  // プロジェクト 切替時 に DB から 既存 の 登記 データ を 読み直す。
+  const reloadFromDb = useCallback(async () => {
+    if (!projectId) return
+    setBusy('load')
+    setError(null)
+    setProgress({ phase: '物件を取得中', done: 0, total: 0 })
+    try {
+      const rows = await loadRegistryFromDb(projectId, (p) => setProgress(p))
+      setRecords(rows)
+      setSelectedSeq(null)
+      setSource(rows.length > 0 ? '(DB 保存済み)' : null)
+    } catch (err) {
+      console.error(err)
+      setError(err instanceof Error ? err.message : 'DB からの読込に失敗しました')
+    } finally {
+      setBusy(null)
+      setProgress(null)
+    }
+  }, [projectId])
+
+  useEffect(() => {
+    void reloadFromDb()
+  }, [reloadFromDb])
+
   const handleFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = ''
-    if (!file) return
-    setBusy(true)
+    if (!file || !projectId) return
+
+    setBusy('import')
     setError(null)
+    setMessage(null)
+    setProgress({ phase: 'CSV を解析中', done: 0, total: 0 })
     try {
+      // 1) 既存 データ の 有無 確認
+      const { hasAny, count } = await projectHasRegistryData(projectId)
+      if (hasAny) {
+        // 現段階 は 上書き 比較 UI 未実装。全消去 → 再取込 で 進める。
+        const ok = confirm(
+          `このプロジェクトには 既に ${count.toLocaleString()} 件 の 登記データ が あります。\n` +
+            `全て 削除 して 今回 の CSV で 置き換えますか？\n\n` +
+            `(比較 して 選択 する UI は 別段階 で 実装 予定 です)`,
+        )
+        if (!ok) {
+          setBusy(null)
+          setProgress(null)
+          return
+        }
+        setProgress({ phase: '既存データを削除中', done: 0, total: 0 })
+        await deleteProjectRegistry(projectId)
+      }
+
+      // 2) CSV を パース
+      setProgress({ phase: 'CSV を解析中', done: 0, total: 0 })
       const text = await readRegistryCsvFile(file)
       const parsed = parseRegistryCsv(text)
-      setRecords(parsed.records)
+
+      // 3) DB に 保存
+      const { inserted } = await saveRegistryCsv(
+        projectId,
+        parsed.records,
+        (p) => setProgress(p),
+      )
+
+      // 4) DB から 読み直す (ID 付き)
+      setProgress({ phase: '物件を取得中', done: 0, total: 0 })
+      const reloaded = await loadRegistryFromDb(projectId)
+      setRecords(reloaded)
       setSource(file.name)
       setSelectedSeq(null)
+      setMessage(`${inserted.toLocaleString()} 件 を 保存しました`)
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'CSV 読込に失敗しました')
+      setError(err instanceof Error ? err.message : 'CSV 取込に失敗しました')
     } finally {
-      setBusy(false)
+      setBusy(null)
+      setProgress(null)
+    }
+  }
+
+  const handleDeleteAll = async () => {
+    if (!projectId) return
+    const ok = confirm(
+      `このプロジェクト の 登記データ を 全て 削除 します。\nよろしいですか？`,
+    )
+    if (!ok) return
+    setBusy('delete')
+    setError(null)
+    setMessage(null)
+    try {
+      await deleteProjectRegistry(projectId)
+      setRecords([])
+      setSelectedSeq(null)
+      setSource(null)
+      setMessage('登記データを削除しました')
+    } catch (err) {
+      console.error(err)
+      setError(err instanceof Error ? err.message : '削除に失敗しました')
+    } finally {
+      setBusy(null)
     }
   }
 
@@ -85,15 +178,29 @@ export function RegistryMapWorkPage() {
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
-          disabled={busy}
+          disabled={busy !== null}
           className="flex items-center gap-1 rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
         >
-          {busy ? (
+          {busy === 'import' ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
             <Upload className="h-3.5 w-3.5" />
           )}
           登記CSV読込
+        </button>
+        <button
+          type="button"
+          onClick={handleDeleteAll}
+          disabled={busy !== null || records.length === 0}
+          title="このプロジェクトの登記データを全削除"
+          className="flex items-center gap-1 rounded border border-red-300 bg-white px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-40"
+        >
+          {busy === 'delete' ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Trash2 className="h-3.5 w-3.5" />
+          )}
+          全削除
         </button>
         <input
           ref={fileRef}
@@ -104,6 +211,39 @@ export function RegistryMapWorkPage() {
         />
       </div>
 
+      {progress && (
+        <div className="flex items-center gap-2 border-b bg-blue-50 px-4 py-1 text-xs text-blue-800">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <span>
+            {progress.phase}
+            {progress.total > 0 && (
+              <>
+                <span className="ml-1 font-mono">
+                  {progress.done.toLocaleString()} / {progress.total.toLocaleString()}
+                </span>
+                <span className="ml-1 text-blue-600">
+                  ({Math.round((progress.done / progress.total) * 100)}%)
+                </span>
+              </>
+            )}
+          </span>
+          {progress.total > 0 && (
+            <div className="h-2 w-32 overflow-hidden rounded bg-blue-100">
+              <div
+                className="h-full bg-blue-500 transition-[width] duration-150"
+                style={{
+                  width: `${Math.min(100, (progress.done / progress.total) * 100)}%`,
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+      {!progress && message && (
+        <div className="border-b bg-emerald-50 px-4 py-1 text-xs text-emerald-800">
+          {message}
+        </div>
+      )}
       {error && (
         <div className="border-b bg-red-50 px-4 py-1 text-xs text-red-800">{error}</div>
       )}
