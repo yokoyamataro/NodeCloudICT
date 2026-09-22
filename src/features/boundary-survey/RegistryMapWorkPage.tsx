@@ -19,12 +19,35 @@ import {
   loadRegistryFromDb,
   projectHasRegistryData,
   saveRegistryCsv,
+  updatePropertyFarm,
   type SaveProgress,
 } from '@/lib/registryCsvSave'
 
+// 集約 立会 の 表示。 null → '—'、'MIXED' → '混在'、それ以外 は 生値。
+function formatVisitAt(v: string | 'MIXED' | null): string {
+  if (v == null) return '—'
+  if (v === 'MIXED') return '混在'
+  const d = new Date(v)
+  if (Number.isNaN(d.getTime())) return v
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
+    d.getDate(),
+  )} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+function formatVisitStatus(v: string | 'MIXED' | null): string {
+  if (v == null || v === '') return '—'
+  if (v === 'MIXED') return '混在'
+  return v
+}
+
 export function RegistryMapWorkPage() {
-  const { currentFarm } = useFarmStore()
+  const { currentFarm, farms } = useFarmStore()
   const projectId = currentFarm?.project_id ?? null
+  // 同 project の 工区 のみ 選択候補
+  const projectFarms = useMemo(
+    () => farms.filter((f) => f.project_id === projectId),
+    [farms, projectId],
+  )
   const fileRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState<'load' | 'import' | 'delete' | null>(null)
   const [records, setRecords] = useState<RegistryRecord[]>([])
@@ -131,6 +154,35 @@ export function RegistryMapWorkPage() {
     } finally {
       setBusy(null)
       setProgress(null)
+    }
+  }
+
+  const handleAssignFarm = async (
+    propertyId: string,
+    farmId: string | null,
+  ) => {
+    try {
+      await updatePropertyFarm(propertyId, farmId)
+      const newFarmName = farmId
+        ? projectFarms.find((f) => f.id === farmId)?.name ?? null
+        : null
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.extras?.id === propertyId
+            ? {
+                ...r,
+                extras: {
+                  ...r.extras,
+                  farmId,
+                  farmName: newFarmName,
+                },
+              }
+            : r,
+        ),
+      )
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : '工区の割当に失敗しました')
     }
   }
 
@@ -274,12 +326,17 @@ export function RegistryMapWorkPage() {
                 <tr>
                   <th className="border-b px-2 py-1 text-right w-14">連番</th>
                   <th className="border-b px-2 py-1 w-12 text-left">種別</th>
+                  <th className="border-b px-2 py-1 text-left w-24">工区</th>
                   <th className="border-b px-2 py-1 text-left">所在</th>
-                  <th className="border-b px-2 py-1 text-left w-28">地番</th>
-                  <th className="border-b px-2 py-1 text-left w-16">地目</th>
-                  <th className="border-b px-2 py-1 text-right w-24">地積</th>
+                  <th className="border-b px-2 py-1 text-left w-24">地番</th>
+                  <th className="border-b px-2 py-1 text-left w-14">地目</th>
+                  <th className="border-b px-2 py-1 text-right w-20">地積</th>
                   <th className="border-b px-2 py-1 text-left">所有者</th>
-                  <th className="border-b px-2 py-1 text-left w-40">不動産番号</th>
+                  <th className="border-b px-2 py-1 text-left w-32">一次立会</th>
+                  <th className="border-b px-2 py-1 text-left w-20">状況</th>
+                  <th className="border-b px-2 py-1 text-left w-32">二次立会</th>
+                  <th className="border-b px-2 py-1 text-left w-20">状況</th>
+                  <th className="border-b px-2 py-1 text-left w-36">不動産番号</th>
                 </tr>
               </thead>
               <tbody>
@@ -288,6 +345,7 @@ export function RegistryMapWorkPage() {
                   const { landCategory, areaText } = latestDisplay(r)
                   const owners = ownerSummary(r)
                   const active = r.seq === selectedSeq
+                  const ex = r.extras
                   return (
                     <tr
                       key={r.seq}
@@ -300,6 +358,9 @@ export function RegistryMapWorkPage() {
                         {r.seq}
                       </td>
                       <td className="px-2 py-1 text-slate-700">{p?.kind ?? ''}</td>
+                      <td className="px-2 py-1 text-slate-700 truncate max-w-[6rem]" title={ex?.farmName ?? ''}>
+                        {ex?.farmName ?? '—'}
+                      </td>
                       <td className="px-2 py-1">{p?.location ?? ''}</td>
                       <td className="px-2 py-1 font-mono">{p?.parcelNumber ?? ''}</td>
                       <td className="px-2 py-1">{landCategory}</td>
@@ -307,10 +368,22 @@ export function RegistryMapWorkPage() {
                         {areaText}
                       </td>
                       <td
-                        className="px-2 py-1 truncate max-w-[16rem]"
+                        className="px-2 py-1 truncate max-w-[14rem]"
                         title={owners}
                       >
                         {owners}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-600">
+                        {formatVisitAt(ex?.firstVisitAt ?? null)}
+                      </td>
+                      <td className="px-2 py-1 text-slate-700">
+                        {formatVisitStatus(ex?.firstVisitStatus ?? null)}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-600">
+                        {formatVisitAt(ex?.secondVisitAt ?? null)}
+                      </td>
+                      <td className="px-2 py-1 text-slate-700">
+                        {formatVisitStatus(ex?.secondVisitStatus ?? null)}
                       </td>
                       <td className="px-2 py-1 font-mono text-slate-500">
                         {p?.realEstateNumber ?? ''}
@@ -324,7 +397,12 @@ export function RegistryMapWorkPage() {
           {selected && (
             <DetailPanel
               record={selected}
+              farms={projectFarms}
               onClose={() => setSelectedSeq(null)}
+              onAssignFarm={(farmId) => {
+                const pid = selected.extras?.id
+                if (pid) void handleAssignFarm(pid, farmId)
+              }}
             />
           )}
         </div>
@@ -336,12 +414,17 @@ export function RegistryMapWorkPage() {
 
 function DetailPanel({
   record,
+  farms,
   onClose,
+  onAssignFarm,
 }: {
   record: RegistryRecord
+  farms: Array<{ id: string; name: string }>
   onClose: () => void
+  onAssignFarm: (farmId: string | null) => void
 }) {
   const p = record.property
+  const ex = record.extras
   return (
     <div className="w-[26rem] border-l bg-slate-50 overflow-auto flex-shrink-0">
       <div className="flex items-center justify-between border-b bg-white px-3 py-2">
@@ -367,6 +450,24 @@ function DetailPanel({
           <KV k="不動産番号" v={p.realEstateNumber} mono />
         </Section>
       )}
+
+      <Section title="工区">
+        <li className="flex gap-2 px-3 py-1.5 text-xs items-center">
+          <span className="w-20 flex-shrink-0 text-slate-500">割当</span>
+          <select
+            value={ex?.farmId ?? ''}
+            onChange={(e) => onAssignFarm(e.target.value || null)}
+            className="flex-1 rounded border px-1 py-0.5 text-xs"
+          >
+            <option value="">(未割当)</option>
+            {farms.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+        </li>
+      </Section>
 
       <Section title={`所在履歴 (${record.locations.length})`}>
         {record.locations.map((l) => (

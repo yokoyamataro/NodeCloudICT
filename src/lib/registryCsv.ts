@@ -53,6 +53,19 @@ export interface RegistryRightsEntry {
   detail: string      // 原因 / 権利者 / 債務者などの本文
 }
 
+// DB から 読んだ 時 だけ 埋まる 追加 情報。 CSV パース 結果 では 空。
+// 立会 の 集約 は 「全 shares が 同値 なら その 値、異なれば 'MIXED'」。
+export interface RegistryDbExtras {
+  id?: string
+  farmId: string | null
+  farmName: string | null
+  firstVisitAt: string | 'MIXED' | null   // ISO 文字列 / 混在 / 未設定
+  firstVisitStatus: string | 'MIXED' | null
+  secondVisitAt: string | 'MIXED' | null
+  secondVisitStatus: string | 'MIXED' | null
+  sharesCount: number
+}
+
 export interface RegistryRecord {
   seq: number
   property: RegistryProperty | null
@@ -61,6 +74,8 @@ export interface RegistryRecord {
   ownerships: RegistryOwnership[]
   kouku: RegistryRightsEntry[]
   otoku: RegistryRightsEntry[]
+  // DB 由来 の 追加 情報 (CSV パース 直後 は 未設定)
+  extras?: RegistryDbExtras
 }
 
 export interface RegistryCsvParseResult {

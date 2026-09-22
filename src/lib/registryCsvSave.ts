@@ -715,8 +715,12 @@ export async function loadRegistryFromDb(
     location: string
     parcel_number: string
     real_estate_number: string
+    farm_id: string | null
   }>
   if (propRows.length === 0) return []
+
+  // farm 名 を 引く (project 配下)
+  const farmNames = await fetchFarmNames(projectId)
 
   const idToRec = new Map<string, RegistryRecord>()
   for (const p of propRows) {
@@ -736,6 +740,16 @@ export async function loadRegistryFromDb(
       ownerships: [],
       kouku: [],
       otoku: [],
+      extras: {
+        id: p.id,
+        farmId: p.farm_id,
+        farmName: p.farm_id ? farmNames.get(p.farm_id) ?? null : null,
+        firstVisitAt: null,
+        firstVisitStatus: null,
+        secondVisitAt: null,
+        secondVisitStatus: null,
+        sharesCount: 0,
+      },
     })
   }
 
@@ -871,6 +885,62 @@ export async function loadRegistryFromDb(
     })
   }
 
+  // property_owner_shares を 全 property 分 まとめて 取得 し、
+  // 一次/二次 立会 の 日時 と 状況 を 「全 shares 同値 なら その値、異なれば MIXED」
+  // で 集約 する。
+  onProgress?.({ phase: '立会状況を集約中', done: 0, total: ids.length })
+  const shareRows: Array<{
+    property_id: string
+    first_visit_at: string | null
+    first_visit_status: string | null
+    second_visit_at: string | null
+    second_visit_status: string | null
+  }> = []
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK)
+    const { data, error: err } = await sb
+      .from('property_owner_shares')
+      .select(
+        'property_id, first_visit_at, first_visit_status, second_visit_at, second_visit_status',
+      )
+      .in('property_id', slice)
+    if (err) throw err
+    for (const row of (data ?? []) as typeof shareRows) shareRows.push(row)
+    onProgress?.({
+      phase: '立会状況を集約中',
+      done: Math.min(i + CHUNK, ids.length),
+      total: ids.length,
+    })
+  }
+
+  const sharesByProperty = new Map<string, typeof shareRows>()
+  for (const s of shareRows) {
+    const arr = sharesByProperty.get(s.property_id) ?? []
+    arr.push(s)
+    sharesByProperty.set(s.property_id, arr)
+  }
+
+  const aggregate = (values: Array<string | null>): string | 'MIXED' | null => {
+    const nonNull = values.filter((v): v is string => v != null && v !== '')
+    if (nonNull.length === 0) return null
+    const uniq = new Set(nonNull)
+    if (uniq.size === 1 && nonNull.length === values.length) {
+      return nonNull[0]
+    }
+    // 一部 未設定 or 値 が 割れて いる
+    return 'MIXED'
+  }
+
+  for (const [pid, arr] of sharesByProperty.entries()) {
+    const r = idToRec.get(pid)
+    if (!r || !r.extras) continue
+    r.extras.sharesCount = arr.length
+    r.extras.firstVisitAt = aggregate(arr.map((x) => x.first_visit_at))
+    r.extras.firstVisitStatus = aggregate(arr.map((x) => x.first_visit_status))
+    r.extras.secondVisitAt = aggregate(arr.map((x) => x.second_visit_at))
+    r.extras.secondVisitStatus = aggregate(arr.map((x) => x.second_visit_status))
+  }
+
   for (const r of idToRec.values()) {
     r.locations.sort((a, b) => a.order - b.order)
     r.displayHistories.sort((a, b) => a.order - b.order)
@@ -879,4 +949,30 @@ export async function loadRegistryFromDb(
     r.otoku.sort((a, b) => a.order - b.order)
   }
   return Array.from(idToRec.values()).sort((a, b) => a.seq - b.seq)
+}
+
+// project 配下 の farms を id→name で 引く 補助。
+async function fetchFarmNames(projectId: string): Promise<Map<string, string>> {
+  const { data, error } = await sb
+    .from('farms')
+    .select('id, name')
+    .eq('project_id', projectId)
+  if (error) throw error
+  const m = new Map<string, string>()
+  for (const f of (data ?? []) as Array<{ id: string; name: string }>) {
+    m.set(f.id, f.name)
+  }
+  return m
+}
+
+// 物件 の 工区 割当 を 更新。
+export async function updatePropertyFarm(
+  propertyId: string,
+  farmId: string | null,
+): Promise<void> {
+  const { error } = await sb
+    .from('registry_properties')
+    .update({ farm_id: farmId })
+    .eq('id', propertyId)
+  if (error) throw error
 }
