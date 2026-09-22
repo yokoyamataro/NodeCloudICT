@@ -93,13 +93,17 @@ interface GenericWorkAreaPageProps {
 }
 
 export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions, readOnly = false }: GenericWorkAreaPageProps) {
-  // URL ?panel=table|map で 「1 パネルのみ全画面」表示に切替
-  const fullscreenPanel = useMemo<'table' | 'map' | null>(() => {
+  // URL ?panel=table|map で 「1 パネルのみ全画面」表示に切替 (別ウィンドウ 用)。
+  // 通常表示 で は 「地図を隠す」 ボタン で 一覧を全画面 に できる ように 状態 に する。
+  const initialFullscreen = useMemo<'table' | 'map' | null>(() => {
     if (typeof window === 'undefined') return null
     const q = new URLSearchParams(window.location.search).get('panel')
     if (q === 'table' || q === 'map') return q
     return null
   }, [])
+  const [fullscreenPanel, setFullscreenPanel] = useState<'table' | 'map' | null>(
+    initialFullscreen,
+  )
   const isPopupWindow =
     typeof window !== 'undefined' &&
     !!new URLSearchParams(window.location.search).get('panel')
@@ -928,13 +932,34 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
               ) : (
                 <ChevronDown className="h-4 w-4 text-slate-400" />
               )}
-              区域登録
+              {isBoundarySurvey ? '地番管理' : '区域登録'}
               {listCollapsed && (
                 <span className="text-xs font-normal text-slate-400">
                   ({areas.length})
                 </span>
               )}
             </button>
+            {/* 一覧 を 全画面 (地図隠す) に する トグル。 別ウィンドウ 表示 (?panel=xxx) 時 は 非表示 */}
+            {!isPopupWindow && (
+              <button
+                type="button"
+                onClick={() =>
+                  setFullscreenPanel((v) => (v === 'table' ? null : 'table'))
+                }
+                title={
+                  fullscreenPanel === 'table'
+                    ? '地図と一覧を並べて表示'
+                    : '地図を隠して一覧を全画面表示'
+                }
+                className={`px-2 py-1 text-xs rounded border ${
+                  fullscreenPanel === 'table'
+                    ? 'bg-blue-100 border-blue-400 text-blue-800 font-medium'
+                    : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {fullscreenPanel === 'table' ? '分割表示' : '一覧全画面'}
+              </button>
+            )}
             {/* 仮境界 / 確定境界 の 切替。 地番 は 1 行 の まま で、
                 出す 構成点 (と 面積) を 入れ替える。 件数 は 「その 形 が
                 登録済み の 地番 数」 */}

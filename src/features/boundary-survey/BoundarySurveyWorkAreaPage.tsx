@@ -310,6 +310,29 @@ export function BoundarySurveyWorkAreaPage() {
         ownerName: string | null
         registeredAreaSqm: number | null
       }> = []
+      // parcels upsert 用 の 一括 バッファ (既存更新 と 新規INSERT で 共用)
+      const parcelUpserts: Array<{
+        work_area_id: string
+        parcel_number: string
+        registered_owner_name: string | null
+        registered_area_sqm: number | null
+      }> = []
+
+      // 登記CSV や 過去 の SIM で 既 に 作られて いる 同 地番 の 行 が あれば
+      // その 行 の point_ids を 更新 する (仮境界)。
+      const existingByLabel = new Map<string, string>()
+      for (const a of workAreas['boundary_survey'] ?? []) {
+        const label =
+          parcelsByWorkAreaId.get(a.id)?.parcel_number || a.zoneNumber || a.name
+        if (label) existingByLabel.set(label, a.id)
+      }
+      const jpgisUpdates: Array<{
+        id: string
+        point_ids: string[]
+        ownerName: string | null
+        registeredAreaSqm: number | null
+        parcelNumber: string
+      }> = []
       for (const poly of result.polygons) {
         const pointIds = poly.pointNumbers
           .map((pn) => idByName.get(pn))
@@ -319,6 +342,17 @@ export function BoundarySurveyWorkAreaPage() {
           continue
         }
         const label = poly.parcelName || poly.parcelNumber || `画地${insertRows.length + 1}`
+        const hitId = existingByLabel.get(label)
+        if (hitId) {
+          jpgisUpdates.push({
+            id: hitId,
+            point_ids: pointIds,
+            ownerName: poly.ownerName,
+            registeredAreaSqm: poly.registeredAreaSqm,
+            parcelNumber: label,
+          })
+          continue
+        }
         insertRows.push({
           farm_id: currentFarm.id,
           work_type: 'boundary_survey',
@@ -338,15 +372,29 @@ export function BoundarySurveyWorkAreaPage() {
         })
       }
 
+      // 既存 行 の point_ids を 更新 + parcels に owner/area を 反映
+      for (const u of jpgisUpdates) {
+        const { error } = await supabase
+          .from('design_work_areas')
+          .update({ point_ids: u.point_ids } as never)
+          .eq('id', u.id)
+        if (error) {
+          console.error('画地 UPDATE 失敗:', error)
+          skippedPolygons++
+        } else {
+          createdPolygons++
+          parcelUpserts.push({
+            work_area_id: u.id,
+            parcel_number: u.parcelNumber,
+            registered_owner_name: u.ownerName,
+            registered_area_sqm: u.registeredAreaSqm,
+          })
+        }
+      }
+
       // 100 件ずつ INSERT。.select('id') で返却 ID を取り、parcels upsert に使う。
       const POLY_CHUNK = 100
       setProgress({ phase: '画地を取り込み中', done: 0, total: insertRows.length })
-      const parcelUpserts: Array<{
-        work_area_id: string
-        parcel_number: string
-        registered_owner_name: string | null
-        registered_area_sqm: number | null
-      }> = []
       for (let i = 0; i < insertRows.length; i += POLY_CHUNK) {
         const slice = insertRows.slice(i, i + POLY_CHUNK)
         const sliceMeta = meta.slice(i, i + POLY_CHUNK)
@@ -516,17 +564,17 @@ export function BoundarySurveyWorkAreaPage() {
         perimeter_m: null
         notes: null
       }> = []
-      // 確定境界 として 取り込む 場合、同じ 地番名 の 行 が あれば
-      // その 行 の confirmed_point_ids を 更新 する (地番 は 1 行 の まま)。
-      const confirmedMode = simKindRef.current === 'confirmed'
+      // 仮 / 確定 どちら の モード でも、既存 の 同 地番名 の 行 が あれば
+      // その 行 を UPDATE する。 登記CSV で 先 に 地番 だけ 作って あって、
+      // 後 から SIM で 座標 を 埋める フロー を 想定。
+      const simMode = simKindRef.current
       const existingByLabel = new Map<string, string>()
-      if (confirmedMode) {
-        for (const a of workAreas['boundary_survey'] ?? []) {
-          const label =
-            parcelsByWorkAreaId.get(a.id)?.parcel_number || a.zoneNumber || a.name
-          if (label) existingByLabel.set(label, a.id)
-        }
+      for (const a of workAreas['boundary_survey'] ?? []) {
+        const label =
+          parcelsByWorkAreaId.get(a.id)?.parcel_number || a.zoneNumber || a.name
+        if (label) existingByLabel.set(label, a.id)
       }
+      const provisionalUpdates: Array<{ id: string; point_ids: string[] }> = []
       const confirmedUpdates: Array<{ id: string; point_ids: string[] }> = []
 
       for (let i = 0; i < polyTotal; i++) {
@@ -539,9 +587,13 @@ export function BoundarySurveyWorkAreaPage() {
           continue
         }
         const label = poly.parcelName || poly.parcelNumber || `画地${insertRows.length + 1}`
-        const hitId = confirmedMode ? existingByLabel.get(label) : undefined
+        const hitId = existingByLabel.get(label)
         if (hitId) {
-          confirmedUpdates.push({ id: hitId, point_ids: pointIds })
+          if (simMode === 'confirmed') {
+            confirmedUpdates.push({ id: hitId, point_ids: pointIds })
+          } else {
+            provisionalUpdates.push({ id: hitId, point_ids: pointIds })
+          }
           continue
         }
         insertRows.push({
@@ -549,10 +601,8 @@ export function BoundarySurveyWorkAreaPage() {
           work_type: 'boundary_survey',
           zone_number: label,
           name: label,
-          // 確定 で 取り込む のに 対応する 地番 が 無ければ、行 を 作って
-          // 確定側 に 入れる (仮 は 空 の まま)
-          point_ids: confirmedMode ? [] : pointIds,
-          confirmed_point_ids: confirmedMode ? pointIds : [],
+          point_ids: simMode === 'confirmed' ? [] : pointIds,
+          confirmed_point_ids: simMode === 'confirmed' ? pointIds : [],
           area_sqm: null,
           area_ha: null,
           perimeter_m: null,
@@ -560,7 +610,19 @@ export function BoundarySurveyWorkAreaPage() {
         })
       }
 
-      // 既存 地番 の 確定側 を 更新
+      // 既存 地番 の 更新 (仮 / 確定 それぞれ)
+      for (const u of provisionalUpdates) {
+        const { error } = await supabase
+          .from('design_work_areas')
+          .update({ point_ids: u.point_ids } as never)
+          .eq('id', u.id)
+        if (error) {
+          console.error('仮境界 UPDATE 失敗:', error)
+          skippedPolygons++
+        } else {
+          createdPolygons++
+        }
+      }
       for (const u of confirmedUpdates) {
         const { error } = await supabase
           .from('design_work_areas')
