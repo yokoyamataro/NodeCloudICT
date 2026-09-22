@@ -201,16 +201,9 @@ const navigation: NavGroup[] = [
       { name: '建物調査報告書', href: '/boundary-survey/building-report', icon: FileText },
     ],
   },
-  {
-    name: '法務局備付地図作成作業',
-    href: '/boundary-survey/registry-map',
-    icon: Map,
-    children: [
-      { name: '物件一覧', href: '/boundary-survey/registry-map', icon: Map },
-      { name: '地権者リスト', href: '/boundary-survey/registry-owners', icon: Users },
-      { name: '立会カレンダー', href: '/boundary-survey/registry-visit-calendar', icon: CalendarClock },
-    ],
-  },
+  // 法務局備付地図作成作業 の 機能 は 地番管理 / 地権者管理 に 統合、
+  // 立会 は カレンダー ページ を 別立て する。
+  { name: '立会カレンダー', href: '/boundary-survey/visit-calendar', icon: CalendarClock },
   // 土木工事: 面 の 工種 は 「農地整備」 に まとめる (線形物 は 別立て)
   {
     name: '農地整備',

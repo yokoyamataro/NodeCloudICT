@@ -1,26 +1,31 @@
-// 法務局備付地図作成作業 > 立会カレンダー。
+// 立会カレンダー。
 //
 // 縦: 時刻 (15 分 刻み、default 07:00〜19:00)。
-// 横: 「日付」 モード → 週 (Mon〜Sun) の 7 列 / 「工区」 モード → 選択日 の 全工区。
+// 横: 選択日 を 中心 と した 週 (Mon〜Sun 7 列)。
 //
-// データ: property_owner_shares の first_visit_at / second_visit_at を
-// 参照。 一次 = 青、二次 = 橙 で 塗り分け。
+// データ: parcel_landowners.first_visit_at / second_visit_at (現 farm 内)。
+// 一次 = 青、二次 = 橙 の チップ で 表示。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
-import {
-  fetchVisitsForCalendar,
-  type VisitCalendarEntry,
-} from '@/lib/registryCsvSave'
+import { supabase } from '@/lib/supabase'
 
-type Mode = 'date' | 'farm'
+const sb = supabase as unknown as {
+  from: (t: string) => {
+    select: (cols: string) => any
+  }
+}
 
-interface Column {
-  key: string
-  label: string
-  subLabel?: string
-  filter: (v: VisitCalendarEntry) => boolean
+interface VisitEntry {
+  share_id: string   // parcel_landowners row の 疑似 key (parcel_id + landowner_id)
+  parcel_id: string
+  parcel_number: string
+  landowner_id: string
+  landowner_name: string
+  visit_at: string
+  visit_status: string
+  visit_kind: 'first' | 'second'
 }
 
 const START_HOUR = 7
@@ -29,35 +34,26 @@ const SLOT_MIN = 15
 const SLOTS_PER_HOUR = 60 / SLOT_MIN
 const TOTAL_SLOTS = (END_HOUR - START_HOUR) * SLOTS_PER_HOUR
 
-function pad(n: number): string {
-  return String(n).padStart(2, '0')
-}
-
-function ymd(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-
-function startOfDay(d: Date): Date {
+const pad = (n: number) => String(n).padStart(2, '0')
+const ymd = (d: Date) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+const startOfDay = (d: Date) => {
   const x = new Date(d)
   x.setHours(0, 0, 0, 0)
   return x
 }
-
-function addDays(d: Date, n: number): Date {
+const addDays = (d: Date, n: number) => {
   const x = new Date(d)
   x.setDate(x.getDate() + n)
   return x
 }
-
-// 週 の 始まり (月曜)
-function startOfWeek(d: Date): Date {
+const startOfWeek = (d: Date) => {
   const x = startOfDay(d)
-  const dow = x.getDay() // 0=日
+  const dow = x.getDay()
   const back = dow === 0 ? 6 : dow - 1
   return addDays(x, -back)
 }
-
-function slotIndexOf(iso: string): number | null {
+const slotIndexOf = (iso: string): number | null => {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return null
   const h = d.getHours()
@@ -65,111 +61,121 @@ function slotIndexOf(iso: string): number | null {
   if (h < START_HOUR || h >= END_HOUR) return null
   return (h - START_HOUR) * SLOTS_PER_HOUR + Math.floor(m / SLOT_MIN)
 }
-
-function slotLabel(slot: number): string {
+const slotLabel = (slot: number): string => {
   const h = Math.floor(slot / SLOTS_PER_HOUR) + START_HOUR
   const m = (slot % SLOTS_PER_HOUR) * SLOT_MIN
   return `${pad(h)}:${pad(m)}`
 }
 
-export function RegistryVisitCalendarPage() {
-  const { currentFarm, farms } = useFarmStore()
-  const projectId = currentFarm?.project_id ?? null
-  const projectFarms = useMemo(
-    () => farms.filter((f) => f.project_id === projectId),
-    [farms, projectId],
-  )
-
-  const [mode, setMode] = useState<Mode>('date')
+export function VisitCalendarPage() {
+  const { currentFarm } = useFarmStore()
   const [anchorDate, setAnchorDate] = useState<Date>(() => startOfDay(new Date()))
-  const [visits, setVisits] = useState<VisitCalendarEntry[]>([])
+  const [visits, setVisits] = useState<VisitEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // モード に 応じた 期間 (fromIso, toIso)
   const range = useMemo(() => {
-    if (mode === 'date') {
-      const from = startOfWeek(anchorDate)
-      const to = addDays(from, 7)
-      return { from, to }
-    }
-    return { from: startOfDay(anchorDate), to: addDays(startOfDay(anchorDate), 1) }
-  }, [mode, anchorDate])
+    const from = startOfWeek(anchorDate)
+    const to = addDays(from, 7)
+    return { from, to }
+  }, [anchorDate])
 
   const load = useCallback(async () => {
-    if (!projectId) return
+    if (!currentFarm) return
     setLoading(true)
     setError(null)
     try {
-      const rows = await fetchVisitsForCalendar(
-        projectId,
-        range.from.toISOString(),
-        range.to.toISOString(),
-      )
-      setVisits(rows)
+      // parcel_landowners の 一次/二次 を それぞれ 期間 で フィルタ。
+      // parcels 経由 で 現 farm の 分 に 絞る。
+      const fetchOne = async (
+        field: 'first_visit_at' | 'second_visit_at',
+        statusField: 'first_visit_status' | 'second_visit_status',
+        kind: 'first' | 'second',
+      ): Promise<VisitEntry[]> => {
+        const { data, error: err } = await sb
+          .from('parcel_landowners')
+          .select(
+            `parcel_id, landowner_id, ${field}, ${statusField},
+             parcels!inner(parcel_number, design_work_areas!inner(farm_id)),
+             landowners!inner(full_name)`,
+          )
+          .eq('parcels.design_work_areas.farm_id', currentFarm.id)
+          .gte(field, range.from.toISOString())
+          .lt(field, range.to.toISOString())
+        if (err) throw err
+        const out: VisitEntry[] = []
+        for (const row of (data ?? []) as Array<{
+          parcel_id: string
+          landowner_id: string
+          first_visit_at?: string | null
+          first_visit_status?: string | null
+          second_visit_at?: string | null
+          second_visit_status?: string | null
+          parcels: { parcel_number: string } | { parcel_number: string }[]
+          landowners: { full_name: string } | { full_name: string }[]
+        }>) {
+          const rowAny = row as unknown as Record<string, string | null>
+          const visitAt = rowAny[field]
+          if (!visitAt) continue
+          const parcels = Array.isArray(row.parcels) ? row.parcels[0] : row.parcels
+          const landowners = Array.isArray(row.landowners)
+            ? row.landowners[0]
+            : row.landowners
+          out.push({
+            share_id: `${row.parcel_id}-${row.landowner_id}-${kind}`,
+            parcel_id: row.parcel_id,
+            parcel_number: parcels?.parcel_number ?? '',
+            landowner_id: row.landowner_id,
+            landowner_name: landowners?.full_name ?? '',
+            visit_at: visitAt,
+            visit_status: rowAny[statusField] ?? '',
+            visit_kind: kind,
+          })
+        }
+        return out
+      }
+
+      const [firsts, seconds] = await Promise.all([
+        fetchOne('first_visit_at', 'first_visit_status', 'first'),
+        fetchOne('second_visit_at', 'second_visit_status', 'second'),
+      ])
+      setVisits([...firsts, ...seconds])
     } catch (err) {
       console.error(err)
       setError(err instanceof Error ? err.message : '立会予定の取得に失敗しました')
     } finally {
       setLoading(false)
     }
-  }, [projectId, range.from, range.to])
+  }, [currentFarm, range.from, range.to])
 
   useEffect(() => {
     void load()
   }, [load])
 
-  // 列 定義 (モード に 応じ 動的)
-  const columns = useMemo<Column[]>(() => {
-    if (mode === 'date') {
-      const from = range.from
-      return Array.from({ length: 7 }, (_, i) => {
-        const day = addDays(from, i)
-        const key = ymd(day)
-        return {
-          key,
-          label: `${day.getMonth() + 1}/${day.getDate()}`,
-          subLabel: ['月', '火', '水', '木', '金', '土', '日'][i],
-          filter: (v) => {
-            const d = new Date(v.visit_at)
-            return ymd(d) === key
-          },
-        }
-      })
-    }
-    return [
-      {
-        key: 'none',
-        label: '(未割当)',
-        filter: (v) => v.farm_id == null,
-      },
-      ...projectFarms.map((f): Column => ({
-        key: f.id,
-        label: f.name,
-        filter: (v) => v.farm_id === f.id,
-      })),
-    ]
-  }, [mode, range.from, projectFarms])
+  const columns = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const day = addDays(range.from, i)
+      return {
+        key: ymd(day),
+        label: `${day.getMonth() + 1}/${day.getDate()}`,
+        subLabel: ['月', '火', '水', '木', '金', '土', '日'][i],
+      }
+    })
+  }, [range.from])
 
-  // 行 × 列 に 割り当て
   const cellMap = useMemo(() => {
-    const m = new Map<string, VisitCalendarEntry[]>()
+    const m = new Map<string, VisitEntry[]>()
     for (const v of visits) {
       const slot = slotIndexOf(v.visit_at)
       if (slot == null) continue
-      const col = columns.find((c) => c.filter(v))
-      if (!col) continue
-      const key = `${col.key}|${slot}`
+      const dayKey = ymd(new Date(v.visit_at))
+      const key = `${dayKey}|${slot}`
       const arr = m.get(key) ?? []
       arr.push(v)
       m.set(key, arr)
     }
     return m
-  }, [visits, columns])
-
-  const shiftBy = (n: number) => {
-    setAnchorDate((d) => addDays(d, mode === 'date' ? n * 7 : n))
-  }
+  }, [visits])
 
   if (!currentFarm) {
     return (
@@ -187,31 +193,9 @@ export function RegistryVisitCalendarPage() {
           (縦 15 分刻み / 一次=青、二次=橙)
         </div>
         <div className="flex-1" />
-
-        <div className="flex overflow-hidden rounded border text-xs">
-          <button
-            type="button"
-            onClick={() => setMode('date')}
-            className={`px-2 py-1 ${
-              mode === 'date' ? 'bg-blue-600 text-white' : 'bg-white hover:bg-slate-50'
-            }`}
-          >
-            日付
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('farm')}
-            className={`px-2 py-1 ${
-              mode === 'farm' ? 'bg-blue-600 text-white' : 'bg-white hover:bg-slate-50'
-            }`}
-          >
-            工区
-          </button>
-        </div>
-
         <button
           type="button"
-          onClick={() => shiftBy(-1)}
+          onClick={() => setAnchorDate((d) => addDays(d, -7))}
           className="rounded border p-1 hover:bg-slate-50"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
@@ -227,7 +211,7 @@ export function RegistryVisitCalendarPage() {
         />
         <button
           type="button"
-          onClick={() => shiftBy(1)}
+          onClick={() => setAnchorDate((d) => addDays(d, 7))}
           className="rounded border p-1 hover:bg-slate-50"
         >
           <ChevronRight className="h-3.5 w-3.5" />
@@ -237,7 +221,7 @@ export function RegistryVisitCalendarPage() {
           onClick={() => setAnchorDate(startOfDay(new Date()))}
           className="rounded border px-2 py-1 text-xs hover:bg-slate-50"
         >
-          今日
+          今週
         </button>
       </div>
 
@@ -258,7 +242,6 @@ export function RegistryVisitCalendarPage() {
             gridTemplateColumns: `4rem repeat(${columns.length}, minmax(9rem, 1fr))`,
           }}
         >
-          {/* ヘッダー */}
           <div className="sticky top-0 z-10 border-b border-r bg-slate-100 px-2 py-1 text-slate-500">
             時刻
           </div>
@@ -268,12 +251,9 @@ export function RegistryVisitCalendarPage() {
               className="sticky top-0 z-10 border-b border-r bg-slate-100 px-2 py-1 text-slate-700"
             >
               <div className="font-semibold">{c.label}</div>
-              {c.subLabel && (
-                <div className="text-[10px] text-slate-500">{c.subLabel}</div>
-              )}
+              <div className="text-[10px] text-slate-500">{c.subLabel}</div>
             </div>
           ))}
-          {/* 本体 */}
           {Array.from({ length: TOTAL_SLOTS }, (_, slot) => (
             <TimeRow
               key={slot}
@@ -294,8 +274,8 @@ function TimeRow({
   cellMap,
 }: {
   slot: number
-  columns: Array<{ key: string; label: string }>
-  cellMap: Map<string, VisitCalendarEntry[]>
+  columns: Array<{ key: string }>
+  cellMap: Map<string, VisitEntry[]>
 }) {
   const isHour = slot % SLOTS_PER_HOUR === 0
   return (
@@ -316,7 +296,7 @@ function TimeRow({
           >
             <div className="flex flex-col gap-0.5">
               {list.map((v) => (
-                <VisitChip key={v.share_id + '-' + v.visit_kind} entry={v} />
+                <VisitChip key={v.share_id} entry={v} />
               ))}
             </div>
           </div>
@@ -326,7 +306,7 @@ function TimeRow({
   )
 }
 
-function VisitChip({ entry }: { entry: VisitCalendarEntry }) {
+function VisitChip({ entry }: { entry: VisitEntry }) {
   const color =
     entry.visit_kind === 'first'
       ? 'bg-blue-100 border-blue-300 text-blue-900'
@@ -336,8 +316,7 @@ function VisitChip({ entry }: { entry: VisitCalendarEntry }) {
   const tooltip = [
     `${entry.visit_kind === 'first' ? '一次' : '二次'} 立会`,
     entry.parcel_number,
-    entry.owner_name,
-    entry.farm_name ?? '(工区未割当)',
+    entry.landowner_name,
     entry.visit_status || '(状況未設定)',
     label,
   ].join(' / ')
@@ -348,7 +327,7 @@ function VisitChip({ entry }: { entry: VisitCalendarEntry }) {
     >
       <span className="font-mono">{label}</span>
       <span className="ml-1 font-semibold">{entry.parcel_number}</span>
-      {entry.owner_name && <span className="ml-1">{entry.owner_name}</span>}
+      {entry.landowner_name && <span className="ml-1">{entry.landowner_name}</span>}
     </div>
   )
 }

@@ -53,12 +53,24 @@ export interface RegistryRightsEntry {
   detail: string      // 原因 / 権利者 / 債務者などの本文
 }
 
+export type RegistrationKind = 'registered' | 'provisional' | 'confirmed'
+
 // DB から 読んだ 時 だけ 埋まる 追加 情報。 CSV パース 結果 では 空。
 // 立会 の 集約 は 「全 shares が 同値 なら その 値、異なれば 'MIXED'」。
 export interface RegistryDbExtras {
   id?: string
+  registrationKind: RegistrationKind
   farmId: string | null
   farmName: string | null
+  // 分筆 / 合筆 の 関係 (該当時 のみ 非 null)
+  splitFromPropertyId: string | null
+  splitFromParcelNumber: string | null
+  splitAt: string | null
+  mergedIntoPropertyId: string | null
+  mergedIntoParcelNumber: string | null
+  mergedAt: string | null
+  mergedAreaSqm: number | null
+  // 立会 集約
   firstVisitAt: string | 'MIXED' | null   // ISO 文字列 / 混在 / 未設定
   firstVisitStatus: string | 'MIXED' | null
   secondVisitAt: string | 'MIXED' | null

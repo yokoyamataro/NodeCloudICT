@@ -43,9 +43,9 @@ import { LandReportPage } from '@/features/boundary-survey/LandReportPage'
 import { FloorPlanPage } from '@/features/boundary-survey/FloorPlanPage'
 import { LandSurveyDrawingPage } from '@/features/boundary-survey/LandSurveyDrawingPage'
 import { BuildingReportPage } from '@/features/boundary-survey/BuildingReportPage'
-import { RegistryMapWorkPage } from '@/features/boundary-survey/RegistryMapWorkPage'
-import { RegistryOwnersPage } from '@/features/boundary-survey/RegistryOwnersPage'
-import { RegistryVisitCalendarPage } from '@/features/boundary-survey/RegistryVisitCalendarPage'
+// registry-map / registry-owners / registry-visit-calendar は 統合 に より 廃止。
+// 機能 は 境界測量 の 地番管理 / 地権者管理 / 立会カレンダー に 移行 済。
+import { VisitCalendarPage } from '@/features/boundary-survey/VisitCalendarPage'
 // オルソ画像
 import { OrthophotoPage } from '@/features/orthophoto/OrthophotoPage'
 // 新規工種
@@ -342,9 +342,8 @@ function AppRoutes() {
           <Route path="land-survey-drawing" element={<LandSurveyDrawingPage />} />
           <Route path="floor-plan" element={<FloorPlanPage />} />
           <Route path="building-report" element={<BuildingReportPage />} />
-          <Route path="registry-map" element={<RegistryMapWorkPage />} />
-          <Route path="registry-owners" element={<RegistryOwnersPage />} />
-          <Route path="registry-visit-calendar" element={<RegistryVisitCalendarPage />} />
+          {/* 立会カレンダー (旧 registry-visit-calendar を 統合) */}
+          <Route path="visit-calendar" element={<VisitCalendarPage />} />
         </Route>
         {/* オルソ画像 */}
         <Route path="orthophoto" element={<OrthophotoPage />} />

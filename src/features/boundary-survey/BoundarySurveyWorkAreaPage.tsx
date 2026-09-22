@@ -32,6 +32,11 @@ import {
   type SimaExportPolygon,
 } from '@/lib/sima-parser'
 import { loadJpgisXmlFile } from '@/lib/jpgis-parser'
+import { parseRegistryCsv, readRegistryCsvFile } from '@/lib/registryCsv'
+import {
+  deleteFarmRegistryParcels,
+  importParcelsFromCsv,
+} from '@/lib/parcelRegistryImport'
 import { supabase } from '@/lib/supabase'
 import type { CoordinateRow } from '@/stores/coordinateStore'
 import type { DesignWorkArea } from '@/types/database'
@@ -45,6 +50,7 @@ import { BOUNDARY_KIND_LABEL, type BoundaryKind } from '@/lib/boundaryKind'
 export function BoundarySurveyWorkAreaPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const xmlFileRef = useRef<HTMLInputElement>(null)
+  const registryCsvRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState<'import' | 'export' | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [csvOpen, setCsvOpen] = useState(false)
@@ -164,6 +170,46 @@ export function BoundarySurveyWorkAreaPage() {
     fileRef.current?.click()
   }
   const handleOpenJpgisImport = () => xmlFileRef.current?.click()
+  const handleOpenRegistryCsvImport = () => registryCsvRef.current?.click()
+
+  // 登記 CSV (法務局 4600 形式 / Shift-JIS) 取込。 parcels + 子履歴 + 空 の
+  // design_work_areas を bulk 生成 する。 既存 の 「CSV 由来」 parcels は 事前 削除。
+  const handleRegistryCsvChosen = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !currentFarm) return
+    const proceed = confirm(
+      'この工区 の 既存 「登記CSV 取込 分」 を 全て 削除 し、新しい CSV で 置き換えます。 よろしいですか？',
+    )
+    if (!proceed) return
+    setBusy('import')
+    setMessage(null)
+    setProgress({ phase: 'CSV を解析中', done: 0, total: 0 })
+    try {
+      const text = await readRegistryCsvFile(file)
+      const parsed = parseRegistryCsv(text)
+      setProgress({ phase: '既存の登記データを削除中', done: 0, total: 0 })
+      await deleteFarmRegistryParcels(currentFarm.id)
+      const { inserted } = await importParcelsFromCsv(
+        currentFarm.id,
+        parsed.records,
+        (p) => setProgress(p),
+      )
+      invalidateWorkAreaCache()
+      await fetchWorkAreas(currentFarm.id)
+      setMessage(
+        `${inserted.toLocaleString()} 件 を 取込 (地権者 の 反映 は 「地権者管理 > 地番から読込」 から)`,
+      )
+    } catch (err) {
+      console.error(err)
+      setMessage(err instanceof Error ? err.message : '登記CSV 取込に失敗しました')
+    } finally {
+      setBusy(null)
+      setProgress(null)
+    }
+  }
 
   // JPGIS (SIMA XML) 取り込み。SIMA テキストフローを踏襲しつつ、画地に owner / area が
   // 入っているのを parcels に反映する。
@@ -794,6 +840,21 @@ export function BoundarySurveyWorkAreaPage() {
                   >
                     JPGIS.XML取り込み (.xml)
                   </button>
+                  <div className="border-b" />
+                  <div className="px-3 pt-2 pb-1 text-[10px] text-slate-400 uppercase tracking-wide">
+                    登記CSV (法務局4600形式)
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenMenu(null)
+                      handleOpenRegistryCsvImport()
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-slate-50"
+                    title="Shift-JIS CSV。 既存 の CSV 由来 データ は 上書き"
+                  >
+                    登記CSV取り込み (.csv)
+                  </button>
                 </div>
               )}
             </div>
@@ -986,6 +1047,13 @@ export function BoundarySurveyWorkAreaPage() {
         type="file"
         accept=".xml,.XML,application/xml,text/xml"
         onChange={handleJpgisFileChosen}
+        className="hidden"
+      />
+      <input
+        ref={registryCsvRef}
+        type="file"
+        accept=".csv,.CSV,text/csv,application/vnd.ms-excel"
+        onChange={handleRegistryCsvChosen}
         className="hidden"
       />
     </>
