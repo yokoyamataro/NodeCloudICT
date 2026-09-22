@@ -1,11 +1,15 @@
 // 登記 CSV パース結果 (RegistryRecord[]) を Supabase の 8 テーブル系に
 // 保存 / 読込 する サービス。 project_id 単位。
 //
-// 今回 の 段階: CSV 原文 (物件本体 + 5 履歴表) の 保存 と 読込 のみ。
-// project_owners / property_owner_shares の 名寄せ は 別段階 で 実装する。
+// 実装 範囲:
+//   ・CSV 原文 6 テーブル の bulk INSERT / 読込 (registry_*)
+//   ・project_owners の 名寄せ + property_owner_shares の 生成
+//     - 氏名 + 住所 完全一致 → 既存 owner に 自動 リンク
+//     - 氏名 のみ 一致 (住所 違い) → 呼び出し側 の resolveConflicts コールバック
+//       に 判定 を 委譲
+//     - どちらも 一致 しない → 新規 owner を 作成
 //
 // 型 は Database に 未登録 の ため 内部 で any キャスト を 使う。
-// 呼び出し側 は 型付き の 引数 / 戻り値 だけ を 見ることになる。
 
 import { supabase } from './supabase'
 import type { RegistryRecord } from './registryCsv'
@@ -15,6 +19,33 @@ export interface SaveProgress {
   done: number
   total: number
 }
+
+// (name, address) を キー に 使う。 null / undefined は 空文字列 に 正規化。
+function ownerKey(name: string, address: string): string {
+  return `${(name ?? '').trim()}${(address ?? '').trim()}`
+}
+
+// 名寄せ で 「氏名 のみ 一致」 の 確認 が 必要 な 塊
+export interface OwnerConflict {
+  // 一意 キー (name|address) — modal の 行 の key
+  key: string
+  csvName: string
+  csvAddress: string
+  // 既存 owner の 候補 (氏名 一致 / 住所 違い)
+  candidates: Array<{ id: string; name: string; address: string }>
+}
+
+// ユーザー の 決定
+export interface OwnerImportResolution {
+  // conflict.key → 選択 id ('new' なら 新規 owner を 作る)
+  decisions: Record<string, string | 'new'>
+}
+
+// 呼び出し側 は これ を async で 実装 (React の modal)。
+// null 返却 = キャンセル (owner の 保存 を スキップ、6 テーブル は 保存 済み)。
+export type OwnerConflictResolver = (
+  conflicts: OwnerConflict[],
+) => Promise<OwnerImportResolution | null>
 
 const CHUNK = 500
 
@@ -78,8 +109,9 @@ export async function saveRegistryCsv(
   projectId: string,
   records: RegistryRecord[],
   onProgress?: (p: SaveProgress) => void,
-): Promise<{ inserted: number }> {
-  if (records.length === 0) return { inserted: 0 }
+): Promise<{ inserted: number; seqToId: Map<number, string> }> {
+  if (records.length === 0)
+    return { inserted: 0, seqToId: new Map<number, string>() }
 
   // 1) registry_properties を bulk INSERT。 initial_area_sqm は
   //    表示履歴 の 最新 非空 の 地積 から 推定 (登記時 の 地積)。
@@ -219,7 +251,424 @@ export async function saveRegistryCsv(
   await insertMany('registry_kouku', kouRows, '甲区を書き込み中')
   await insertMany('registry_otoku', otoRows, '乙区を書き込み中')
 
-  return { inserted: records.length }
+  return { inserted: records.length, seqToId }
+}
+
+// ============================================================
+// 地権者 の 名寄せ + property_owner_shares 生成
+// ============================================================
+
+interface ExistingOwner {
+  id: string
+  name: string
+  address: string
+}
+
+// CSV の owner (name+address) × 属する 地番 (seq) の 一覧 を 抽出
+interface CsvOwnerEntry {
+  name: string
+  address: string
+  share: string
+  order_no: number
+  propertySeq: number
+}
+
+function collectCsvOwnerEntries(records: RegistryRecord[]): CsvOwnerEntry[] {
+  const out: CsvOwnerEntry[] = []
+  for (const r of records) {
+    for (const o of r.ownerships) {
+      out.push({
+        name: (o.ownerName ?? '').trim(),
+        address: (o.address ?? '').trim(),
+        share: o.share ?? '',
+        order_no: o.order,
+        propertySeq: r.seq,
+      })
+    }
+  }
+  return out
+}
+
+async function fetchExistingOwners(projectId: string): Promise<ExistingOwner[]> {
+  const { data, error } = await sb
+    .from('project_owners')
+    .select('id, name, address')
+    .eq('project_id', projectId)
+  if (error) throw error
+  return ((data ?? []) as Array<{
+    id: string
+    name: string
+    address: string | null
+  }>).map((o) => ({
+    id: o.id,
+    name: o.name ?? '',
+    address: o.address ?? '',
+  }))
+}
+
+// CSV 側 の 一意 owner (name+address) を 集めて、既存 project_owners と 突合し、
+// 「完全一致 (自動)」「氏名一致 (要確認)」「該当なし (新規)」 に 振り分ける。
+export interface OwnerImportPlan {
+  // 完全一致 で 既存 owner に 紐付く (name+address key → owner_id)
+  exactMatches: Record<string, string>
+  // 該当 owner が 0 件 (新規 作成 が 決定)
+  newOwners: Array<{ name: string; address: string }>
+  // 氏名 一致 だけ、住所 が 違う (ユーザー 判断 が 必要)
+  conflicts: OwnerConflict[]
+}
+
+export async function planOwnerImport(
+  projectId: string,
+  records: RegistryRecord[],
+): Promise<OwnerImportPlan> {
+  const entries = collectCsvOwnerEntries(records)
+  // CSV 内 の 一意 (name+address)
+  const uniqCsv = new Map<string, { name: string; address: string }>()
+  for (const e of entries) {
+    if (!e.name) continue
+    const k = ownerKey(e.name, e.address)
+    if (!uniqCsv.has(k)) uniqCsv.set(k, { name: e.name, address: e.address })
+  }
+
+  const existing = await fetchExistingOwners(projectId)
+  const byExactKey = new Map<string, string>() // name+address → owner id
+  const byName = new Map<string, ExistingOwner[]>()
+  for (const o of existing) {
+    byExactKey.set(ownerKey(o.name, o.address), o.id)
+    const list = byName.get(o.name) ?? []
+    list.push(o)
+    byName.set(o.name, list)
+  }
+
+  const exactMatches: Record<string, string> = {}
+  const newOwners: Array<{ name: string; address: string }> = []
+  const conflicts: OwnerConflict[] = []
+
+  for (const [key, cur] of uniqCsv.entries()) {
+    const exact = byExactKey.get(key)
+    if (exact) {
+      exactMatches[key] = exact
+      continue
+    }
+    const nameCandidates = byName.get(cur.name)
+    if (nameCandidates && nameCandidates.length > 0) {
+      conflicts.push({
+        key,
+        csvName: cur.name,
+        csvAddress: cur.address,
+        candidates: nameCandidates.map((c) => ({
+          id: c.id,
+          name: c.name,
+          address: c.address,
+        })),
+      })
+    } else {
+      newOwners.push({ name: cur.name, address: cur.address })
+    }
+  }
+
+  return { exactMatches, newOwners, conflicts }
+}
+
+// plan + resolution から 実際 に owner を 作成 し、property_owner_shares を 挿入 する。
+export async function applyOwnerImport(
+  projectId: string,
+  records: RegistryRecord[],
+  seqToId: Map<number, string>,
+  plan: OwnerImportPlan,
+  resolution: OwnerImportResolution,
+  onProgress?: (p: SaveProgress) => void,
+): Promise<{ ownersCreated: number; sharesCreated: number }> {
+  // 1) 新規 owner を まとめて INSERT
+  //    - plan.newOwners: 氏名 が 既存 に 無い もの
+  //    - conflicts で decision='new' の もの
+  const toCreate: Array<{ key: string; name: string; address: string }> = []
+  for (const n of plan.newOwners) {
+    toCreate.push({ key: ownerKey(n.name, n.address), name: n.name, address: n.address })
+  }
+  for (const c of plan.conflicts) {
+    const dec = resolution.decisions[c.key]
+    if (dec === 'new') {
+      toCreate.push({ key: c.key, name: c.csvName, address: c.csvAddress })
+    }
+  }
+
+  const keyToOwnerId: Record<string, string> = { ...plan.exactMatches }
+  // conflicts の 既存 owner 選択 分
+  for (const c of plan.conflicts) {
+    const dec = resolution.decisions[c.key]
+    if (dec && dec !== 'new') {
+      keyToOwnerId[c.key] = dec
+    }
+  }
+
+  let ownersCreated = 0
+  if (toCreate.length > 0) {
+    onProgress?.({
+      phase: '地権者を作成中',
+      done: 0,
+      total: toCreate.length,
+    })
+    for (let i = 0; i < toCreate.length; i += CHUNK) {
+      const slice = toCreate.slice(i, i + CHUNK)
+      const rows = slice.map((s) => ({
+        project_id: projectId,
+        name: s.name,
+        address: s.address || null,
+      }))
+      const { data, error } = await sb
+        .from('project_owners')
+        .insert(rows)
+        .select('id, name, address')
+      if (error) throw error
+      const returned = (data ?? []) as Array<{
+        id: string
+        name: string
+        address: string | null
+      }>
+      // 順序 が 保証 されない ので (name, address) で 突合 する
+      const byKey = new Map<string, string>()
+      for (const r of returned) {
+        byKey.set(ownerKey(r.name, r.address ?? ''), r.id)
+      }
+      for (const s of slice) {
+        const id = byKey.get(s.key)
+        if (id) keyToOwnerId[s.key] = id
+      }
+      ownersCreated += slice.length
+      onProgress?.({
+        phase: '地権者を作成中',
+        done: Math.min(i + CHUNK, toCreate.length),
+        total: toCreate.length,
+      })
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+  }
+
+  // 2) property_owner_shares を bulk INSERT
+  //    (property, owner, share) は UNIQUE。 既に 入って いる 分 は
+  //    ON CONFLICT DO NOTHING で スキップ したい ので upsert を 使う。
+  const entries = collectCsvOwnerEntries(records)
+  const shareRows: Array<{
+    property_id: string
+    owner_id: string
+    share: string
+    order_no: number
+  }> = []
+  const skippedNoOwner: string[] = []
+  const skippedNoProperty: string[] = []
+  for (const e of entries) {
+    if (!e.name) continue
+    const propertyId = seqToId.get(e.propertySeq)
+    if (!propertyId) {
+      skippedNoProperty.push(String(e.propertySeq))
+      continue
+    }
+    const ownerId = keyToOwnerId[ownerKey(e.name, e.address)]
+    if (!ownerId) {
+      skippedNoOwner.push(e.name)
+      continue
+    }
+    shareRows.push({
+      property_id: propertyId,
+      owner_id: ownerId,
+      share: e.share,
+      order_no: e.order_no,
+    })
+  }
+
+  let sharesCreated = 0
+  if (shareRows.length > 0) {
+    onProgress?.({
+      phase: '持分を書き込み中',
+      done: 0,
+      total: shareRows.length,
+    })
+    for (let i = 0; i < shareRows.length; i += CHUNK) {
+      const slice = shareRows.slice(i, i + CHUNK)
+      const { error } = await sb.from('property_owner_shares').insert(slice)
+      if (error) throw error
+      sharesCreated += slice.length
+      onProgress?.({
+        phase: '持分を書き込み中',
+        done: Math.min(i + CHUNK, shareRows.length),
+        total: shareRows.length,
+      })
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+  }
+
+  if (skippedNoOwner.length > 0 || skippedNoProperty.length > 0) {
+    console.warn('[registryCsvSave] shares skipped', {
+      noOwner: skippedNoOwner.length,
+      noProperty: skippedNoProperty.length,
+    })
+  }
+  return { ownersCreated, sharesCreated }
+}
+
+// ============================================================
+// 地権者リスト の 読込 / 更新 (地権者リスト ページ 用)
+// ============================================================
+
+export interface RegistryOwnerRow {
+  id: string
+  name: string
+  address: string
+  phone: string
+  agent_name: string
+  agent_address: string
+  agent_phone: string
+  notes: string
+  // 保持 する 地番 の 一覧 (property_number)
+  parcels: Array<{
+    share_id: string          // property_owner_shares.id (更新用)
+    property_id: string
+    parcel_number: string
+    location: string
+    share: string
+    first_visit_at: string | null
+    first_visit_status: string
+    second_visit_at: string | null
+    second_visit_status: string
+    notes: string
+  }>
+}
+
+export async function loadRegistryOwners(
+  projectId: string,
+): Promise<RegistryOwnerRow[]> {
+  const { data: owners, error } = await sb
+    .from('project_owners')
+    .select('id, name, address, phone, agent_name, agent_address, agent_phone, notes')
+    .eq('project_id', projectId)
+    .order('name', { ascending: true })
+  if (error) throw error
+  const ownerRows = (owners ?? []) as Array<{
+    id: string
+    name: string
+    address: string | null
+    phone: string | null
+    agent_name: string | null
+    agent_address: string | null
+    agent_phone: string | null
+    notes: string | null
+  }>
+  if (ownerRows.length === 0) return []
+
+  const ownerIds = ownerRows.map((o) => o.id)
+
+  // shares を まとめて 取得 + 参照先 property の 一部 列 も 引く
+  const allShares: Array<{
+    id: string
+    owner_id: string
+    property_id: string
+    share: string
+    first_visit_at: string | null
+    first_visit_status: string | null
+    second_visit_at: string | null
+    second_visit_status: string | null
+    notes: string | null
+  }> = []
+  for (let i = 0; i < ownerIds.length; i += CHUNK) {
+    const slice = ownerIds.slice(i, i + CHUNK)
+    const { data, error: err } = await sb
+      .from('property_owner_shares')
+      .select(
+        'id, owner_id, property_id, share, first_visit_at, first_visit_status, second_visit_at, second_visit_status, notes',
+      )
+      .in('owner_id', slice)
+    if (err) throw err
+    for (const row of (data ?? []) as typeof allShares) allShares.push(row)
+  }
+
+  // property_id → (parcel_number, location) の マップ を 引く
+  const propIds = Array.from(new Set(allShares.map((s) => s.property_id)))
+  const propMeta = new Map<string, { parcel_number: string; location: string }>()
+  for (let i = 0; i < propIds.length; i += CHUNK) {
+    const slice = propIds.slice(i, i + CHUNK)
+    const { data, error: err } = await sb
+      .from('registry_properties')
+      .select('id, parcel_number, location')
+      .in('id', slice)
+    if (err) throw err
+    for (const p of (data ?? []) as Array<{
+      id: string
+      parcel_number: string
+      location: string
+    }>) {
+      propMeta.set(p.id, { parcel_number: p.parcel_number, location: p.location })
+    }
+  }
+
+  const byOwner = new Map<string, RegistryOwnerRow>()
+  for (const o of ownerRows) {
+    byOwner.set(o.id, {
+      id: o.id,
+      name: o.name ?? '',
+      address: o.address ?? '',
+      phone: o.phone ?? '',
+      agent_name: o.agent_name ?? '',
+      agent_address: o.agent_address ?? '',
+      agent_phone: o.agent_phone ?? '',
+      notes: o.notes ?? '',
+      parcels: [],
+    })
+  }
+  for (const s of allShares) {
+    const or = byOwner.get(s.owner_id)
+    if (!or) continue
+    const meta = propMeta.get(s.property_id) ?? { parcel_number: '', location: '' }
+    or.parcels.push({
+      share_id: s.id,
+      property_id: s.property_id,
+      parcel_number: meta.parcel_number,
+      location: meta.location,
+      share: s.share ?? '',
+      first_visit_at: s.first_visit_at,
+      first_visit_status: s.first_visit_status ?? '',
+      second_visit_at: s.second_visit_at,
+      second_visit_status: s.second_visit_status ?? '',
+      notes: s.notes ?? '',
+    })
+  }
+  for (const or of byOwner.values()) {
+    or.parcels.sort((a, b) => a.parcel_number.localeCompare(b.parcel_number, 'ja'))
+  }
+  return Array.from(byOwner.values())
+}
+
+export async function updateProjectOwner(
+  ownerId: string,
+  patch: Partial<{
+    name: string
+    address: string | null
+    phone: string | null
+    agent_name: string | null
+    agent_address: string | null
+    agent_phone: string | null
+    notes: string | null
+  }>,
+): Promise<void> {
+  const { error } = await sb.from('project_owners').update(patch).eq('id', ownerId)
+  if (error) throw error
+}
+
+export async function updateOwnerShare(
+  shareId: string,
+  patch: Partial<{
+    first_visit_at: string | null
+    first_visit_status: string | null
+    second_visit_at: string | null
+    second_visit_status: string | null
+    notes: string | null
+  }>,
+): Promise<void> {
+  const { error } = await sb
+    .from('property_owner_shares')
+    .update(patch)
+    .eq('id', shareId)
+  if (error) throw error
 }
 
 // project_id 配下 の 登記データ を まとめて 取得 し、

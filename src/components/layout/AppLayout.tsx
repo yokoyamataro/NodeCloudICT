@@ -204,6 +204,10 @@ const navigation: NavGroup[] = [
     name: '法務局備付地図作成作業',
     href: '/boundary-survey/registry-map',
     icon: Map,
+    children: [
+      { name: '物件一覧', href: '/boundary-survey/registry-map', icon: Map },
+      { name: '地権者リスト', href: '/boundary-survey/registry-owners', icon: Users },
+    ],
   },
   // 土木工事: 面 の 工種 は 「農地整備」 に まとめる (線形物 は 別立て)
   {
