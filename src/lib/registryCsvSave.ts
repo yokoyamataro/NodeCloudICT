@@ -976,3 +976,122 @@ export async function updatePropertyFarm(
     .eq('id', propertyId)
   if (error) throw error
 }
+
+// 物件 に 紐付く 全 property_owner_shares の 立会 情報 を まとめて 上書き。
+// 「物件一覧」 から の 一括 編集 用。 個別 の 所有者 で 異なる 値 が
+// 入っていた 場合、この 呼び出し で 同 値 に 統一 される。
+export async function updatePropertyVisits(
+  propertyId: string,
+  patch: Partial<{
+    first_visit_at: string | null
+    first_visit_status: string | null
+    second_visit_at: string | null
+    second_visit_status: string | null
+  }>,
+): Promise<void> {
+  const { error } = await sb
+    .from('property_owner_shares')
+    .update(patch)
+    .eq('property_id', propertyId)
+  if (error) throw error
+}
+
+// ============================================================
+// 立会 カレンダー 用: 期間 で 立会 予定 を 取得。
+// ============================================================
+export interface VisitCalendarEntry {
+  share_id: string
+  property_id: string
+  parcel_number: string
+  farm_id: string | null
+  farm_name: string | null
+  owner_name: string
+  visit_at: string          // ISO
+  visit_status: string      // 'MIXED' は 使わない (個別 share の 生値)
+  visit_kind: 'first' | 'second'
+}
+
+export async function fetchVisitsForCalendar(
+  projectId: string,
+  fromIso: string,
+  toIso: string,
+): Promise<VisitCalendarEntry[]> {
+  // 1) この project の property を 引き、farm 名 と 一緒 に メモ 化
+  const { data: props, error: perr } = await sb
+    .from('registry_properties')
+    .select('id, parcel_number, farm_id')
+    .eq('project_id', projectId)
+  if (perr) throw perr
+  const propRows = (props ?? []) as Array<{
+    id: string
+    parcel_number: string
+    farm_id: string | null
+  }>
+  if (propRows.length === 0) return []
+  const propIds = propRows.map((p) => p.id)
+  const propMeta = new Map<string, { parcel_number: string; farm_id: string | null }>()
+  for (const p of propRows) {
+    propMeta.set(p.id, { parcel_number: p.parcel_number, farm_id: p.farm_id })
+  }
+  const farmNames = await fetchFarmNames(projectId)
+
+  // 2) shares を chunk 取得。 一次 / 二次 それぞれ で 範囲 内 の もの を フィルタ。
+  //    OR 条件 を PostgREST で 書く: or=(first.gte.X,and(first.lte.Y),..)
+  //    シンプル に 2 回 に 分けて 取る。
+  const fetchFor = async (
+    field: 'first_visit_at' | 'second_visit_at',
+    statusField: 'first_visit_status' | 'second_visit_status',
+    kind: 'first' | 'second',
+  ): Promise<VisitCalendarEntry[]> => {
+    const out: VisitCalendarEntry[] = []
+    for (let i = 0; i < propIds.length; i += CHUNK) {
+      const slice = propIds.slice(i, i + CHUNK)
+      const { data, error: err } = await sb
+        .from('property_owner_shares')
+        .select(
+          `id, property_id, owner_id, ${field}, ${statusField}, project_owners(name)`,
+        )
+        .in('property_id', slice)
+        .gte(field, fromIso)
+        .lt(field, toIso)
+      if (err) throw err
+      for (const row of (data ?? []) as Array<{
+        id: string
+        property_id: string
+        first_visit_at?: string | null
+        first_visit_status?: string | null
+        second_visit_at?: string | null
+        second_visit_status?: string | null
+        project_owners: { name: string } | { name: string }[] | null
+      }>) {
+        const meta = propMeta.get(row.property_id)
+        if (!meta) continue
+        const visit_at = (row as Record<string, string | null>)[field]
+        if (!visit_at) continue
+        const visit_status = (row as Record<string, string | null>)[statusField] ?? ''
+        // supabase-js は 1:1 リレーション を オブジェクト、多対1 でも 配列 に する 場合 あり
+        const owner = Array.isArray(row.project_owners)
+          ? row.project_owners[0]
+          : row.project_owners
+        out.push({
+          share_id: row.id,
+          property_id: row.property_id,
+          parcel_number: meta.parcel_number,
+          farm_id: meta.farm_id,
+          farm_name: meta.farm_id ? farmNames.get(meta.farm_id) ?? null : null,
+          owner_name: owner?.name ?? '',
+          visit_at,
+          visit_status,
+          visit_kind: kind,
+        })
+      }
+    }
+    return out
+  }
+
+  const [firsts, seconds] = await Promise.all([
+    fetchFor('first_visit_at', 'first_visit_status', 'first'),
+    fetchFor('second_visit_at', 'second_visit_status', 'second'),
+  ])
+  return [...firsts, ...seconds]
+}

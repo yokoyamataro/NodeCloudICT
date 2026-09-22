@@ -41,6 +41,7 @@ import {
   Megaphone,
   Building2,
   LayoutTemplate,
+  CalendarClock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -207,6 +208,7 @@ const navigation: NavGroup[] = [
     children: [
       { name: '物件一覧', href: '/boundary-survey/registry-map', icon: Map },
       { name: '地権者リスト', href: '/boundary-survey/registry-owners', icon: Users },
+      { name: '立会カレンダー', href: '/boundary-survey/registry-visit-calendar', icon: CalendarClock },
     ],
   },
   // 土木工事: 面 の 工種 は 「農地整備」 に まとめる (線形物 は 別立て)

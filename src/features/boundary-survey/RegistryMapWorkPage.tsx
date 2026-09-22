@@ -20,8 +20,39 @@ import {
   projectHasRegistryData,
   saveRegistryCsv,
   updatePropertyFarm,
+  updatePropertyVisits,
   type SaveProgress,
 } from '@/lib/registryCsvSave'
+
+// timestamptz を <input type="datetime-local"> 用 文字列 に。
+function isoToLocal(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  )
+}
+function localToIso(local: string): string | null {
+  if (!local) return null
+  const d = new Date(local)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toISOString()
+}
+
+const VISIT_STATUS_OPTIONS = [
+  '',
+  '立会済',
+  '未立会',
+  '不在',
+  '欠席',
+  '拒否',
+  '死亡',
+  '相続手続中',
+  'その他',
+] as const
 
 // 集約 立会 の 表示。 null → '—'、'MIXED' → '混在'、それ以外 は 生値。
 function formatVisitAt(v: string | 'MIXED' | null): string {
@@ -154,6 +185,49 @@ export function RegistryMapWorkPage() {
     } finally {
       setBusy(null)
       setProgress(null)
+    }
+  }
+
+  // 立会 の 一括 更新: 物件 に 紐付く 全 shares を 同 値 に する。
+  // MIXED 状態 だった 場合 は 確認 を 挟む。
+  const handleUpdateVisits = async (
+    propertyId: string,
+    patch: {
+      first_visit_at?: string | null
+      first_visit_status?: string | null
+      second_visit_at?: string | null
+      second_visit_status?: string | null
+    },
+    wasMixed: boolean,
+  ) => {
+    if (wasMixed) {
+      const ok = confirm(
+        '所有者 ごと に 立会 情報 が 異なって います。 全所有者 を 同じ 値 で 上書き しますか？\n' +
+          '(所有者ごと に 個別 に 設定 したい 場合 は 「地権者リスト」 から 編集 して ください)',
+      )
+      if (!ok) return false
+    }
+    try {
+      await updatePropertyVisits(propertyId, patch)
+      setRecords((prev) =>
+        prev.map((r) => {
+          if (r.extras?.id !== propertyId) return r
+          const ex = r.extras
+          const next = { ...ex }
+          if (patch.first_visit_at !== undefined) next.firstVisitAt = patch.first_visit_at ?? null
+          if (patch.first_visit_status !== undefined)
+            next.firstVisitStatus = patch.first_visit_status ?? null
+          if (patch.second_visit_at !== undefined) next.secondVisitAt = patch.second_visit_at ?? null
+          if (patch.second_visit_status !== undefined)
+            next.secondVisitStatus = patch.second_visit_status ?? null
+          return { ...r, extras: next }
+        }),
+      )
+      return true
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : '立会情報の更新に失敗しました')
+      return false
     }
   }
 
@@ -403,6 +477,11 @@ export function RegistryMapWorkPage() {
                 const pid = selected.extras?.id
                 if (pid) void handleAssignFarm(pid, farmId)
               }}
+              onUpdateVisits={(patch, wasMixed) => {
+                const pid = selected.extras?.id
+                if (!pid) return Promise.resolve(false)
+                return handleUpdateVisits(pid, patch, wasMixed)
+              }}
             />
           )}
         </div>
@@ -417,14 +496,27 @@ function DetailPanel({
   farms,
   onClose,
   onAssignFarm,
+  onUpdateVisits,
 }: {
   record: RegistryRecord
   farms: Array<{ id: string; name: string }>
   onClose: () => void
   onAssignFarm: (farmId: string | null) => void
+  onUpdateVisits: (
+    patch: {
+      first_visit_at?: string | null
+      first_visit_status?: string | null
+      second_visit_at?: string | null
+      second_visit_status?: string | null
+    },
+    wasMixed: boolean,
+  ) => Promise<boolean>
 }) {
   const p = record.property
   const ex = record.extras
+  const firstMixed = ex?.firstVisitAt === 'MIXED' || ex?.firstVisitStatus === 'MIXED'
+  const secondMixed =
+    ex?.secondVisitAt === 'MIXED' || ex?.secondVisitStatus === 'MIXED'
   return (
     <div className="w-[26rem] border-l bg-slate-50 overflow-auto flex-shrink-0">
       <div className="flex items-center justify-between border-b bg-white px-3 py-2">
@@ -467,6 +559,50 @@ function DetailPanel({
             ))}
           </select>
         </li>
+      </Section>
+
+      <Section title={`立会 (共有者 ${ex?.sharesCount ?? 0} 名 に 一括)`}>
+        <VisitRow
+          label="一次 日時"
+          value={ex?.firstVisitAt}
+          mixed={ex?.firstVisitAt === 'MIXED'}
+          onCommit={(v) =>
+            onUpdateVisits({ first_visit_at: v }, firstMixed)
+          }
+          kind="datetime"
+        />
+        <VisitRow
+          label="一次 状況"
+          value={ex?.firstVisitStatus}
+          mixed={ex?.firstVisitStatus === 'MIXED'}
+          onCommit={(v) =>
+            onUpdateVisits({ first_visit_status: v }, firstMixed)
+          }
+          kind="status"
+        />
+        <VisitRow
+          label="二次 日時"
+          value={ex?.secondVisitAt}
+          mixed={ex?.secondVisitAt === 'MIXED'}
+          onCommit={(v) =>
+            onUpdateVisits({ second_visit_at: v }, secondMixed)
+          }
+          kind="datetime"
+        />
+        <VisitRow
+          label="二次 状況"
+          value={ex?.secondVisitStatus}
+          mixed={ex?.secondVisitStatus === 'MIXED'}
+          onCommit={(v) =>
+            onUpdateVisits({ second_visit_status: v }, secondMixed)
+          }
+          kind="status"
+        />
+        {ex?.sharesCount === 0 && (
+          <li className="px-3 py-1.5 text-[11px] text-amber-700">
+            共有者 が 未登録 です。 「地権者リスト &gt; 物件一覧 から 読込」 を 実行 して ください。
+          </li>
+        )}
       </Section>
 
       <Section title={`所在履歴 (${record.locations.length})`}>
@@ -593,6 +729,81 @@ function Row({
         <div className="mt-0.5 pl-10 text-[11px] text-slate-500 break-words">
           {sub}
         </div>
+      )}
+    </li>
+  )
+}
+
+// 立会 の 単一 行 (物件一覧 詳細パネル 用 の 一括 編集)。
+// MIXED 状態 は バッジ で 表示 し、変更 コミット 時 に 確認 を 挟む (親側)。
+function VisitRow({
+  label,
+  value,
+  mixed,
+  onCommit,
+  kind,
+}: {
+  label: string
+  value: string | 'MIXED' | null | undefined
+  mixed: boolean
+  onCommit: (v: string | null) => Promise<boolean>
+  kind: 'datetime' | 'status'
+}) {
+  const display = mixed ? '' : value === 'MIXED' ? '' : value ?? ''
+
+  if (kind === 'datetime') {
+    return (
+      <li className="flex gap-2 px-3 py-1.5 text-xs items-center">
+        <span className="w-20 flex-shrink-0 text-slate-500">{label}</span>
+        <input
+          type="datetime-local"
+          value={isoToLocal(display || null)}
+          onChange={(e) => void onCommit(localToIso(e.target.value))}
+          className="flex-1 rounded border px-1 py-0.5 text-xs"
+        />
+        {mixed && (
+          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+            混在
+          </span>
+        )}
+      </li>
+    )
+  }
+
+  // status: 固定 候補 + その他 自由入力
+  const preset = (VISIT_STATUS_OPTIONS as readonly string[]).includes(display)
+  const shownSelect = mixed ? '' : preset ? display : display ? 'その他' : ''
+  return (
+    <li className="flex gap-2 px-3 py-1.5 text-xs items-center">
+      <span className="w-20 flex-shrink-0 text-slate-500">{label}</span>
+      <select
+        value={shownSelect}
+        onChange={(e) => {
+          const v = e.target.value
+          if (v === 'その他') return   // 自由入力 に 切替 (下の input で 入力)
+          void onCommit(v || null)
+        }}
+        className="rounded border px-1 py-0.5 text-xs"
+      >
+        {VISIT_STATUS_OPTIONS.map((s) => (
+          <option key={s} value={s}>
+            {s || '（未設定）'}
+          </option>
+        ))}
+      </select>
+      {(shownSelect === 'その他' || (!preset && display)) && (
+        <input
+          type="text"
+          defaultValue={display}
+          onBlur={(e) => void onCommit(e.target.value || null)}
+          placeholder="自由入力"
+          className="flex-1 rounded border px-1 py-0.5 text-xs"
+        />
+      )}
+      {mixed && (
+        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+          混在
+        </span>
       )}
     </li>
   )
