@@ -6,6 +6,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FileSpreadsheet, Loader2, Trash2, Upload, X } from 'lucide-react'
+import { MapContainer, Polygon, TileLayer, Tooltip, useMap } from 'react-leaflet'
+import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
+import { useMapViewStore } from '@/stores/mapViewStore'
+import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { useFarmStore } from '@/stores/farmStore'
 import {
   latestDisplay,
@@ -72,12 +76,65 @@ function formatVisitStatus(v: string | 'MIXED' | null): string {
 }
 
 export function RegistryMapWorkPage() {
-  const { currentFarm, farms } = useFarmStore()
+  const { currentFarm, farms, farmLocations, workAreaPolygons, fetchWorkAreaPolygons } = useFarmStore()
   const projectId = currentFarm?.project_id ?? null
   // 同 project の 工区 のみ 選択候補
   const projectFarms = useMemo(
     () => farms.filter((f) => f.project_id === projectId),
     [farms, projectId],
+  )
+
+  // 上下 分割 の 上段 (地図) 高さ (px)。 divider ドラッグ で 調整。
+  const splitRef = useRef<HTMLDivElement>(null)
+  const [mapHeightPx, setMapHeightPx] = useState<number>(360)
+  const startDrag = (ev: React.MouseEvent<HTMLDivElement>) => {
+    ev.preventDefault()
+    const startY = ev.clientY
+    const startH = mapHeightPx
+    const onMove = (e: MouseEvent) => {
+      const containerTop = splitRef.current?.getBoundingClientRect().top ?? 0
+      const maxH = (splitRef.current?.getBoundingClientRect().height ?? 800) - 120
+      const next = Math.max(120, Math.min(maxH, startH + (e.clientY - startY)))
+      setMapHeightPx(next)
+      // 上段 の resize に leaflet を 追従 させる (window resize イベント で 検知)
+      window.dispatchEvent(new Event('resize'))
+      void containerTop
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      window.dispatchEvent(new Event('resize'))
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  // 地図 の 中心 は 同 project の 最初 の farm location、無ければ 日本 中心。
+  const mapInitial = useMemo(() => {
+    for (const f of projectFarms) {
+      const loc = farmLocations.get(f.id)
+      if (loc) return { lat: loc.lat, lng: loc.lng, zoom: 15 }
+    }
+    return { lat: 36.2, lng: 138.5, zoom: 5 }
+  }, [projectFarms, farmLocations])
+
+  // 法務省地図 の トグル + データセット 有無
+  const showParcelMap = useMapViewStore((s) => s.showParcelMap)
+  const setShowParcelMap = useMapViewStore((s) => s.setShowParcelMap)
+  const parcelDatasets = useParcelMapDatasetStore((s) => s.datasets)
+  const hasActiveDataset = parcelDatasets.some((d) => d.active)
+
+  // 同 project 内 の 全 farm の 工事区域 ポリゴン (地番管理 で 作られた 地番)
+  useEffect(() => {
+    void fetchWorkAreaPolygons()
+  }, [fetchWorkAreaPolygons])
+  const projectPolygons = useMemo(
+    () =>
+      workAreaPolygons.filter((wp) => {
+        const f = farms.find((x) => x.id === wp.farmId)
+        return f?.project_id === projectId
+      }),
+    [workAreaPolygons, farms, projectId],
   )
   const fileRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState<'load' | 'import' | 'delete' | null>(null)
@@ -386,13 +443,71 @@ export function RegistryMapWorkPage() {
         </div>
       )}
 
-      {records.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center gap-2 text-slate-500 text-sm">
-          <FileSpreadsheet className="h-8 w-8 text-slate-300" />
-          <div>右上の「登記CSV読込」から CSV を選んでください</div>
-          <div className="text-xs">対応: 法務局 4600 形式 (Shift-JIS)</div>
+      <div ref={splitRef} className="flex-1 flex flex-col overflow-hidden">
+        {/* 上段: 地図 (法務省地図 背景 + 工事区域 ポリゴン). 地番管理 と 同様。 */}
+        <div
+          className="relative w-full"
+          style={{ height: `${mapHeightPx}px`, minHeight: '120px' }}
+        >
+          <MapContainer
+            center={[mapInitial.lat, mapInitial.lng]}
+            zoom={mapInitial.zoom}
+            className="h-full w-full"
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            <MapResizeInvalidator dep={mapHeightPx} />
+            {hasActiveDataset && (
+              <ParcelMapLayer visible={showParcelMap} bbox={null} />
+            )}
+            {projectPolygons.map((wp) => (
+              <Polygon
+                key={wp.id}
+                positions={wp.positions}
+                pathOptions={{
+                  color: '#0ea5e9',
+                  weight: 1.5,
+                  fillColor: '#7dd3fc',
+                  fillOpacity: 0.15,
+                }}
+              >
+                <Tooltip>{wp.name}</Tooltip>
+              </Polygon>
+            ))}
+          </MapContainer>
+          {hasActiveDataset && (
+            <div className="absolute bottom-2 left-2 z-[1000]">
+              <button
+                type="button"
+                onClick={() => setShowParcelMap(!showParcelMap)}
+                className={`flex items-center gap-1 rounded border px-2 py-1 text-xs shadow ${
+                  showParcelMap
+                    ? 'border-orange-400 bg-orange-100 text-orange-800 font-medium'
+                    : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                法務省地図 {showParcelMap ? 'ON' : 'OFF'}
+              </button>
+            </div>
+          )}
         </div>
-      ) : (
+
+        {/* ドラッグ 可能 な 境界 */}
+        <div
+          onMouseDown={startDrag}
+          className="h-1.5 w-full cursor-row-resize bg-slate-300 hover:bg-blue-400 transition-colors flex-shrink-0"
+          title="ドラッグして高さを調整"
+        />
+
+        {records.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-2 text-slate-500 text-sm">
+            <FileSpreadsheet className="h-8 w-8 text-slate-300" />
+            <div>右上の「登記CSV読込」から CSV を選んでください</div>
+            <div className="text-xs">対応: 法務局 4600 形式 (Shift-JIS)</div>
+          </div>
+        ) : (
         <div className="flex-1 flex overflow-hidden">
           <div className="flex-1 overflow-auto">
             <table className="w-full text-xs">
@@ -485,10 +600,21 @@ export function RegistryMapWorkPage() {
             />
           )}
         </div>
-      )}
-
+        )}
+      </div>
     </div>
   )
+}
+
+// leaflet は container の resize を 自動検知 しない ため、
+// 依存値 が 変わる 度 に invalidateSize() を 呼ぶ 小 コンポ。
+function MapResizeInvalidator({ dep }: { dep: number }) {
+  const map = useMap()
+  useEffect(() => {
+    const t = setTimeout(() => map.invalidateSize(), 0)
+    return () => clearTimeout(t)
+  }, [map, dep])
+  return null
 }
 
 function DetailPanel({
