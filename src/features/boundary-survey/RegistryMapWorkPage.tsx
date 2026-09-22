@@ -15,17 +15,12 @@ import {
   type RegistryRecord,
 } from '@/lib/registryCsv'
 import {
-  applyOwnerImport,
   deleteProjectRegistry,
   loadRegistryFromDb,
-  planOwnerImport,
   projectHasRegistryData,
   saveRegistryCsv,
-  type OwnerConflict,
-  type OwnerImportResolution,
   type SaveProgress,
 } from '@/lib/registryCsvSave'
-import { RegistryOwnerConflictModal } from './RegistryOwnerConflictModal'
 
 export function RegistryMapWorkPage() {
   const { currentFarm } = useFarmStore()
@@ -39,12 +34,6 @@ export function RegistryMapWorkPage() {
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null)
   const [progress, setProgress] = useState<SaveProgress | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  // 名寄せ 確認 モーダル: null で 非表示。 open 中 は resolver に つないで
-  // ユーザー の 決定 待ち。
-  const [conflictModal, setConflictModal] = useState<{
-    conflicts: OwnerConflict[]
-    resolve: (r: OwnerImportResolution | null) => void
-  } | null>(null)
 
   const filtered = useMemo(() => {
     const q = query.trim()
@@ -119,52 +108,23 @@ export function RegistryMapWorkPage() {
       const text = await readRegistryCsvFile(file)
       const parsed = parseRegistryCsv(text)
 
-      // 3) 6 テーブル を 保存 (seq→id マップ が 返る)
-      const { inserted, seqToId } = await saveRegistryCsv(
+      // 3) 6 テーブル を 保存
+      const { inserted } = await saveRegistryCsv(
         projectId,
         parsed.records,
         (p) => setProgress(p),
       )
 
-      // 4) 地権者 の 名寄せ 計画
-      setProgress({ phase: '地権者を名寄せ中', done: 0, total: 0 })
-      const plan = await planOwnerImport(projectId, parsed.records)
-
-      // 5) conflict が あれば modal で 決定 を 待つ
-      let resolution: OwnerImportResolution | null = { decisions: {} }
-      if (plan.conflicts.length > 0) {
-        resolution = await new Promise<OwnerImportResolution | null>(
-          (resolve) => {
-            setConflictModal({ conflicts: plan.conflicts, resolve })
-          },
-        )
-      }
-
-      // 6) 地権者 と 持分 を 書き込み (resolution が null なら owner 保存 スキップ)
-      let ownerMsg = ''
-      if (resolution) {
-        const { ownersCreated, sharesCreated } = await applyOwnerImport(
-          projectId,
-          parsed.records,
-          seqToId,
-          plan,
-          resolution,
-          (p) => setProgress(p),
-        )
-        ownerMsg =
-          ` / 地権者 ${ownersCreated + Object.keys(plan.exactMatches).length} 名` +
-          ` / 持分 ${sharesCreated} 行`
-      } else {
-        ownerMsg = ' / 地権者は保存されませんでした (キャンセル)'
-      }
-
-      // 7) DB から 読み直す (ID 付き)
+      // 4) DB から 読み直す (ID 付き)
       setProgress({ phase: '物件を取得中', done: 0, total: 0 })
       const reloaded = await loadRegistryFromDb(projectId)
       setRecords(reloaded)
       setSource(file.name)
       setSelectedSeq(null)
-      setMessage(`${inserted.toLocaleString()} 件 を 保存${ownerMsg}`)
+      setMessage(
+        `${inserted.toLocaleString()} 件 を 保存しました ` +
+          `(地権者リスト への 反映 は 「地権者リスト > 物件一覧 から 読込」 から)`,
+      )
     } catch (err) {
       console.error(err)
       setError(err instanceof Error ? err.message : 'CSV 取込に失敗しました')
@@ -370,21 +330,6 @@ export function RegistryMapWorkPage() {
         </div>
       )}
 
-      {conflictModal && (
-        <RegistryOwnerConflictModal
-          conflicts={conflictModal.conflicts}
-          onConfirm={(resolution) => {
-            const r = conflictModal.resolve
-            setConflictModal(null)
-            r(resolution)
-          }}
-          onCancel={() => {
-            const r = conflictModal.resolve
-            setConflictModal(null)
-            r(null)
-          }}
-        />
-      )}
     </div>
   )
 }

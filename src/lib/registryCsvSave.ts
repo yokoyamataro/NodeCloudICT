@@ -109,9 +109,8 @@ export async function saveRegistryCsv(
   projectId: string,
   records: RegistryRecord[],
   onProgress?: (p: SaveProgress) => void,
-): Promise<{ inserted: number; seqToId: Map<number, string> }> {
-  if (records.length === 0)
-    return { inserted: 0, seqToId: new Map<number, string>() }
+): Promise<{ inserted: number }> {
+  if (records.length === 0) return { inserted: 0 }
 
   // 1) registry_properties を bulk INSERT。 initial_area_sqm は
   //    表示履歴 の 最新 非空 の 地積 から 推定 (登記時 の 地積)。
@@ -251,7 +250,7 @@ export async function saveRegistryCsv(
   await insertMany('registry_kouku', kouRows, '甲区を書き込み中')
   await insertMany('registry_otoku', otoRows, '乙区を書き込み中')
 
-  return { inserted: records.length, seqToId }
+  return { inserted: records.length }
 }
 
 // ============================================================
@@ -264,29 +263,40 @@ interface ExistingOwner {
   address: string
 }
 
-// CSV の owner (name+address) × 属する 地番 (seq) の 一覧 を 抽出
-interface CsvOwnerEntry {
-  name: string
+// DB 上 の registry_ownerships (× property_id) 行 を フラット に 取得。
+// 「物件一覧 から 読込」 が 走る 時 の owner 情報 の 原本。
+interface OwnershipRow {
+  property_id: string
+  order_no: number
   address: string
   share: string
-  order_no: number
-  propertySeq: number
+  owner_name: string
 }
 
-function collectCsvOwnerEntries(records: RegistryRecord[]): CsvOwnerEntry[] {
-  const out: CsvOwnerEntry[] = []
-  for (const r of records) {
-    for (const o of r.ownerships) {
-      out.push({
-        name: (o.ownerName ?? '').trim(),
-        address: (o.address ?? '').trim(),
-        share: o.share ?? '',
-        order_no: o.order,
-        propertySeq: r.seq,
-      })
-    }
+async function fetchOwnershipsForProject(
+  projectId: string,
+): Promise<OwnershipRow[]> {
+  // registry_properties.id で フィルタ (registry_ownerships には project_id が 無い)。
+  // 先に property_id 一覧 を 取ってから ownerships を chunk 取得。
+  const { data: props, error } = await sb
+    .from('registry_properties')
+    .select('id')
+    .eq('project_id', projectId)
+  if (error) throw error
+  const ids = ((props ?? []) as Array<{ id: string }>).map((p) => p.id)
+  if (ids.length === 0) return []
+
+  const rows: OwnershipRow[] = []
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK)
+    const { data, error: err } = await sb
+      .from('registry_ownerships')
+      .select('property_id, order_no, address, share, owner_name')
+      .in('property_id', slice)
+    if (err) throw err
+    for (const r of (data ?? []) as OwnershipRow[]) rows.push(r)
   }
-  return out
+  return rows
 }
 
 async function fetchExistingOwners(projectId: string): Promise<ExistingOwner[]> {
@@ -319,15 +329,16 @@ export interface OwnerImportPlan {
 
 export async function planOwnerImport(
   projectId: string,
-  records: RegistryRecord[],
 ): Promise<OwnerImportPlan> {
-  const entries = collectCsvOwnerEntries(records)
-  // CSV 内 の 一意 (name+address)
+  const ownerships = await fetchOwnershipsForProject(projectId)
+  // registry_ownerships 内 の 一意 (name+address)
   const uniqCsv = new Map<string, { name: string; address: string }>()
-  for (const e of entries) {
-    if (!e.name) continue
-    const k = ownerKey(e.name, e.address)
-    if (!uniqCsv.has(k)) uniqCsv.set(k, { name: e.name, address: e.address })
+  for (const o of ownerships) {
+    const name = (o.owner_name ?? '').trim()
+    const address = (o.address ?? '').trim()
+    if (!name) continue
+    const k = ownerKey(name, address)
+    if (!uniqCsv.has(k)) uniqCsv.set(k, { name, address })
   }
 
   const existing = await fetchExistingOwners(projectId)
@@ -371,10 +382,9 @@ export async function planOwnerImport(
 }
 
 // plan + resolution から 実際 に owner を 作成 し、property_owner_shares を 挿入 する。
+// 参照 データ (registry_ownerships) は DB から 再取得 する。
 export async function applyOwnerImport(
   projectId: string,
-  records: RegistryRecord[],
-  seqToId: Map<number, string>,
   plan: OwnerImportPlan,
   resolution: OwnerImportResolution,
   onProgress?: (p: SaveProgress) => void,
@@ -445,10 +455,10 @@ export async function applyOwnerImport(
     }
   }
 
-  // 2) property_owner_shares を bulk INSERT
-  //    (property, owner, share) は UNIQUE。 既に 入って いる 分 は
-  //    ON CONFLICT DO NOTHING で スキップ したい ので upsert を 使う。
-  const entries = collectCsvOwnerEntries(records)
+  // 2) property_owner_shares を bulk UPSERT
+  //    (property_id, owner_id, share) は UNIQUE。 再実行 に 耐える よう
+  //    ignoreDuplicates=true で 二重 挿入 を 防ぐ。
+  const ownerships = await fetchOwnershipsForProject(projectId)
   const shareRows: Array<{
     property_id: string
     owner_id: string
@@ -456,24 +466,20 @@ export async function applyOwnerImport(
     order_no: number
   }> = []
   const skippedNoOwner: string[] = []
-  const skippedNoProperty: string[] = []
-  for (const e of entries) {
-    if (!e.name) continue
-    const propertyId = seqToId.get(e.propertySeq)
-    if (!propertyId) {
-      skippedNoProperty.push(String(e.propertySeq))
-      continue
-    }
-    const ownerId = keyToOwnerId[ownerKey(e.name, e.address)]
+  for (const o of ownerships) {
+    const name = (o.owner_name ?? '').trim()
+    const address = (o.address ?? '').trim()
+    if (!name) continue
+    const ownerId = keyToOwnerId[ownerKey(name, address)]
     if (!ownerId) {
-      skippedNoOwner.push(e.name)
+      skippedNoOwner.push(name)
       continue
     }
     shareRows.push({
-      property_id: propertyId,
+      property_id: o.property_id,
       owner_id: ownerId,
-      share: e.share,
-      order_no: e.order_no,
+      share: o.share ?? '',
+      order_no: o.order_no,
     })
   }
 
@@ -486,7 +492,18 @@ export async function applyOwnerImport(
     })
     for (let i = 0; i < shareRows.length; i += CHUNK) {
       const slice = shareRows.slice(i, i + CHUNK)
-      const { error } = await sb.from('property_owner_shares').insert(slice)
+      // ignoreDuplicates: 再実行 で UNIQUE 違反 に なった 行 は 静か に スキップ
+      const { error } = await (sb.from(
+        'property_owner_shares',
+      ) as unknown as {
+        upsert: (
+          rows: unknown,
+          opts: { onConflict: string; ignoreDuplicates: boolean },
+        ) => Promise<{ error: { message: string } | null }>
+      }).upsert(slice, {
+        onConflict: 'property_id,owner_id,share',
+        ignoreDuplicates: true,
+      })
       if (error) throw error
       sharesCreated += slice.length
       onProgress?.({
@@ -498,10 +515,9 @@ export async function applyOwnerImport(
     }
   }
 
-  if (skippedNoOwner.length > 0 || skippedNoProperty.length > 0) {
-    console.warn('[registryCsvSave] shares skipped', {
-      noOwner: skippedNoOwner.length,
-      noProperty: skippedNoProperty.length,
+  if (skippedNoOwner.length > 0) {
+    console.warn('[registryCsvSave] shares skipped (no owner mapping)', {
+      count: skippedNoOwner.length,
     })
   }
   return { ownersCreated, sharesCreated }
@@ -514,6 +530,7 @@ export async function applyOwnerImport(
 export interface RegistryOwnerRow {
   id: string
   name: string
+  name_kana: string
   address: string
   phone: string
   agent_name: string
@@ -540,13 +557,17 @@ export async function loadRegistryOwners(
 ): Promise<RegistryOwnerRow[]> {
   const { data: owners, error } = await sb
     .from('project_owners')
-    .select('id, name, address, phone, agent_name, agent_address, agent_phone, notes')
+    .select(
+      'id, name, name_kana, address, phone, agent_name, agent_address, agent_phone, notes',
+    )
     .eq('project_id', projectId)
+    .order('name_kana', { ascending: true, nullsFirst: false })
     .order('name', { ascending: true })
   if (error) throw error
   const ownerRows = (owners ?? []) as Array<{
     id: string
     name: string
+    name_kana: string | null
     address: string | null
     phone: string | null
     agent_name: string | null
@@ -606,6 +627,7 @@ export async function loadRegistryOwners(
     byOwner.set(o.id, {
       id: o.id,
       name: o.name ?? '',
+      name_kana: o.name_kana ?? '',
       address: o.address ?? '',
       phone: o.phone ?? '',
       agent_name: o.agent_name ?? '',
@@ -642,6 +664,7 @@ export async function updateProjectOwner(
   ownerId: string,
   patch: Partial<{
     name: string
+    name_kana: string | null
     address: string | null
     phone: string | null
     agent_name: string | null

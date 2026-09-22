@@ -7,14 +7,20 @@
 // 既存 の landowners (工区単位・立会名簿) と は 完全 別系統。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, Save, Users2, X } from 'lucide-react'
+import { Download, Loader2, Save, Users2, X } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import {
+  applyOwnerImport,
   loadRegistryOwners,
+  planOwnerImport,
   updateOwnerShare,
   updateProjectOwner,
+  type OwnerConflict,
+  type OwnerImportResolution,
   type RegistryOwnerRow,
+  type SaveProgress,
 } from '@/lib/registryCsvSave'
+import { RegistryOwnerConflictModal } from './RegistryOwnerConflictModal'
 
 const VISIT_STATUS_OPTIONS = [
   '',
@@ -103,9 +109,16 @@ export function RegistryOwnersPage() {
 
   const [owners, setOwners] = useState<RegistryOwnerRow[]>([])
   const [loading, setLoading] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [progress, setProgress] = useState<SaveProgress | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [conflictModal, setConflictModal] = useState<{
+    conflicts: OwnerConflict[]
+    resolve: (r: OwnerImportResolution | null) => void
+  } | null>(null)
 
   const reload = useCallback(async () => {
     if (!projectId) return
@@ -132,10 +145,66 @@ export function RegistryOwnersPage() {
     return owners.filter(
       (o) =>
         o.name.includes(q) ||
+        o.name_kana.includes(q) ||
         o.address.includes(q) ||
         o.parcels.some((p) => p.parcel_number.includes(q)),
     )
   }, [owners, query])
+
+  // 「物件一覧 から 読込」: registry_ownerships を 走査 して 名寄せ + 地権者 作成
+  const handleImportFromProperties = async () => {
+    if (!projectId) return
+    setImporting(true)
+    setError(null)
+    setMessage(null)
+    setProgress({ phase: '地権者を名寄せ中', done: 0, total: 0 })
+    try {
+      const plan = await planOwnerImport(projectId)
+      const total =
+        Object.keys(plan.exactMatches).length +
+        plan.newOwners.length +
+        plan.conflicts.length
+      if (total === 0) {
+        setMessage('物件一覧に地権者情報がありません')
+        setImporting(false)
+        setProgress(null)
+        return
+      }
+
+      let resolution: OwnerImportResolution | null = { decisions: {} }
+      if (plan.conflicts.length > 0) {
+        setProgress(null)
+        resolution = await new Promise<OwnerImportResolution | null>(
+          (resolve) => {
+            setConflictModal({ conflicts: plan.conflicts, resolve })
+          },
+        )
+      }
+      if (!resolution) {
+        setMessage('取込をキャンセルしました')
+        setImporting(false)
+        return
+      }
+
+      const { ownersCreated, sharesCreated } = await applyOwnerImport(
+        projectId,
+        plan,
+        resolution,
+        (p) => setProgress(p),
+      )
+      await reload()
+      const matched = Object.keys(plan.exactMatches).length
+      setMessage(
+        `地権者 ${ownersCreated} 名 を 新規作成 / ${matched} 名 を 既存 に リンク / 持分 ${sharesCreated} 行 を 反映`,
+      )
+    } catch (err) {
+      console.error(err)
+      setError(err instanceof Error ? err.message : '取込に失敗しました')
+    } finally {
+      setImporting(false)
+      setProgress(null)
+    }
+  }
 
   const selected = selectedId ? owners.find((o) => o.id === selectedId) ?? null : null
 
@@ -146,6 +215,7 @@ export function RegistryOwnersPage() {
     // フィールド 名 は DB 列名 (snake_case) に 揃える
     const dbPatch: Record<string, string | null> = {}
     if (patch.name !== undefined) dbPatch.name = patch.name
+    if (patch.name_kana !== undefined) dbPatch.name_kana = patch.name_kana || null
     if (patch.address !== undefined) dbPatch.address = patch.address || null
     if (patch.phone !== undefined) dbPatch.phone = patch.phone || null
     if (patch.agent_name !== undefined) dbPatch.agent_name = patch.agent_name || null
@@ -218,18 +288,55 @@ export function RegistryOwnersPage() {
         <div className="flex-1" />
         <input
           type="search"
-          placeholder="氏名 / 住所 / 地番で絞込"
+          placeholder="氏名 / フリガナ / 住所 / 地番で絞込"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           disabled={owners.length === 0}
-          className="w-56 rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-40"
+          className="w-64 rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-40"
         />
+        <button
+          type="button"
+          onClick={handleImportFromProperties}
+          disabled={importing || loading}
+          title="物件一覧 (登記CSV 取込済) から 地権者 を 名寄せ して 取り込む"
+          className="flex items-center gap-1 rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
+        >
+          {importing ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Download className="h-3.5 w-3.5" />
+          )}
+          物件一覧から読込
+        </button>
       </div>
 
-      {loading && (
+      {progress && (
+        <div className="flex items-center gap-2 border-b bg-blue-50 px-4 py-1 text-xs text-blue-800">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <span>
+            {progress.phase}
+            {progress.total > 0 && (
+              <>
+                <span className="ml-1 font-mono">
+                  {progress.done.toLocaleString()} / {progress.total.toLocaleString()}
+                </span>
+                <span className="ml-1 text-blue-600">
+                  ({Math.round((progress.done / progress.total) * 100)}%)
+                </span>
+              </>
+            )}
+          </span>
+        </div>
+      )}
+      {!progress && loading && (
         <div className="flex items-center gap-2 border-b bg-blue-50 px-4 py-1 text-xs text-blue-800">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           読み込み中...
+        </div>
+      )}
+      {!progress && message && (
+        <div className="border-b bg-emerald-50 px-4 py-1 text-xs text-emerald-800">
+          {message}
         </div>
       )}
       {error && (
@@ -245,7 +352,9 @@ export function RegistryOwnersPage() {
         <div className="flex-1 flex flex-col items-center justify-center gap-2 text-slate-500 text-sm">
           <Users2 className="h-8 w-8 text-slate-300" />
           <div>地権者はまだ登録されていません</div>
-          <div className="text-xs">物件一覧から登記CSVを取り込むと自動で作成されます</div>
+          <div className="text-xs">
+            物件一覧に登記CSVを取り込んだ後、右上の「物件一覧から読込」を押してください
+          </div>
         </div>
       ) : (
         <div className="flex-1 flex overflow-hidden">
@@ -253,10 +362,11 @@ export function RegistryOwnersPage() {
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-slate-100 text-slate-600">
                 <tr>
-                  <th className="border-b px-2 py-1 text-left w-48">氏名</th>
+                  <th className="border-b px-2 py-1 text-left w-40">氏名</th>
+                  <th className="border-b px-2 py-1 text-left w-32">フリガナ</th>
                   <th className="border-b px-2 py-1 text-left">住所</th>
                   <th className="border-b px-2 py-1 text-left w-32">電話</th>
-                  <th className="border-b px-2 py-1 text-left w-24">保有地番</th>
+                  <th className="border-b px-2 py-1 text-right w-20">保有地番</th>
                 </tr>
               </thead>
               <tbody>
@@ -272,6 +382,9 @@ export function RegistryOwnersPage() {
                     >
                       <td className="px-2 py-1 font-semibold text-slate-800">
                         {o.name}
+                      </td>
+                      <td className="px-2 py-1 text-slate-500">
+                        {o.name_kana || '—'}
                       </td>
                       <td className="px-2 py-1 text-slate-700">
                         {o.address || '—'}
@@ -300,6 +413,22 @@ export function RegistryOwnersPage() {
             />
           )}
         </div>
+      )}
+
+      {conflictModal && (
+        <RegistryOwnerConflictModal
+          conflicts={conflictModal.conflicts}
+          onConfirm={(resolution) => {
+            const r = conflictModal.resolve
+            setConflictModal(null)
+            r(resolution)
+          }}
+          onCancel={() => {
+            const r = conflictModal.resolve
+            setConflictModal(null)
+            r(null)
+          }}
+        />
       )}
     </div>
   )
@@ -343,6 +472,11 @@ function OwnerDetailPanel({
           label="氏名"
           value={owner.name}
           onCommit={(v) => onPatchOwner({ name: v })}
+        />
+        <EditableRow
+          label="フリガナ"
+          value={owner.name_kana}
+          onCommit={(v) => onPatchOwner({ name_kana: v })}
         />
         <EditableRow
           label="住所"
