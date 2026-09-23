@@ -1002,8 +1002,22 @@ function SectionRowTable({
                   <input
                     type="number"
                     step={0.01}
-                    value={r.offset}
-                    onChange={(e) => onUpdate(r.id, { offset: parseFloat(e.target.value) || 0 })}
+                    min={side === 'center' ? undefined : 0}
+                    // 左右 の 表 は 中心 から の 距離 を 正 で 見せる。
+                    // 左 が 負 と いう 符号 は データ 側 の 約束 な ので 表示 で 吸収 する
+                    // (末尾 の 追加行 も 同じ 扱い)。
+                    value={side === 'center' ? r.offset : Math.abs(r.offset)}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value) || 0
+                      onUpdate(r.id, {
+                        offset:
+                          side === 'left'
+                            ? -Math.abs(v)
+                            : side === 'right'
+                              ? Math.abs(v)
+                              : v,
+                      })
+                    }}
                     className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
                   />
                 </td>
@@ -1197,6 +1211,10 @@ function SectionPointsEditor({
   const center = rows.filter((r) => r.offset === 0)
   const leftRows = rows.filter((r) => r.offset < 0)
   const rightRows = rows.filter((r) => r.offset > 0)
+  // 左 の 表 は 中心 に 近い 点 を 上 に 出す (右 の 表 と 読み方 を 揃える)。
+  // |離れ| で 並べ 替える と オーバーハング の 前後 が 崩れる ので、
+  // 入力順 を そのまま 逆 に する だけ に する。 表示 だけ で データ は 触らない。
+  const leftRowsView = [...leftRows].reverse()
   /** 入力順 で 1 本 に 並べる か (オーバーハング の 並べ 替え に 使う) */
   const [orderedView, setOrderedView] = useState<boolean>(() => {
     try {
@@ -1378,7 +1396,7 @@ function SectionPointsEditor({
             selectedPointId={selectedPointId}
             onSelectPoint={onSelectPoint}
             side="left"
-            rows={leftRows}
+            rows={leftRowsView}
             sourceOf={sourceOf}
             onUpdate={updateRow}
             onRemove={removeRow}
@@ -1770,18 +1788,6 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
                     fill="#a16207"
                     stroke="#fff"
                     strokeWidth={1.5}
-                    style={{ cursor: 'pointer' }}
-                    onMouseEnter={() =>
-                      setHoverPoint({
-                        x: tx(p.offset),
-                        y: ty(p.elevation - centerHeight),
-                        name: p.note ?? null,
-                        elevation: p.elevation,
-                        offset: p.offset,
-                        kind: '現況',
-                      })
-                    }
-                    onMouseLeave={() => setHoverPoint(null)}
                   />
                 ))}
                 {/* 点名 (note) を 点 の 上 に 添える。 重なって 読めなく なる のを
@@ -1829,8 +1835,8 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
                     style={{ cursor: 'pointer' }}
                     onMouseEnter={() =>
                       setHoverPoint({
-                        x: tx(p.offset),
-                        y: ty(p.elevation - centerHeight),
+                        x: vx(p.offset),
+                        y: vy(p.elevation - centerHeight),
                         name: p.note ?? null,
                         elevation: p.elevation,
                         offset: p.offset,
