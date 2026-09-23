@@ -13,9 +13,28 @@ import { CrossSectionDxfModal } from './CrossSectionDxfModal'
 import { Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Check, X, Upload, Loader2 } from 'lucide-react'
+import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Check, X, Upload, Loader2, Calculator } from 'lucide-react'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
+import { StandardSectionPickerModal } from './StandardSectionModals'
+import {
+  StakeoutModal,
+  type PickTarget,
+  type ResolvedChohari,
+  type ResolvedTombo,
+} from './StakeoutModal'
+import { labelOfPoint } from './sectionPointLabel'
+import {
+  SEGMENT_INPUT_MODES,
+  factorToSlope,
+  groundElevationAt,
+  intersectGround,
+  isInputField,
+  slopeToFactor,
+  solveSegment,
+  type SegmentField,
+  type SegmentInputMode,
+} from './segmentMath'
 import { decodeDxfBytes, type DxfShape } from '@/lib/dxfRender'
 import { supabase } from '@/lib/supabase'
 import {
@@ -36,17 +55,21 @@ import {
   type AlignmentPoint,
   type AlignmentPointKind,
   type ProfilePoint,
+  type ExtraProfile,
   type CrossSectionElement,
   type StandardCrossSection,
   type StationRow,
   type SideOrientation,
   type WidthStake,
   type MeasuredCrossPoint,
+  type TomboPoint,
+  type ChohariPoint,
   type OpenChannelRow,
   type DxfCalibration,
   type DxfCrossSectionFile,
   buildCrossSectionPath,
   elementStep,
+  elementSlopePerMeter,
 } from '@/stores/openChannelStore'
 import { useStakingStore } from '@/stores/stakingStore'
 import { useSurveySetStore } from '@/stores/surveySetStore'
@@ -130,16 +153,83 @@ function normalizeKinds(points: AlignmentPoint[]): AlignmentPoint[] {
  * 点列 に 展開する。 対話型 エディタ 保存 → plannedSectionRaw 側 の 同期 に 使用。
  * buildCrossSectionPath は 左端 → 中心 → 右端 の {x=offset, y=中心 相対 高} を 返す。
  */
+/**
+ * 標準断面 の 片側 を 点 に 展開 する。
+ *
+ * 「現況まで」 (element.toGround) の 区間 は 現況断面 と の 交点 で 長さ が
+ * 決まる。 現況 が 無い / 交わら ない ときは その 区間 で 打ち切る
+ * (truncated=true)。 手前 まで の 区間 は そのまま 使える ので 捨て ない。
+ */
+function resolveStandardSide(
+  elems: CrossSectionElement[],
+  sideSign: 1 | -1,
+  center: { offset: number; elevation: number },
+  ground: MeasuredCrossPoint[] | null,
+): {
+  pts: { offset: number; elevation: number }[]
+  truncated: boolean
+  /** 打ち切った とき の 理由 (画面 に そのまま 出す) */
+  reason?: string
+} {
+  const pts: { offset: number; elevation: number }[] = []
+  let cur = { ...center }
+  for (const e of elems) {
+    if (e.toGround) {
+      const r = solveSegment(
+        'toGround',
+        {
+          width: null,
+          height: null,
+          slopeFactor: elementSlopePerMeter(e),
+          length: null,
+          marginW: e.toGround.marginW,
+        },
+        { from: cur, sideSign, ground: ground ?? null },
+      )
+      if (!r.ok) {
+        const label = e.name ? e.name : '名前なし'
+        return { pts, truncated: true, reason: `区間「${label}」: ${r.error}` }
+      }
+      cur = {
+        offset: cur.offset + sideSign * r.value.w,
+        elevation: cur.elevation + r.value.h,
+      }
+    } else {
+      const { dx, dy } = elementStep(e, sideSign)
+      cur = { offset: cur.offset + dx, elevation: cur.elevation + dy }
+    }
+    pts.push({ ...cur })
+  }
+  return { pts, truncated: false }
+}
+
+/**
+ * 標準断面 → 測点 の 点列。 並び は 「左外 → 中心 → 右外」。
+ * ground を 渡す と 「現況まで」 の 区間 を 解決 する。
+ */
 function standardCsToMeasuredPoints(
   cs: StandardCrossSection,
   centerHeight: number,
-): MeasuredCrossPoint[] {
-  const raw = buildCrossSectionPath(cs)
-  return raw.map((p, i) => ({
-    id: `pcs-${Date.now().toString(36)}-${i}`,
-    offset: p.x,
-    elevation: centerHeight + p.y,
-  }))
+  ground?: MeasuredCrossPoint[] | null,
+): { points: MeasuredCrossPoint[]; truncated: boolean; reasons: string[] } {
+  const center = { offset: 0, elevation: centerHeight }
+  const g = ground ?? null
+  const l = resolveStandardSide(cs.left, -1, center, g)
+  const r = resolveStandardSide(cs.right, 1, center, g)
+  const seq = [...l.pts].reverse().concat([center], r.pts)
+  const stamp = Date.now().toString(36)
+  return {
+    points: seq.map((p, i) => ({
+      id: `pcs-${stamp}-${i}`,
+      offset: Math.round(p.offset * 1000) / 1000,
+      elevation: Math.round(p.elevation * 1000) / 1000,
+    })),
+    truncated: l.truncated || r.truncated,
+    reasons: [
+      ...(l.reason ? ['左 — ' + l.reason] : []),
+      ...(r.reason ? ['右 — ' + r.reason] : []),
+    ],
+  }
 }
 
 /**
@@ -363,13 +453,106 @@ const nearestScaleIndex = (v: number): number => {
 //  - ResizeObserver で 親要素の 寸法に 追従。
 //  - 縦・横 独立の 伸縮スケール (0.5x〜8x、暗渠 縦断と 同じ 段階) + マウスホイール。
 //  - 目盛は niceStep() で ピクセル密度 に 応じて 自動選定 (細かすぎ/粗すぎ 回避)。
+/**
+ * 中心 から の 離れ を 杭 の 札 の 書き方 で。 左右 を 頭 に 付ける (L15.42)。
+ * 距離 は cm まで で 足りる ので 小数 2 桁。
+ */
+function shiftText(offset: number): string {
+  const side = offset > 1e-9 ? 'R' : offset < -1e-9 ? 'L' : 'CL'
+  return side === 'CL' ? 'CL' : side + Math.abs(offset).toFixed(2)
+}
+
+/**
+ * 法勾配 を i 表記 で。 1:n の n を 出す (i=1.60)。
+ * 水平 は 勾配 が 決まら ない ので そのまま 「水平」。
+ */
+function slopeIText(dOffset: number, dElevation: number): string {
+  if (Math.abs(dElevation) < 1e-9) return '水平'
+  return 'i=' + Math.abs(dOffset / dElevation).toFixed(2)
+}
+
+/**
+ * 杭 の 長さ の 目安 表記。 現場 で 用意 する 材 の 長さ な ので
+ * 10cm 単位 に 丸める (約0.5m / 約1.2m など)。
+ */
+function roughMeters(v: number): string {
+  return '約' + (Math.round(v * 10) / 10).toFixed(1) + 'm'
+}
+
+/**
+ * 符号 を 付けた 短い 数値 表記 (トンボ の W / H 用)。
+ * 末尾 の 0 は 落とす が 小数 第 1 位 まで は 残す (+1 → +1.0)。
+ */
+function signed(v: number): string {
+  const body = (Math.round(v * 1000) / 1000)
+    .toFixed(3)
+    .replace(/0+$/, '')
+    .replace(/\.$/, '.0')
+  return v >= 0 ? '+' + body : body
+}
+
+/** 追加 縦断 の 既定色。 主縦断 (#0ea5e9) と 現況線 (#a16207) は 避ける */
+const EXTRA_PROFILE_COLORS = [
+  '#7c3aed',
+  '#db2777',
+  '#0d9488',
+  '#ea580c',
+  '#4338ca',
+  '#65a30d',
+]
+
+/**
+ * 縦断 の 変化点列 を SVG パス に する。
+ * VCL > 0 の 変化点 は BVC → 放物線 20 分割 → EVC で 追従 し PVI (角) は 通らない。
+ * 曲線 が 無い 変化点 は そのまま 通る。
+ */
+function buildProfilePath(
+  sorted: ProfilePoint[],
+  curveByPvi: Map<number, VerticalCurve>,
+  tx: (d: number) => number,
+  ty: (h: number) => number,
+): string {
+  const parts: string[] = []
+  let started = false
+  const moveTo = (d: number, h: number) => {
+    parts.push(`${started ? 'L' : 'M'} ${tx(d)} ${ty(h)}`)
+    started = true
+  }
+  for (let i = 0; i < sorted.length; i++) {
+    const p = sorted[i]
+    const c = curveByPvi.get(i)
+    if (c) {
+      moveTo(c.bvcDistance, c.bvcHeight)
+      const SAMPLES = 20
+      for (let k = 1; k <= SAMPLES; k++) {
+        const x = (c.vcl * k) / SAMPLES
+        const d = c.bvcDistance + x
+        const h =
+          c.bvcHeight +
+          (c.i1Percent / 100) * x +
+          ((c.i2Percent - c.i1Percent) / (200 * c.vcl)) * x * x
+        moveTo(d, h)
+      }
+    } else {
+      moveTo(p.distance, p.floorHeight)
+    }
+  }
+  return parts.join(' ')
+}
+
 function ProfileChart({
   points,
+  extraProfiles,
   totalLen,
   spOffset = 0,
   currentGroundPoints,
 }: {
   points: ProfilePoint[]
+  /**
+   * 主縦断 と 別 に 重ねて 出す 縦断 (道路高 / 側溝高 など)。
+   * 高さ レンジ の 計算 にも 参加 する。
+   */
+  extraProfiles?: ExtraProfile[]
   totalLen: number
   /**
    * 現況地盤高 の 測点列 (station.currentGroundHeight から 生成)。
@@ -468,6 +651,12 @@ function ProfileChart({
     .slice()
     .sort((a, b) => a.distance - b.distance)
   for (const p of currentPts) heightSamples.push(p.z)
+  // 追加 の 縦断 も レンジ に 入れる (枠 から はみ出して 見え なく なら ない ように)
+  for (const ep of extraProfiles ?? []) {
+    for (const p of ep.points) {
+      if (Number.isFinite(p.floorHeight)) heightSamples.push(p.floorHeight)
+    }
+  }
   const minH = Math.min(...heightSamples)
   const maxH = Math.max(...heightSamples)
   const rangeRaw = maxH - minH
@@ -487,36 +676,23 @@ function ProfileChart({
   const ty = (h: number) => padding.top + (maxH - h) * pxPerMeterY
 
   // 縦断曲線 が ある 場合 は 放物線 の サンプル 点 を 挟んで パス を 組み立てる。
-  // BVC / EVC の 間 は 20 分割 で 放物線 を 追従。 曲線 外 は 直線 補間。
-  const pathParts: string[] = []
   const curveByPvi = new Map<number, VerticalCurve>()
   for (const c of curves) curveByPvi.set(c.pviIndex, c)
-  let started = false
-  const moveTo = (d: number, h: number) => {
-    pathParts.push(`${started ? 'L' : 'M'} ${tx(d)} ${ty(h)}`)
-    started = true
-  }
-  for (let i = 0; i < sorted.length; i++) {
-    const p = sorted[i]
-    const c = curveByPvi.get(i)
-    if (c) {
-      // BVC → 放物線 サンプル → EVC。 PVI (角) は 通らない。
-      moveTo(c.bvcDistance, c.bvcHeight)
-      const SAMPLES = 20
-      for (let k = 1; k <= SAMPLES; k++) {
-        const x = (c.vcl * k) / SAMPLES
-        const d = c.bvcDistance + x
-        const h =
-          c.bvcHeight + (c.i1Percent / 100) * x +
-          ((c.i2Percent - c.i1Percent) / (200 * c.vcl)) * x * x
-        moveTo(d, h)
-      }
-    } else {
-      // 曲線 なし: 変化点 を そのまま 通る
-      moveTo(p.distance, p.floorHeight)
+  const path = buildProfilePath(sorted, curveByPvi, tx, ty)
+
+  // 追加 の 縦断。 主縦断 と 同じ 座標 変換 / 同じ 曲線 の 扱い で 重ねる。
+  const extraLines = (extraProfiles ?? []).map((ep, i) => {
+    const ps = [...ep.points].sort((a, b) => a.distance - b.distance)
+    const map = new Map<number, VerticalCurve>()
+    for (const c of computeVerticalCurves(ps)) map.set(c.pviIndex, c)
+    return {
+      id: ep.id,
+      name: ep.name,
+      color: ep.color ?? EXTRA_PROFILE_COLORS[i % EXTRA_PROFILE_COLORS.length],
+      points: ps,
+      d: ps.length >= 2 ? buildProfilePath(ps, map, tx, ty) : '',
     }
-  }
-  const path = pathParts.join(' ')
+  })
 
   // 目盛間隔: 約 60px (X) / 40px (Y) 毎 に 1 目盛 になる ように niceStep で 丸める。
   const xStep = niceStep(60 / pxPerMeterX)
@@ -534,7 +710,25 @@ function ProfileChart({
   return (
     <div className="w-full h-full flex flex-col">
       {/* スケール コントロール */}
-      <div className="text-[11px] text-slate-500 flex items-center gap-2 shrink-0 px-1 py-0.5">
+      <div className="text-[11px] text-slate-500 flex items-center gap-2 shrink-0 px-1 py-0.5 flex-wrap">
+        {extraLines.length > 0 && (
+          <span className="flex items-center gap-2">
+            <span className="flex items-center gap-1">
+              <svg width="16" height="6">
+                <line x1={0} y1={3} x2={16} y2={3} stroke="#0ea5e9" strokeWidth={2} />
+              </svg>
+              <span>中心 (主)</span>
+            </span>
+            {extraLines.map((ex) => (
+              <span key={ex.id} className="flex items-center gap-1">
+                <svg width="16" height="6">
+                  <line x1={0} y1={3} x2={16} y2={3} stroke={ex.color} strokeWidth={2} />
+                </svg>
+                <span>{ex.name}</span>
+              </span>
+            ))}
+          </span>
+        )}
         <span className="flex items-center gap-1">
           縦:
           <input
@@ -669,6 +863,34 @@ function ProfileChart({
             strokeLinejoin="round"
             strokeLinecap="round"
           />
+
+          {/* 追加 の 縦断。 主縦断 より 細く し、 点 も 小さめ に して 主従 を 付ける */}
+          {extraLines.map((ex) => (
+            <g key={ex.id}>
+              {ex.d && (
+                <path
+                  d={ex.d}
+                  fill="none"
+                  stroke={ex.color}
+                  strokeWidth={1.5}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  opacity={0.9}
+                />
+              )}
+              {ex.points.map((p, i) => (
+                <circle
+                  key={i}
+                  cx={tx(p.distance)}
+                  cy={ty(p.floorHeight)}
+                  r={2.5}
+                  fill={ex.color}
+                  stroke="#fff"
+                  strokeWidth={1}
+                />
+              ))}
+            </g>
+          ))}
 
           {/* 現況地盤線 (茶): LandXML TIN から 取り込んだ 各測点 の currentGroundHeight を
               距離順 で つなぐ。 計画線 と 区別 する ため 茶色 + 少し 細く。 */}
@@ -922,6 +1144,530 @@ function ElevationField({
  * 左 / 右 は 末尾 に 空白行 を 持ち、そこ に 直接 打つ と 1 点 増える
  * (幅杭 / 縦断 の 表 と 同じ 入力 の しかた)。
  */
+/**
+ * 計算 中 の 線分 の プレビュー。 表 の ダイアログ と 断面図 で 共有 する。
+ * from → original が いま の 線分、 from → to が 仮 の 位置。
+ */
+type CalcPreview = {
+  from: { offset: number; elevation: number }
+  original: { offset: number; elevation: number }
+  to: { offset: number; elevation: number } | null
+  /**
+   * 確定 したら こう なる、 その 点 より 外側 の 点 (仮)。
+   * 保持 なら いま の まま、 スライド なら 同じ 量 ずらした もの。
+   * 仮 の 断面 の 形 を 図 に 出す ため に 使う。
+   */
+  outer?: { offset: number; elevation: number }[]
+}
+
+
+/**
+ * 計画 の 1 点 を 「前 の 点 から の 勾配 と 幅 / 直高」 で 置く ダイアログ。
+ *
+ * 規約 は 標準断面 の 要素 (elementStep) と 同じ。
+ *   - 幅   : 前 の 点 から 外 へ 向かう 水平距離 [m]。 負 に すると 内 へ 戻る
+ *            (オーバーハング)。
+ *   - 勾配 : 外 へ 1m 進む ごと の 上がり [m]。 + が 上がり。
+ *            % は value/100、 比率 は 1:n と 読み 1/n。 比率 の 0 は 不可。
+ *   - 直高 : 前 の 点 から の 上下 [m]。 + が 上。
+ *
+ * 幅 と 直高 は 「前 の 点 から の 差」 な ので、 断面 の 表 と 同じ 絶対値
+ * (離れ / 標高) も 並べて 出し、 どちら から でも 入れられる ように する。
+ *   離れ (中心 から の 距離、 左右 とも 正) = |前 の 点 の 離れ| + 幅
+ *   標高                                    = 前 の 点 の 標高       + 直高
+ *
+ * 3 つ の うち 2 つ が 決まれば 残り は 決まる。 どれ を 自動計算 に する か は
+ * 「自動計算」 の ボタン で 選ぶ。 自動計算 の 欄 は 灰色 で 編集 できない。
+ * 切り替える とき は それまで 計算 で 出て いた 値 を その 欄 に 固定 する ので、
+ * 「幅 と 直高 で 勾配 を 見る」 → 「その 勾配 と 標高 で 幅 を 出す」 と 繋げられる。
+ *
+ * 開いた 直後 は 自動計算 = 勾配。 いま の 点 の 幅 / 直高 が 入って いる ので、
+ * 既存 の 点 の 「現在 の 勾配」 を そのまま 読める。
+ */
+function PlanPointCalcModal({
+  prev,
+  side,
+  original,
+  outerCount,
+  ground,
+  onPreview,
+  onApply,
+  onNavigate,
+  hasPrev,
+  hasNext,
+  onClose,
+}: {
+  /** 基準 に する 点 (表 の 1 つ 内側、 無ければ 中心) */
+  prev: { offset: number; elevation: number }
+  side: 'left' | 'right'
+  /** いま の この 点。 初期値 と 「元 の 位置」 の 表示 に 使う */
+  original: { offset: number; elevation: number }
+  /** この 点 より 外側 に 残って いる 行数。 1 以上 なら 保持 / スライド を 選ばせる */
+  outerCount: number
+  /**
+   * この 測点 の 現況断面。 「勾配 ～ 現況まで」 の 交点 計算 に 使う。
+   * 無い / 2 点 未満 の ときは その 入力方法 が エラー に なる。
+   */
+  ground?: MeasuredCrossPoint[] | null
+  /** 図 に 出す 仮 の 位置 と、 外側 を ずらす か。 入力 が 足り なければ null */
+  onPreview: (to: { offset: number; elevation: number } | null, slide: boolean) => void
+  onApply: (next: { offset: number; elevation: number }, slide: boolean) => void
+  /** 前 / 次 の 計画点 へ 移る。 端 なら null */
+  onNavigate?: (dir: -1 | 1) => void
+  hasPrev?: boolean
+  hasNext?: boolean
+  onClose: () => void
+}) {
+  const sideSign = side === 'left' ? -1 : 1
+  const r3 = (v: number) => Math.round(v * 1000) / 1000
+  /** 中心 から の 距離 (左右 とも 正)。 表 の 「離れ」 と 同じ 見せ方 */
+  const prevAbs = Math.abs(prev.offset)
+  // 開いた ときの 値。 確定 して も 「最初に戻す」 が 効く ように 固定 する。
+  // 別 の 点 へ 移る ときは key で 作り直す ので ここ も 入れ替わる。
+  const [initW] = useState(() => r3((original.offset - prev.offset) * sideSign))
+  const [initH] = useState(() => r3(original.elevation - prev.elevation))
+
+  const initDist = r3(prevAbs + initW)
+  const initElev = r3(prev.elevation + initH)
+
+  const [unit, setUnit] = useState<'percent' | 'ratio'>('percent')
+  /** 4 つ の うち どの 2 つ を 入力 に する か */
+  const [mode, setMode] = useState<SegmentInputMode>('widthHeight')
+  const [slopeText, setSlopeText] = useState('')
+  const [lengthText, setLengthText] = useState(String(r3(Math.hypot(initW, initH))))
+  /** 「現況まで」 の とき、 交点 から さらに 伸ばす 幅 */
+  const [marginText, setMarginText] = useState('')
+  // 幅 と 離れ (直高 と 標高) は 同じ 値 の 別 の 見方。 打った 側 の 文字 を
+  // そのまま 残す ため 両方 を 文字列 で 持つ。 片方 を 計算 で 作り直すと
+  // 1 文字 打つ たび に 整形 され、 カーソル が 末尾 へ 飛んで しまう。
+  const [widthText, setWidthText] = useState(String(initW))
+  const [distText, setDistText] = useState(String(initDist))
+  const [heightText, setHeightText] = useState(String(initH))
+  const [elevText, setElevText] = useState(String(initElev))
+  const [slide, setSlide] = useState(false)
+  /** ダイアログ の 移動量 (見たい 所 が 隠れる ので 動かせる ように する) */
+  const [pos, setPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [drag, setDrag] = useState<{
+    sx: number
+    sy: number
+    ox: number
+    oy: number
+  } | null>(null)
+
+  useEffect(() => {
+    if (!drag) return
+    const onMove = (e: MouseEvent) =>
+      setPos({ x: drag.ox + (e.clientX - drag.sx), y: drag.oy + (e.clientY - drag.sy) })
+    const onUp = () => setDrag(null)
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [drag])
+
+  const num = (t: string) => {
+    const v = parseFloat(t)
+    return t.trim() !== '' && Number.isFinite(v) ? v : null
+  }
+
+  // 幅 / 直高 / 勾配 / 法長 の うち 2 つ で 区間 が 決まる。 解く の は 共通 の
+  // segmentMath。 標準断面 の 区間 と 同じ 規則 に する ため。
+  const svIn = isInputField(mode, 'slope') ? num(slopeText) : null
+  const solved = solveSegment(
+    mode,
+    {
+      width: isInputField(mode, 'width') ? num(widthText) : null,
+      height: isInputField(mode, 'height') ? num(heightText) : null,
+      slopeFactor: svIn == null ? null : slopeToFactor(svIn, unit),
+      length: isInputField(mode, 'length') ? num(lengthText) : null,
+      marginW: num(marginText) ?? 0,
+    },
+    // 「現況まで」 は 基準点 から 外 へ 伸ばして 現況線 と ぶつける
+    { from: prev, sideSign, ground: ground ?? null },
+  )
+  const dW = solved.ok ? solved.value.w : null
+  const dH = solved.ok ? solved.value.h : null
+  const err = solved.ok ? '' : solved.error
+  /** 幅 が 0 の とき 勾配 は 決まら ない (直立)。 位置 は 決まる ので エラー に しない */
+  const factorOut = solved.ok ? solved.value.f : null
+
+  const nextOffset = dW == null ? null : r3(prev.offset + sideSign * dW)
+  const nextElevation = dH == null ? null : r3(prev.elevation + dH)
+  const ok = !err && nextOffset != null && nextElevation != null
+
+  // 手入力 の 欄 は 打った 文字 を、 自動計算 の 欄 は 計算 値 を 出す
+  const auto = (k: SegmentField) => !isInputField(mode, k)
+  const shownSlope = !auto('slope')
+    ? slopeText
+    : factorOut == null
+      ? dW != null && Math.abs(dW) < 1e-9
+        ? '直立'
+        : ''
+      : factorToSlope(factorOut, unit)
+  const shownWidth = auto('width') ? (dW == null ? '' : dW.toFixed(3)) : widthText
+  const shownHeight = auto('height') ? (dH == null ? '' : dH.toFixed(3)) : heightText
+  const shownLength = auto('length')
+    ? solved.ok
+      ? solved.value.l.toFixed(3)
+      : ''
+    : lengthText
+  // 離れ / 標高 は 幅 / 直高 の 別 の 見方。 相方 が 自動計算 なら こちら も
+  const shownDist = auto('width') ? (dW == null ? '' : r3(prevAbs + dW).toFixed(3)) : distText
+  const shownElev =
+    auto('height') ? (dH == null ? '' : r3(prev.elevation + dH).toFixed(3)) : elevText
+
+  /** 打った 側 は 文字 を 触らず、 相方 だけ を 計算 し 直す */
+  const typeWidth = (raw: string) => {
+    setWidthText(raw)
+    const v = num(raw)
+    setDistText(v == null ? '' : String(r3(prevAbs + v)))
+  }
+  const typeDist = (raw: string) => {
+    setDistText(raw)
+    const v = num(raw)
+    setWidthText(v == null ? '' : String(r3(v - prevAbs)))
+  }
+  const typeHeight = (raw: string) => {
+    setHeightText(raw)
+    const v = num(raw)
+    setElevText(v == null ? '' : String(r3(prev.elevation + v)))
+  }
+  const typeElev = (raw: string) => {
+    setElevText(raw)
+    const v = num(raw)
+    setHeightText(v == null ? '' : String(r3(v - prev.elevation)))
+  }
+  /** 開いた ときの 値 に 戻す (位置 は そのまま) */
+  const resetAll = () => {
+    setUnit('percent')
+    setMode('widthHeight')
+    setSlopeText('')
+    setWidthText(String(initW))
+    setDistText(String(initDist))
+    setHeightText(String(initH))
+    setElevText(String(initElev))
+    setLengthText(String(r3(Math.hypot(initW, initH))))
+    setMarginText('')
+    setSlide(false)
+  }
+
+  /** 入力方法 の 切替。 いま 出て いる 値 を 全部 の 欄 に 固定 して から 移す */
+  const pickMode = (next: SegmentInputMode) => {
+    if (next === mode) return
+    if (solved.ok) {
+      const v = solved.value
+      setWidthText(String(r3(v.w)))
+      setDistText(String(r3(prevAbs + v.w)))
+      setHeightText(String(r3(v.h)))
+      setElevText(String(r3(prev.elevation + v.h)))
+      setLengthText(String(r3(v.l)))
+      if (v.f != null) setSlopeText(factorToSlope(v.f, unit))
+    }
+    setMode(next)
+  }
+  /** 単位 を 変える とき、 入力 中 の 勾配 は 同じ 傾き の まま 書き換える */
+  const pickUnit = (u: 'percent' | 'ratio') => {
+    if (u === unit) return
+    if (!auto('slope')) {
+      const v = num(slopeText)
+      const f = v == null ? null : slopeToFactor(v, unit)
+      if (f != null) setSlopeText(factorToSlope(f, u))
+    }
+    setUnit(u)
+  }
+
+  // 図 に 仮 の 位置 を 出す。 onPreview は 毎 レンダー 作り直される ので
+  // 依存 に は 入れず、 値 が 変わった とき だけ 親 に 知らせる。
+  useEffect(() => {
+    onPreview(
+      ok ? { offset: nextOffset as number, elevation: nextElevation as number } : null,
+      slide,
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ok, nextOffset, nextElevation, slide])
+  // 閉じる とき は 必ず 消す (null を 渡す だけ な ので 古い 関数 でも 困らない)
+  useEffect(() => {
+    return () => onPreview(null, false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const inputCls = (isAuto: boolean) =>
+    'flex-1 min-w-0 px-1.5 py-1 border rounded font-mono text-right ' +
+    (isAuto ? 'bg-slate-100 text-slate-500' : 'bg-white')
+  const pickCls = (on: boolean) =>
+    'px-2 py-1 text-[11px] border rounded ' +
+    (on ? 'bg-slate-700 text-white border-slate-700' : 'bg-white hover:bg-slate-50')
+  const sideMark = side === 'left' ? 'L' : 'R'
+
+  return (
+    // 背景 は 暗く しない。 断面図 を 見ながら 数値 を 入れたい ので、
+    // 覆い は クリック を 通し (pointer-events-none)、 本体 だけ 受ける。
+    <div className="fixed inset-0 z-[3000] flex items-center justify-center p-4 pointer-events-none">
+      <div
+        className="bg-white rounded shadow-xl border w-[34rem] max-w-full pointer-events-auto"
+        style={{ transform: 'translate(' + pos.x + 'px, ' + pos.y + 'px)' }}
+      >
+        <div
+          onMouseDown={(e) => {
+            // ヘッダー を つまんで 動かす。 閉じる ボタン の 上 では 始めない
+            if ((e.target as HTMLElement).closest('button')) return
+            setDrag({ sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y })
+          }}
+          className="px-3 py-2 border-b flex items-center justify-between cursor-move select-none bg-slate-50 rounded-t"
+        >
+          <span className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-slate-700">
+              計画点計算 ({sideMark})
+            </span>
+            {/* 同じ 側 の 表 の 並び (中心 に 近い 順) で 1 つ ずつ 移る */}
+            {onNavigate && (
+              <span className="inline-flex items-center gap-0.5">
+                <button
+                  onClick={() => onNavigate(-1)}
+                  disabled={!hasPrev}
+                  className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-100 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="1 つ 内側 の 計画点 へ"
+                >
+                  ◀ 前の点
+                </button>
+                <button
+                  onClick={() => onNavigate(1)}
+                  disabled={!hasNext}
+                  className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-100 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="1 つ 外側 の 計画点 へ"
+                >
+                  次の点 ▶
+                </button>
+              </span>
+            )}
+          </span>
+          <button onClick={onClose} className="p-0.5 hover:bg-slate-100 rounded">
+            <X className="h-4 w-4 text-slate-500" />
+          </button>
+        </div>
+        <div className="p-3 space-y-2 text-xs">
+          <div className="text-slate-500 leading-5">
+            <div>
+              基準 (前 の 点): 離れ{' '}
+              <span className="font-mono text-slate-700">
+                {sideMark}
+                {prevAbs.toFixed(3)}
+              </span>{' '}
+              / 標高 <span className="font-mono text-slate-700">{prev.elevation.toFixed(3)}</span> m
+            </div>
+            <div>
+              いま の この 点: 離れ{' '}
+              <span className="font-mono text-slate-700">
+                {sideMark}
+                {Math.abs(original.offset).toFixed(3)}
+              </span>{' '}
+              / 標高{' '}
+              <span className="font-mono text-slate-700">{original.elevation.toFixed(3)}</span> m
+            </div>
+          </div>
+
+          {/* 入力方法。 幅 / 直高 / 勾配 / 法長 の うち 2 つ を 入れ、 残り を 計算 する。
+              法面 は 「法長 + 勾配」 で 指定 する こと が 多い。 */}
+          <div className="flex items-center gap-2 border-t pt-2">
+            <span className="w-14 shrink-0 text-slate-600">入力方法</span>
+            <select
+              value={mode}
+              onChange={(e) => pickMode(e.target.value as SegmentInputMode)}
+              className="flex-1 px-1.5 py-1 border rounded bg-white"
+            >
+              {SEGMENT_INPUT_MODES.map((m) => (
+                <option key={m.key} value={m.key}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <span className="shrink-0 text-slate-400">灰色 の 欄 は 計算 結果</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="w-14 shrink-0 text-slate-600">勾配</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={shownSlope}
+              readOnly={auto('slope')}
+              onChange={(e) => setSlopeText(e.target.value)}
+              placeholder={unit === 'percent' ? '例 -2' : '例 1.5 (1:1.5)'}
+              className={inputCls(auto('slope'))}
+            />
+            <div className="flex gap-0.5 shrink-0">
+              {(['percent', 'ratio'] as const).map((u) => (
+                <button key={u} onClick={() => pickUnit(u)} className={pickCls(unit === u)}>
+                  {u === 'percent' ? '%' : '1:n'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="w-14 shrink-0 text-slate-600">幅 (m)</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={shownWidth}
+              readOnly={auto('width')}
+              onChange={(e) => typeWidth(e.target.value)}
+              placeholder="外 へ (負 で 内 へ)"
+              className={inputCls(auto('width'))}
+            />
+            <span className="shrink-0 text-slate-600">離れ (m)</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={shownDist}
+              readOnly={auto('width')}
+              onChange={(e) => typeDist(e.target.value)}
+              placeholder={sideMark + ' からの 距離'}
+              className={inputCls(auto('width'))}
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="w-14 shrink-0 text-slate-600">直高 (m)</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={shownHeight}
+              readOnly={auto('height')}
+              onChange={(e) => typeHeight(e.target.value)}
+              placeholder="+ が 上"
+              className={inputCls(auto('height'))}
+            />
+            <span className="shrink-0 text-slate-600">標高 (m)</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={shownElev}
+              readOnly={auto('height')}
+              onChange={(e) => typeElev(e.target.value)}
+              placeholder="標高"
+              className={inputCls(auto('height'))}
+            />
+          </div>
+
+          {/* 「現況まで」 の とき だけ。 交点 から 同じ 勾配 の まま 伸ばす 幅 */}
+          {mode === 'toGround' && (
+            <div className="flex items-center gap-2">
+              <span className="w-14 shrink-0 text-slate-600">余裕幅 (m)</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={marginText}
+                onChange={(e) => setMarginText(e.target.value)}
+                placeholder="0 (交点 で 止める)"
+                className={inputCls(false)}
+              />
+              <span className="shrink-0 text-slate-400">交点 から 幅方向 に 追加</span>
+            </div>
+          )}
+
+          {/* 法長。 斜面 に 沿った 長さ。 対 に なる 絶対値 は 無い */}
+          <div className="flex items-center gap-2">
+            <span className="w-14 shrink-0 text-slate-600">法長 (m)</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={shownLength}
+              readOnly={auto('length')}
+              onChange={(e) => setLengthText(e.target.value)}
+              placeholder="斜面 に 沿った 長さ"
+              className={inputCls(auto('length'))}
+            />
+          </div>
+
+          {outerCount > 0 && (
+            <div className="flex items-center gap-2 border-t pt-2">
+              <span className="text-slate-600">外側 の {outerCount} 点</span>
+              <div className="flex gap-0.5">
+                <button
+                  onClick={() => setSlide(false)}
+                  className={pickCls(!slide)}
+                  title="この 点 だけ 動かす"
+                >
+                  位置を保持
+                </button>
+                <button
+                  onClick={() => setSlide(true)}
+                  className={pickCls(slide)}
+                  title="外側 の 点 も 同じ だけ ずらす (形 を 保つ)"
+                >
+                  スライド
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="border-t pt-2">
+            {err ? (
+              <div className="text-red-600">{err}</div>
+            ) : (
+              <>
+                <div className="font-mono text-sm text-slate-800">
+                  → 離れ {sideMark}
+                  {Math.abs(nextOffset ?? 0).toFixed(3)} / 標高{' '}
+                  {(nextElevation ?? 0).toFixed(3)} m
+                </div>
+                <div className="text-slate-500">
+                  前 の 点 から 幅 {(dW ?? 0).toFixed(3)} / 直高 {(dH ?? 0).toFixed(3)}
+                  {factorOut != null
+                    ? ' / 勾配 ' + (factorOut * 100).toFixed(2) + '%'
+                    : ' / 直立 (幅 0)'}
+                </div>
+                {solved.ok && solved.value.flipped && (
+                  <div className="text-amber-600">
+                    入れた 向き で は 現況 に 届か ない ので、 勾配 の 上下 を 反転 して
+                    求めました (この 位置 で は 現況 が 反対側 に あります)。
+                  </div>
+                )}
+                {solved.ok && solved.value.extrapolated && (
+                  <div className="text-amber-600">
+                    交点 が 現況 の 測った 範囲 の 外 です。 端 の 勾配 を 延長 して 求めました。
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+        <div className="px-3 py-2 border-t flex justify-end gap-2">
+          <button
+            onClick={resetAll}
+            className="px-3 py-1 text-xs border rounded bg-white hover:bg-slate-50 text-slate-600"
+            title="開いた ときの 値 に 戻す"
+          >
+            最初に戻す
+          </button>
+          <button
+            onClick={onClose}
+            className="px-3 py-1 text-xs border rounded bg-white hover:bg-slate-50 text-slate-600"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={() => {
+              if (!ok) return
+              onApply(
+                { offset: nextOffset as number, elevation: nextElevation as number },
+                slide,
+              )
+            }}
+            disabled={!ok}
+            className="px-3 py-1 text-xs border rounded bg-blue-600 text-white border-blue-600 hover:bg-blue-700 disabled:opacity-40"
+          >
+            確定
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function SectionRowTable({
   title,
   side,
@@ -930,6 +1676,8 @@ function SectionRowTable({
   onUpdate,
   onRemove,
   onAdd,
+  onMove,
+  onCalc,
   selectedPointId,
   onSelectPoint,
 }: {
@@ -941,6 +1689,14 @@ function SectionRowTable({
   onUpdate: (id: string, patch: Partial<MeasuredCrossPoint>) => void
   onRemove: (id: string) => void
   onAdd?: (p: { offset: number; elevation: number; note?: string }) => void
+  /**
+   * 表示 上 の 1 つ 上 / 下 と 入れ替える。
+   * 断面 は 普段 中心 に 近い 順 で 足りる が、オーバーハング (外 へ 出て
+   * から 内 へ 戻る) だけ は 離れ で 順序 が 決まら ない ので 手 で 直す。
+   */
+  onMove?: (id: string, dir: -1 | 1) => void
+  /** 計画 だけ。 前 の 点 から の 勾配 / 幅 / 直高 で この 点 を 置き直す */
+  onCalc?: (id: string) => void
   /** 図 と 共有 する 選択 */
   selectedPointId?: string | null
   onSelectPoint?: (id: string | null) => void
@@ -986,6 +1742,8 @@ function SectionRowTable({
               <th className="px-1 py-1 text-right">離れ (m)</th>
               <th className="px-1 py-1 text-right">標高 (m)</th>
               <th className="px-1 py-1 text-left">点名</th>
+              {onCalc && <th className="px-1 py-1 w-7" />}
+              {onMove && <th className="px-1 py-1 w-10" />}
               <th className="px-1 py-1 w-7" />
             </tr>
           </thead>
@@ -1037,9 +1795,52 @@ function SectionRowTable({
                     className="w-full px-1 py-0.5 border rounded"
                   />
                 </td>
+                {onCalc && (
+                  <td className="px-0.5 py-1 text-center">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onCalc(r.id)
+                      }}
+                      className="p-0.5 border rounded hover:bg-blue-50 text-blue-600"
+                      title="前 の 点 から の 勾配 と 幅 / 直高 で この 点 の 位置 を 計算"
+                    >
+                      <Calculator className="h-3 w-3" />
+                    </button>
+                  </td>
+                )}
+                {onMove && (
+                  <td className="px-0.5 py-1 text-center whitespace-nowrap">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onMove(r.id, -1)
+                      }}
+                      disabled={rows[0]?.id === r.id}
+                      className="p-0.5 border rounded hover:bg-slate-100 text-slate-600 disabled:opacity-30"
+                      title="1 つ 上 (中心 側) へ"
+                    >
+                      <ArrowUp className="h-3 w-3" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onMove(r.id, 1)
+                      }}
+                      disabled={rows[rows.length - 1]?.id === r.id}
+                      className="ml-0.5 p-0.5 border rounded hover:bg-slate-100 text-slate-600 disabled:opacity-30"
+                      title="1 つ 下 (外 側) へ"
+                    >
+                      <ArrowDown className="h-3 w-3" />
+                    </button>
+                  </td>
+                )}
                 <td className="px-1 py-1 text-center">
                   <button
-                    onClick={() => onRemove(r.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRemove(r.id)
+                    }}
                     className="p-0.5 border rounded hover:bg-red-50 text-red-600"
                     title="この点を削除"
                   >
@@ -1084,6 +1885,8 @@ function SectionRowTable({
                     className="w-full px-1 py-0.5 border rounded bg-white"
                   />
                 </td>
+                {onCalc && <td />}
+                {onMove && <td />}
                 <td className="px-1 py-1 text-center">
                   <button
                     onClick={commitDraft}
@@ -1119,19 +1922,30 @@ function SectionRowTable({
 function SectionPointsEditor({
   target,
   stationId,
-  stationLabel,
   points,
-  autoPoints,
+  centerHeight,
+  profileCenterHeight,
+  groundPoints,
+  onCalcPreviewChange,
   onChange,
   selectedPointId,
   onSelectPoint,
 }: {
   target: SectionTarget
   stationId: string
-  stationLabel: string
   points: MeasuredCrossPoint[]
-  /** 横断幅 以内 の 実測記録 (まだ 表 に 入って いない 分)。 現況 だけ */
-  autoPoints?: MeasuredCrossPoint[]
+  /** 中心設計高 [m]。 一番 内側 の 点 を 計算 する とき の 基準 に 使う */
+  centerHeight?: number
+  /** この 測点 の 現況断面。 計算 の 「勾配 ～ 現況まで」 に 使う */
+  groundPoints?: MeasuredCrossPoint[] | null
+  /**
+   * 縦断線形 を その 測点 の 位置 で 内挿 した 高さ [m]。
+   * 計画 の 中心高 を 「縦断から計算」 で 入れる ため だけ に 使う。
+   * 測点 が 縦断 の 範囲 外 なら undefined。
+   */
+  profileCenterHeight?: number
+  /** 計算 中 の 線分 を 断面図 に 出す ため 親 へ 上げる */
+  onCalcPreviewChange?: (p: CalcPreview | null) => void
   onChange: (points: MeasuredCrossPoint[]) => void
   /** 図 と 表 で 共有 する 選択。 行 を 押す と 図 の マーク も 変わる */
   selectedPointId?: string | null
@@ -1158,8 +1972,6 @@ function SectionPointsEditor({
     setRows(next)
     onChange(next)
   }
-  const targetLabel =
-    target === 'current' ? '現況断面' : target === 'asbuilt' ? '出来形' : '計画断面 (トレース)'
   /** 行 の id の 頭 で 出所 が 分かる (sr-=実測記録 / mp-=地図 / dxf-=トレース / tin-=LandXML) */
   const sourceOf = (id: string): string =>
     id.startsWith('sr-') ? '実測記録'
@@ -1177,30 +1989,6 @@ function SectionPointsEditor({
    */
   const addPoint = (p: { offset: number; elevation: number; note?: string }) =>
     commit([...rows, { id: newId(), ...p }])
-  /** 1 つ 上 / 下 と 入れ替える (入力順 モード) */
-  const movePoint = (idx: number, dir: -1 | 1) => {
-    const to = idx + dir
-    if (to < 0 || to >= rows.length) return
-    const next = [...rows]
-    const t = next[idx]
-    next[idx] = next[to]
-    next[to] = t
-    commit(next)
-  }
-  /** 横断幅 以内 の 実測記録 を 表 に 入れる。 既に ある 分 は 足さない */
-  const addFromRecords = () => {
-    if (!autoPoints || autoPoints.length === 0) return
-    const have = new Set(rows.map((p) => p.id))
-    const add = autoPoints.filter((p) => !have.has(p.id))
-    if (add.length === 0) return
-    commit([...rows, ...add])
-  }
-  const clearRows = () => {
-    if (rows.length === 0) return
-    if (!window.confirm(`${rows.length} 点 すべて を 消します。よろしいですか？`)) return
-    commit([])
-  }
-  const sortRows = () => commit([...rows].sort((a, b) => a.offset - b.offset))
   const removeRow = (id: string) => commit(rows.filter((p) => p.id !== id))
   const updateRow = (id: string, patch: Partial<MeasuredCrossPoint>) =>
     commit(rows.map((p) => (p.id === id ? { ...p, ...patch } : p)))
@@ -1215,181 +2003,169 @@ function SectionPointsEditor({
   // |離れ| で 並べ 替える と オーバーハング の 前後 が 崩れる ので、
   // 入力順 を そのまま 逆 に する だけ に する。 表示 だけ で データ は 触らない。
   const leftRowsView = [...leftRows].reverse()
-  /** 入力順 で 1 本 に 並べる か (オーバーハング の 並べ 替え に 使う) */
-  const [orderedView, setOrderedView] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('oc:sectionOrderedView') === '1'
-    } catch {
-      return false
+  /**
+   * 表 の 見た目 の 1 つ 上 / 下 と 入れ替える。 表 は 左右 とも 中心 に 近い
+   * 順 で 出して いる ので、普段 は 触る 必要 が ない。 オーバーハング だけ は
+   * 離れ で 順序 が 決まら ない ので これ で 直す。
+   * 並び 替え は その 側 の 行 の 中 だけ。 中心 や 反対側 の 位置 は 動かさない。
+   */
+  const moveWithinSide = (sideKey: 'left' | 'right', id: string, dir: -1 | 1) => {
+    const belongs = (r: MeasuredCrossPoint) => (sideKey === 'left' ? r.offset < 0 : r.offset > 0)
+    const dataOrder = rows.filter(belongs)
+    // 左 は データ (外→内) と 表示 (内→外) が 逆
+    const view = sideKey === 'left' ? [...dataOrder].reverse() : dataOrder
+    const i = view.findIndex((r) => r.id === id)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= view.length) return
+    const nextView = [...view]
+    const tmp = nextView[i]
+    nextView[i] = nextView[j]
+    nextView[j] = tmp
+    const nextSide = sideKey === 'left' ? [...nextView].reverse() : nextView
+    let k = 0
+    commit(rows.map((r) => (belongs(r) ? nextSide[k++] : r)))
+  }
+
+  /** 計算 ダイアログ を 開いて いる 行。 計画 の とき だけ 使う */
+  const [calcRowId, setCalcRowId] = useState<string | null>(null)
+  /** その 行 が 左右 どちら の 表 の もの か */
+  const sideOfRow = (id: string): 'left' | 'right' | null =>
+    leftRows.some((r) => r.id === id)
+      ? 'left'
+      : rightRows.some((r) => r.id === id)
+        ? 'right'
+        : null
+  /**
+   * 計算 の 基準 に する 「前 の 点」。 表 は 中心 に 近い 順 な ので
+   * 表示 上 1 つ 上 の 行。 一番 内側 の 行 は 中心 を 基準 に する
+   * (中心 の 行 が あれば その 標高、 無ければ 中心設計高)。
+   */
+  const prevPointOf = (id: string): { offset: number; elevation: number } | null => {
+    const sideKey = sideOfRow(id)
+    if (!sideKey) return null
+    const view = sideKey === 'left' ? leftRowsView : rightRows
+    const i = view.findIndex((r) => r.id === id)
+    if (i < 0) return null
+    if (i > 0) return { offset: view[i - 1].offset, elevation: view[i - 1].elevation }
+    if (center.length > 0) return { offset: 0, elevation: center[0].elevation }
+    if (centerHeight == null) return null
+    return { offset: 0, elevation: centerHeight }
+  }
+  const calcSide = calcRowId ? sideOfRow(calcRowId) : null
+  const calcPrev = calcRowId ? prevPointOf(calcRowId) : null
+  const calcRow = calcRowId ? (rows.find((r) => r.id === calcRowId) ?? null) : null
+  const r3 = (v: number) => Math.round(v * 1000) / 1000
+  /** 中心 (離れ 0) の 点。 無ければ null */
+  const centerRow = center[0] ?? null
+  /** 中心 の 高さ の 呼び名 は 編集対象 に 合わせる */
+  const centerLabel =
+    target === 'current' ? '現況高' : target === 'asbuilt' ? '出来形高' : '計画高'
+  /**
+   * 中心 の 高さ を 入れる。 中心 の 点 が 無ければ その場 で 作る。
+   * 並び は 折れ線 の 順 な ので、 左 (負) と 右 (正) の 境目 に 差し込む。
+   * 全体 を 並べ 替える と オーバーハング の 前後 が 崩れる。
+   */
+  const setCenterElevation = (v: number | null) => {
+    if (v == null) return
+    if (centerRow) {
+      commit(rows.map((p) => (p.id === centerRow.id ? { ...p, elevation: v } : p)))
+      return
     }
-  })
-  const toggleOrderedView = () => {
-    setOrderedView((v) => {
-      try {
-        localStorage.setItem('oc:sectionOrderedView', v ? '0' : '1')
-      } catch {
-        /* ignore */
-      }
-      return !v
-    })
+    const point: MeasuredCrossPoint = { id: newId(), offset: 0, elevation: v }
+    const k = rows.findIndex((p) => p.offset > 0)
+    commit(k < 0 ? [...rows, point] : [...rows.slice(0, k), point, ...rows.slice(k)])
+  }
+  /** 同じ 側 の 表 の 並び (中心 に 近い 順) で 1 つ 前 / 次 の 行 */
+  const neighborRowId = (id: string, dir: -1 | 1): string | null => {
+    const sideKey = sideOfRow(id)
+    if (!sideKey) return null
+    const view = sideKey === 'left' ? leftRowsView : rightRows
+    const k = view.findIndex((r) => r.id === id)
+    const n = k + dir
+    return k < 0 || n < 0 || n >= view.length ? null : view[n].id
+  }
+  /** その 行 より 外側 に 残って いる 行 (表示 順 で 下) */
+  const outerRowsOf = (id: string): MeasuredCrossPoint[] => {
+    const sideKey = sideOfRow(id)
+    if (!sideKey) return []
+    const view = sideKey === 'left' ? leftRowsView : rightRows
+    const k = view.findIndex((r) => r.id === id)
+    return k < 0 ? [] : view.slice(k + 1)
+  }
+  /**
+   * 計算 結果 を 入れる。 slide なら 外側 の 点 も 同じ 量 だけ ずらして
+   * 形 を 保つ。 保持 なら その 点 だけ 動かす。
+   */
+  const applyCalc = (
+    id: string,
+    next: { offset: number; elevation: number },
+    slideOuter: boolean,
+  ) => {
+    const cur = rows.find((r) => r.id === id)
+    if (!cur) return
+    const dOff = next.offset - cur.offset
+    const dElev = next.elevation - cur.elevation
+    const outer = new Set(slideOuter ? outerRowsOf(id).map((r) => r.id) : [])
+    commit(
+      rows.map((r) => {
+        if (r.id === id) return { ...r, offset: next.offset, elevation: next.elevation }
+        if (outer.has(r.id))
+          return { ...r, offset: r3(r.offset + dOff), elevation: r3(r.elevation + dElev) }
+        return r
+      }),
+    )
   }
 
   return (
+    /* 表題 (現況断面 / 測点名) は 上 の バー と 重なる ので 出さない。
+       取込 と 全消去 は 表 の 上 の ボタン列 に まとめて ある。
+       点数 は 左右 それぞれ の 表 の 見出し に 出る。 */
     <div className="h-full flex flex-col gap-1.5">
-      <div className="shrink-0">
-        <div className="text-xs font-semibold text-slate-700">
-          {targetLabel}
-          <span className="ml-1 font-mono text-slate-500">{stationLabel}</span>
-          <span className="ml-1 text-[11px] font-normal text-slate-400">{rows.length} 点</span>
-        </div>
-        <div className="mt-1 flex items-center gap-1 flex-wrap">
-          {autoPoints && autoPoints.length > 0 && (
+      {/* 中心 から 左 / 右 に 分けて 出す。 どちら も 中心 に 近い 順。
+          並び を 変えたい とき (オーバーハング) は 各行 の ↑↓ で。 */}
+      <div className="flex-1 min-h-0 overflow-auto space-y-1.5">
+        {/* 中心 (離れ 0) は 表 に しない。 離れ は 常に 0、 点名 も 要ら ない ので
+            高さ だけ 出す。 中心 の 点 が 無い 断面 でも 常に 出し、 入れたら
+            その場 で 点 を 作る (以前 は 点 が ある ときしか 触れ なかった)。 */}
+        <div className="shrink-0 flex items-center gap-2 border rounded px-2 py-1.5 bg-slate-50">
+          <span className="text-[11px] font-semibold text-slate-600 shrink-0">
+            {centerLabel} (m)
+          </span>
+          <ElevationField
+            value={centerRow ? centerRow.elevation : centerHeight}
+            onCommit={setCenterElevation}
+            placeholder="中心 の 高さ"
+            className="w-28 px-1 py-0.5 border rounded text-right tabular-nums bg-white text-xs"
+          />
+          {/* 計画 の 中心高 は 縦断線形 から 決まる ので、 その 値 を 入れる ボタン。
+              現況 / 出来形 は 実測 な ので 出さない。 */}
+          {target === 'planned' && (
             <button
-              onClick={addFromRecords}
-              className="px-1.5 py-0.5 text-[11px] border rounded bg-cyan-50 text-cyan-800 border-cyan-300 hover:bg-cyan-100"
-              title="中心線沿い の 横断幅 以内 に ある 実測記録 を 行 と して 取り込む"
+              onClick={() =>
+                profileCenterHeight != null && setCenterElevation(r3(profileCenterHeight))
+              }
+              disabled={profileCenterHeight == null}
+              className="shrink-0 px-2 py-0.5 text-[11px] border rounded bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={
+                profileCenterHeight == null
+                  ? 'この 測点 は 縦断線形 の 範囲 外 です'
+                  : '縦断線形 を この 測点 の 位置 で 内挿 した 高さ を 入れる'
+              }
             >
-              実測記録から ({autoPoints.length})
+              縦断から計算
+              {profileCenterHeight != null && (
+                <span className="ml-1 font-mono text-slate-500">
+                  {profileCenterHeight.toFixed(3)}
+                </span>
+              )}
             </button>
           )}
-          <button
-            onClick={toggleOrderedView}
-            className={`px-1.5 py-0.5 text-[11px] border rounded ${
-              orderedView ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-slate-50'
-            }`}
-            title="入力順 で 1 本 に 並べ、↑↓ で 順序 を 入れ替える (オーバーハング 用)"
-          >
-            入力順
-          </button>
-          <button
-            onClick={sortRows}
-            disabled={rows.length < 2}
-            className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50 disabled:opacity-40"
-            title="離れ の 小さい 順 に 並べ 直す (オーバーハング は 潰れる)"
-          >
-            離れ順
-          </button>
-          <button
-            onClick={clearRows}
-            disabled={rows.length === 0}
-            className="ml-auto px-1.5 py-0.5 text-[11px] border rounded text-red-600 hover:bg-red-50 disabled:opacity-40"
-          >
-            全消去
-          </button>
+          {!centerRow && (
+            <span className="text-[10px] text-slate-400">
+              中心 の 点 は まだ ありません (左右 から の 補間値)
+            </span>
+          )}
         </div>
-      </div>
-      {/* 入力順 モード: 1 本 の 並び を そのまま 出し、↑↓ で 入れ替える。
-          断面 が 外 へ 出て から 内 へ 戻る (オーバーハング) とき は、
-          離れ で は 並び が 決まら ない ので これ で 直す。 */}
-      {orderedView ? (
-        <div className="flex-1 min-h-0 overflow-auto">
-          <div className="border rounded overflow-hidden">
-            <div className="px-2 py-1 bg-slate-100 text-[11px] font-semibold text-slate-600">
-              入力順
-              <span className="ml-1 text-slate-400 font-normal">
-                {rows.length} 点 — 上 から 順 に 線 を 引きます
-              </span>
-            </div>
-            {rows.length === 0 ? (
-              <div className="px-2 py-4 text-center text-[11px] text-slate-400">なし</div>
-            ) : (
-              <table className="w-full text-xs">
-                <thead className="bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="px-1 py-1 w-8">#</th>
-                    <th className="px-1 py-1 text-right">離れ (m)</th>
-                    <th className="px-1 py-1 text-right">標高 (m)</th>
-                    <th className="px-1 py-1 text-left">点名</th>
-                    <th className="px-1 py-1 w-14">並べ替え</th>
-                    <th className="px-1 py-1 w-7" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r, i) => (
-                    <tr
-                      key={r.id}
-                      onClick={() => onSelectPoint?.(selectedPointId === r.id ? null : r.id)}
-                      className={`border-t cursor-pointer ${
-                        selectedPointId === r.id ? 'bg-pink-100' : 'hover:bg-slate-50'
-                      }`}
-                    >
-                      <td className="px-1 py-1 text-center text-slate-400">{i + 1}</td>
-                      <td className="px-1 py-1">
-                        <input
-                          type="number"
-                          step={0.01}
-                          value={r.offset}
-                          onChange={(e) =>
-                            updateRow(r.id, { offset: parseFloat(e.target.value) || 0 })
-                          }
-                          className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
-                        />
-                      </td>
-                      <td className="px-1 py-1">
-                        <ElevationField
-                          value={r.elevation}
-                          onCommit={(v) => updateRow(r.id, { elevation: v ?? 0 })}
-                          className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
-                        />
-                      </td>
-                      <td className="px-1 py-1">
-                        <input
-                          type="text"
-                          value={r.note ?? ''}
-                          onChange={(e) => updateRow(r.id, { note: e.target.value || undefined })}
-                          placeholder={sourceOf(r.id)}
-                          className="w-full px-1 py-0.5 border rounded"
-                        />
-                      </td>
-                      <td className="px-1 py-1 text-center whitespace-nowrap">
-                        <button
-                          onClick={() => movePoint(i, -1)}
-                          disabled={i === 0}
-                          className="px-1 border rounded hover:bg-slate-50 disabled:opacity-30"
-                          title="1 つ 上 へ"
-                        >
-                          ↑
-                        </button>
-                        <button
-                          onClick={() => movePoint(i, 1)}
-                          disabled={i === rows.length - 1}
-                          className="ml-0.5 px-1 border rounded hover:bg-slate-50 disabled:opacity-30"
-                          title="1 つ 下 へ"
-                        >
-                          ↓
-                        </button>
-                      </td>
-                      <td className="px-1 py-1 text-center">
-                        <button
-                          onClick={() => removeRow(r.id)}
-                          className="p-0.5 border rounded hover:bg-red-50 text-red-600"
-                          title="この点を削除"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-      ) : (
-      /* 中心 から 左 / 右 に 分けて 並べる。 中 の 並び は 入力順 の まま */
-      <div className="flex-1 min-h-0 overflow-auto space-y-1.5">
-        {center.length > 0 && (
-          <SectionRowTable
-            title="中心 (0)"
-            selectedPointId={selectedPointId}
-            onSelectPoint={onSelectPoint}
-            side="center"
-            rows={center}
-            sourceOf={sourceOf}
-            onUpdate={updateRow}
-            onRemove={removeRow}
-          />
-        )}
         <div className="grid grid-cols-2 gap-1.5">
           <SectionRowTable
             title="左 (L)"
@@ -1401,6 +2177,8 @@ function SectionPointsEditor({
             onUpdate={updateRow}
             onRemove={removeRow}
             onAdd={addPoint}
+            onMove={(id, dir) => moveWithinSide('left', id, dir)}
+            onCalc={target === 'planned' ? (id) => setCalcRowId(id) : undefined}
           />
           <SectionRowTable
             title="右 (R)"
@@ -1412,6 +2190,8 @@ function SectionPointsEditor({
             onUpdate={updateRow}
             onRemove={removeRow}
             onAdd={addPoint}
+            onMove={(id, dir) => moveWithinSide('right', id, dir)}
+            onCalc={target === 'planned' ? (id) => setCalcRowId(id) : undefined}
           />
         </div>
         {rows.length === 0 && (
@@ -1420,6 +2200,46 @@ function SectionPointsEditor({
           </div>
         )}
       </div>
+      {/* 計画 の 点 を 前 の 点 から の 勾配 / 幅 / 直高 で 置き直す */}
+      {calcRowId && calcSide && calcPrev && calcRow && (
+        <PlanPointCalcModal
+          // 別 の 点 へ 移ったら 入力 を 作り直す
+          key={calcRowId}
+          prev={calcPrev}
+          side={calcSide}
+          original={{ offset: calcRow.offset, elevation: calcRow.elevation }}
+          outerCount={outerRowsOf(calcRowId).length}
+          ground={groundPoints ?? null}
+          hasPrev={neighborRowId(calcRowId, -1) != null}
+          hasNext={neighborRowId(calcRowId, 1) != null}
+          onNavigate={(dir) => {
+            const nid = neighborRowId(calcRowId, dir)
+            if (nid) setCalcRowId(nid)
+          }}
+          onPreview={(to, slideOuter) => {
+            // 確定 したら こう なる、 という 形 を 図 に 出す。
+            // スライド なら 外側 の 点 も 同じ 量 だけ ずらして 見せる。
+            const outerRows = outerRowsOf(calcRowId)
+            const dOff = to ? to.offset - calcRow.offset : 0
+            const dElev = to ? to.elevation - calcRow.elevation : 0
+            onCalcPreviewChange?.({
+              from: calcPrev,
+              original: { offset: calcRow.offset, elevation: calcRow.elevation },
+              to,
+              outer: outerRows.map((r) =>
+                slideOuter && to
+                  ? { offset: r3(r.offset + dOff), elevation: r3(r.elevation + dElev) }
+                  : { offset: r.offset, elevation: r.elevation },
+              ),
+            })
+          }}
+          // 確定 しても 閉じない。 続けて 前後 の 点 を 計算 できる ように する
+          onApply={(next, slideOuter) => applyCalc(calcRowId, next, slideOuter)}
+          onClose={() => {
+            onCalcPreviewChange?.(null)
+            setCalcRowId(null)
+          }}
+        />
       )}
     </div>
   )
@@ -1463,6 +2283,69 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
    * 図 に 出て いる 折れ線 の 折点 に そのまま 重ねる。
    */
   editOnPath?: boolean
+  /**
+   * 計算 中 の 線分。 基準点 → いま の 位置 を 太線、 基準点 → 仮 の 位置 を
+   * 破線 で 重ねる。 どこ を 動かして いる か 図 で 分かる ように する。
+   */
+  calcPreview?: CalcPreview | null
+  /**
+   * 断面図 に 出す トンボ (丁張 の 目印)。
+   * 現地 の 形 (横板 + 縦杭) が 分かる ように 描く。
+   */
+  tombos?: {
+    id: string
+    offset: number
+    elevation: number
+    label: string
+    /** 基準点 から の ずらし。 図 に 「W+0.5 H+1.0」 と 添える */
+    dw: number
+    dh: number
+    /** 杭 の 位置 の 現況地盤高 [m]。 杭 は ここ まで 伸ばす */
+    groundElevation: number | null
+  }[]
+  /**
+   * 断面図 に 出す 丁張。 杭 の 位置 に 横板 を 掛けた 形 で 描き、
+   * 法肩 まで の 法面線 を 点線 で 伸ばして 対象 の 法面 を 示す。
+   */
+  chohari?: {
+    id: string
+    offset: number
+    elevation: number
+    label: string
+    slopeLength: number
+    /** 法長 の 相手端 (基準点 の 反対) */
+    crestOffset: number
+    crestElevation: number
+    /** 基準点 (W を 測る 起点)。 点線 は こちら 側 へ 伸ばす */
+    baseOffset: number
+    baseElevation: number
+    /**
+     * 杭 の 位置 の 現況地盤高 [m]。 親杭 は ここ まで 伸ばす。
+     * 現況 が 無い / 範囲 外 なら null (その ときは 既定 の 長さ で 止める)。
+     */
+    groundElevation: number | null
+    /**
+     * 法面線 が 現況地盤 と ぶつかる 点 (断面 座標)。
+     * 斜め の 杭 は ここ を 境 に、 下 は 点線、 上 は 実材 に する。
+     * 交わら なければ null。
+     */
+    groundHit: { offset: number; elevation: number } | null
+  }[]
+  /**
+   * 計画線 の 線分 を 押せる ように する (丁張 の 対象 法面 を 図 で 選ぶ)。
+   * 押した 線分 の 両端 の 点 id を 返す。
+   */
+  onSelectSegment?: (fromId: string, toId: string) => void
+  /** 線分 の 選択 待ち。 押せる 線分 を 目立たせる */
+  segmentPick?: boolean
+  /**
+   * 図 を 押した 位置 の 離れ を 返す (丁張 の 杭 の 位置 を 図 で 決める)。
+   * 押せる のは offsetPick が 立って いる 間 だけ。
+   */
+  onPickOffset?: (offset: number) => void
+  offsetPick?: boolean
+  /** 基準点 の 選択 待ち の とき、 押せる 点 を これ に 限る */
+  pointPickIds?: string[] | null
   /** 図 と 表 で 共有 する 選択 */
   selectedPointId?: string | null
   onSelectPoint?: (id: string | null) => void
@@ -1476,6 +2359,14 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
     show,
     editPoints,
     editOnPath,
+    calcPreview,
+    tombos,
+    chohari,
+    onSelectSegment,
+    segmentPick,
+    onPickOffset,
+    offsetPick,
+    pointPickIds,
     selectedPointId,
     onSelectPoint,
   },
@@ -1624,6 +2515,74 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
     panStartRef.current = null
     // wasDraggingRef は 直後の onClick で 読まれる。次の mouseDown で リセット される
   }
+  /**
+   * トンボ / 丁張 の 画面 座標。
+   * 木 の 絵 は 計画線 の 後ろ、 文字 は 前 に 出す ので、 座標 は 先 に
+   * 出して おいて 2 つ の 層 で 使い回す。
+   */
+  const TOMBO_BOARD = 14
+  const STAKE_FALLBACK = 26
+  /** 丁張 の 斜め 材 の 長さ [m]。 現場 で 使う 垂木 の 定尺 */
+  const CHOHARI_BOARD_M = 1.8
+  const tomboDraw = (tombos ?? []).flatMap((tb) => {
+    if (centerHeight === undefined) return []
+    const x = vx(tb.offset)
+    const y = vy(tb.elevation - centerHeight)
+    return [
+      {
+        tb,
+        x,
+        y,
+        yGround:
+          tb.groundElevation != null
+            ? vy(tb.groundElevation - centerHeight)
+            : y + STAKE_FALLBACK,
+      },
+    ]
+  })
+  const chohariDraw = (chohari ?? []).flatMap((ch) => {
+    if (centerHeight === undefined) return []
+    const x = vx(ch.offset)
+    const y = vy(ch.elevation - centerHeight)
+    return [
+      {
+        ch,
+        x,
+        y,
+        cx: vx(ch.crestOffset),
+        cy: vy(ch.crestElevation - centerHeight),
+        bx: vx(ch.baseOffset),
+        by: vy(ch.baseElevation - centerHeight),
+        hit: ch.groundHit
+          ? {
+              x: vx(ch.groundHit.offset),
+              y: vy(ch.groundHit.elevation - centerHeight),
+              // 交点 から 斜面 に 沿って 上 へ CHOHARI_BOARD_M 進んだ 先。
+              // 普通 は 法肩 の 向き が 上 だが、 念 の ため 高い 方 に 揃える。
+              ...(() => {
+                let dOff = ch.crestOffset - ch.groundHit.offset
+                let dElv = ch.crestElevation - ch.groundHit.elevation
+                if (dElv < 0) {
+                  dOff = -dOff
+                  dElv = -dElv
+                }
+                const len = Math.hypot(dOff, dElv) || 1
+                const k = CHOHARI_BOARD_M / len
+                return {
+                  tx: vx(ch.groundHit.offset + dOff * k),
+                  ty: vy(ch.groundHit.elevation + dElv * k - centerHeight),
+                }
+              })(),
+            }
+          : null,
+        yGround:
+          ch.groundElevation != null
+            ? vy(ch.groundElevation - centerHeight)
+            : y + STAKE_FALLBACK,
+      },
+    ]
+  })
+
   /** 表示 リセット: パン (0,0) / ズーム 1.0 に 戻す (自動フィット 状態)。
    *  ボタン は 横断図 の 表題行 に ある ので ref 経由 で 呼ばれる */
   useImperativeHandle(ref, () => ({
@@ -1647,7 +2606,22 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
           onMouseMove={onSvgMouseMove}
           onMouseLeave={onSvgMouseLeave}
           onMouseUp={onSvgMouseUp}
-          style={{ cursor: wasDraggingRef.current ? 'grabbing' : 'grab' }}
+          onClick={(e) => {
+            // 杭 の 位置 を 図 で 決める モード。 ドラッグ (パン) と は 区別 する
+            if (!offsetPick || !onPickOffset || wasDraggingRef.current) return
+            const rect = e.currentTarget.getBoundingClientRect()
+            const px = e.clientX - rect.left
+            // vx の 逆算: px = viewPan.x + viewZoom * (offsetX + x * scale)
+            const x = ((px - viewPan.x) / viewZoom - offsetX) / scale
+            onPickOffset(Math.round(x * 1000) / 1000)
+          }}
+          style={{
+            cursor: offsetPick
+              ? 'crosshair'
+              : wasDraggingRef.current
+                ? 'grabbing'
+                : 'grab',
+          }}
         >
           {/* 中心線 (縦) は 画面 端まで 伸ばす (パン/ズームで 端が 見切れないよう、
               transform の 外で 位置を 手計算)。 中心設計高 は 横線で なく 中心線上の
@@ -1661,6 +2635,95 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
             strokeDasharray="3,3"
             strokeWidth={1}
           />
+          {/* 中心線 の 目印。 線 と 同じ vx(0) に 乗せる ので パン/ズーム に 追従 する */}
+          <text
+            x={vx(0)}
+            y={24}
+            fontSize={14}
+            fontWeight={700}
+            fill="#94a3b8"
+            textAnchor="middle"
+          >
+            CL
+          </text>
+
+          {/* トンボ / 丁張 の 「木」 は 計画線 の 後ろ に 回す。
+              文字 だけ は 読めない と 困る ので 線 の 前 (下 の 別 の 層) に 出す。
+              座標 は vx/vy な ので どちら の 層 に 置いて も 位置 は 同じ。 */}
+          {chohariDraw.map(({ ch, x, y, cx, cy, bx, by, yGround, hit }) => (
+            <g key={'cho-' + ch.id} pointerEvents="none">
+              {/* 斜め の 杭 (法貫)。
+                  現況 と ぶつかる 点 を 境 に、 そこ から 上 は 実際 に 掛ける 材 を
+                  CHOHARI_BOARD_M だけ 描く。 反対 側 は 点線 の 参考線 に し、
+                  法長 を 測る 相手端 (法肩) まで 伸ばす (杭 の 点 も 通る)。
+                  板 の 上面 を 斜面 に 合わせる ため、 線 の 中心 は 法面 の
+                  直角 方向 に 板厚 の 半分 だけ 下 へ ずらす。 */}
+              {(() => {
+                // 交点 が 取れ ない ときは 従来 どおり 法肩 まで 実材 で 描く
+                const aX = x
+                const aY = y
+                const bX = hit ? hit.tx : cx
+                const bY = hit ? hit.ty : cy
+                const ddx = bX - aX
+                const ddy = bY - aY
+                const len = Math.hypot(ddx, ddy) || 1
+                let nx = -ddy / len
+                let ny = ddx / len
+                if (ny < 0) {
+                  nx = -nx
+                  ny = -ny
+                }
+                const off = 4.5
+                const sx = hit ? hit.x : aX
+                const sy = hit ? hit.y : aY
+                return (
+                  <>
+                    {/* 実材 より 先 は 点線 の 参考線。 法面 の 延長 は 基準点 の 側 に
+                        出す ので、 交点 から 「杭 の 点」 と 「基準点」 の うち
+                        遠い 方 まで 引く (どちら も 線上 に ある)。 */}
+                    {hit &&
+                      (() => {
+                        const dStake = Math.hypot(x - sx, y - sy)
+                        const dBase = Math.hypot(bx - sx, by - sy)
+                        const ex = dStake >= dBase ? x : bx
+                        const ey = dStake >= dBase ? y : by
+                        return (
+                          <line
+                            x1={ex + nx * off}
+                            y1={ey + ny * off}
+                            x2={sx + nx * off}
+                            y2={sy + ny * off}
+                            stroke="#8a5a2b"
+                            strokeWidth={2}
+                            strokeDasharray="5,4"
+                            opacity={0.8}
+                          />
+                        )
+                      })()}
+                    {/* 地盤 から 上 は 実材 */}
+                    <line x1={sx + nx * off} y1={sy + ny * off} x2={bX + nx * off} y2={bY + ny * off} stroke="#8a5a2b" strokeWidth={9} strokeLinecap="butt" />
+                    <line x1={sx + nx * off} y1={sy + ny * off} x2={bX + nx * off} y2={bY + ny * off} stroke="#c89b6a" strokeWidth={6} strokeLinecap="butt" />
+                  </>
+                )
+              })()}
+              {/* 親杭 は 中心 の 1 本 だけ。 適当 に 切らず 現況地盤 まで 伸ばす */}
+              <line x1={x} y1={y} x2={x} y2={yGround} stroke="#8a5a2b" strokeWidth={7} strokeLinecap="butt" />
+              <line x1={x} y1={y} x2={x} y2={yGround} stroke="#c89b6a" strokeWidth={4.5} strokeLinecap="butt" />
+              <circle cx={x} cy={y} r={2.5} fill="#fff" stroke="#e11d48" strokeWidth={1.5} />
+            </g>
+          ))}
+
+          {tomboDraw.map(({ tb, x, y, yGround }) => (
+            <g key={'tb-' + tb.id} pointerEvents="none">
+              {/* 杭 (垂木)。 二重線 で 木 の 厚み を 出す */}
+              <line x1={x} y1={y} x2={x} y2={yGround} stroke="#8a5a2b" strokeWidth={7} strokeLinecap="butt" />
+              <line x1={x} y1={y} x2={x} y2={yGround} stroke="#c89b6a" strokeWidth={4.5} strokeLinecap="butt" />
+              {/* 横板。 板 の 上面 を 計画高 に 合わせる ので 中心 は 板厚 の 半分 下 */}
+              <line x1={x - TOMBO_BOARD} y1={y + 3.5} x2={x + TOMBO_BOARD} y2={y + 3.5} stroke="#8a5a2b" strokeWidth={7} strokeLinecap="butt" />
+              <line x1={x - TOMBO_BOARD} y1={y + 3.5} x2={x + TOMBO_BOARD} y2={y + 3.5} stroke="#c89b6a" strokeWidth={4.5} strokeLinecap="butt" />
+              <circle cx={x} cy={y} r={2.5} fill="#fff" stroke="#6d28d9" strokeWidth={1.5} />
+            </g>
+          ))}
 
           {/* 世界レイヤ: パン/ズームで 変形。断面 本体・折点・寸法ラベル・プレビュー等 */}
           <g transform={`translate(${viewPan.x} ${viewPan.y}) scale(${viewZoom})`}>
@@ -1920,18 +2983,20 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
             </>
           )}
 
-          {/* 左右 ラベル (パン/ズームに 影響されない UI 表示) */}
-          <text x={padding.left} y={16} fontSize={12} fill="#64748b">
-            左
+          {/* 左右 の 目印 (パン/ズームに 影響されない UI 表示)。
+              中心 の CL と 同じ 高さ に 揃える。 */}
+          <text x={padding.left} y={24} fontSize={16} fontWeight={700} fill="#64748b">
+            L
           </text>
           <text
             x={size.w - padding.right}
-            y={16}
-            fontSize={12}
+            y={24}
+            fontSize={16}
+            fontWeight={700}
             fill="#64748b"
             textAnchor="end"
           >
-            右
+            R
           </text>
 
           {/* 編集中 の 点。 図 の 上 で 押して 選べる ように、他 の 線 より 上 に 置く。
@@ -1946,15 +3011,20 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
                 // 計画 は 図 に 出て いる 折れ線 の 折点 に 重ねる (数 が 合う とき)
                 const onPath =
                   editOnPath && points.length === editPoints.length ? points[i] : null
+                // 基準点 の 選択 待ち の とき は 選べる 点 だけ を 目立たせる
+                const pickable =
+                  pointPickIds != null && p.id != null && pointPickIds.includes(p.id)
                 return (
                   <circle
                     key={`ep-${p.id ?? i}`}
                     cx={vx(onPath ? onPath.x : p.offset)}
                     cy={vy(onPath ? onPath.y : p.elevation - centerHeight)}
-                    r={on ? 6 : 4}
-                    fill={on ? '#db2777' : '#fff'}
-                    stroke={on ? '#db2777' : '#64748b'}
-                    strokeWidth={on ? 2 : 1.2}
+                    // 基準点 の 選択 中 は 線分 の 両端 以外 を 受け付け ない
+                    pointerEvents={pointPickIds != null && !pickable ? 'none' : undefined}
+                    r={pickable ? 7 : on ? 6 : 4}
+                    fill={pickable ? '#f43f5e' : on ? '#db2777' : '#fff'}
+                    stroke={pickable ? '#be123c' : on ? '#db2777' : '#64748b'}
+                    strokeWidth={pickable ? 2.5 : on ? 2 : 1.2}
                     style={{ cursor: 'pointer' }}
                     onClick={(e) => {
                       e.stopPropagation()
@@ -1965,6 +3035,159 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
               })}
             </g>
           )}
+
+          {/* 線分 の 選択。 編集点 と 同じ 座標 の 取り方 で 当たり判定 を 重ねる。
+              待機 中 だけ 出す ので、 普段 の 操作 の 邪魔 に なら ない。 */}
+          {segmentPick && onSelectSegment && editPoints && editPoints.length >= 2 &&
+            centerHeight !== undefined &&
+            (() => {
+              const at = (i: number) => {
+                const p = editPoints[i]
+                const onPath =
+                  editOnPath && points.length === editPoints.length ? points[i] : null
+                return {
+                  x: vx(onPath ? onPath.x : p.offset),
+                  y: vy(onPath ? onPath.y : p.elevation - centerHeight),
+                }
+              }
+              return (
+                <g>
+                  {editPoints.slice(0, -1).map((p, i) => {
+                    const a = at(i)
+                    const b = at(i + 1)
+                    const q = editPoints[i + 1]
+                    return (
+                      <g key={'seg-' + (p.id ?? i)}>
+                        <line
+                          x1={a.x}
+                          y1={a.y}
+                          x2={b.x}
+                          y2={b.y}
+                          stroke="#f43f5e"
+                          strokeWidth={3}
+                          opacity={0.35}
+                        />
+                        {/* 当たり判定 は 太く 透明 に する (細い 線 は 押し づらい) */}
+                        <line
+                          x1={a.x}
+                          y1={a.y}
+                          x2={b.x}
+                          y2={b.y}
+                          stroke="transparent"
+                          strokeWidth={14}
+                          style={{ cursor: 'pointer' }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (p.id && q.id) onSelectSegment(p.id, q.id)
+                          }}
+                        />
+                      </g>
+                    )
+                  })}
+                </g>
+              )
+            })()}
+
+          {/* トンボ / 丁張 の 文字。 木 の 絵 は 計画線 の 後ろ だが、
+              文字 は 隠れる と 読め ない ので ここ (線 の 前) に 出す。
+              杭 の 長さ は 杭 の 下、 地盤線 の 下 に 置く。 */}
+          {chohariDraw.map(({ ch, x, y, yGround }) => (
+            <g key={'chot-' + ch.id} pointerEvents="none">
+              <text x={x} y={y - 52} fontSize={13} textAnchor="middle" fill="#be123c" fontWeight={600} style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}>
+                {ch.label} 法長 {ch.slopeLength.toFixed(3)}{' '}
+                {slopeIText(ch.crestOffset - ch.offset, ch.crestElevation - ch.elevation)}
+              </text>
+              <text x={x} y={y - 36} fontSize={13} textAnchor="middle" fill="#be123c" fontWeight={600} style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}>
+                FH={ch.elevation.toFixed(3)}
+              </text>
+              {ch.groundElevation != null && (
+                <text x={x} y={yGround + 15} fontSize={12} textAnchor="middle" fill="#8a5a2b" fontWeight={600} style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}>
+                  {roughMeters(Math.abs(ch.elevation - ch.groundElevation))}
+                </text>
+              )}
+            </g>
+          ))}
+
+          {tomboDraw.map(({ tb, x, y, yGround }) => (
+            <g key={'tbt-' + tb.id} pointerEvents="none">
+              <text x={x} y={y - 28} fontSize={13} textAnchor="middle" fill="#6d28d9" fontWeight={600} style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}>
+                {tb.label} {shiftText(tb.offset)} FH{signed(tb.dh)}
+              </text>
+              <text x={x} y={y - 12} fontSize={13} textAnchor="middle" fill="#6d28d9" fontWeight={600} style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}>
+                FH={tb.elevation.toFixed(3)}
+              </text>
+              {tb.groundElevation != null && (
+                <text x={x} y={yGround + 15} fontSize={12} textAnchor="middle" fill="#8a5a2b" fontWeight={600} style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}>
+                  {roughMeters(Math.abs(tb.elevation - tb.groundElevation))}
+                </text>
+              )}
+            </g>
+          ))}
+
+          {/* 計算 中 の 線分。 世界レイヤ の 外 な ので vx/vy (パン/ズーム 込み)。
+              他 の 線 より 上 に 出して 狙い を 見せる。 */}
+          {calcPreview && centerHeight !== undefined && (() => {
+            const fx = vx(calcPreview.from.offset)
+            const fy = vy(calcPreview.from.elevation - centerHeight)
+            const ox = vx(calcPreview.original.offset)
+            const oy = vy(calcPreview.original.elevation - centerHeight)
+            const to = calcPreview.to
+            return (
+              <g pointerEvents="none">
+                {/* いま の 線分 (計算 対象) */}
+                <line x1={fx} y1={fy} x2={ox} y2={oy} stroke="#f59e0b" strokeWidth={3} opacity={0.8} />
+                <circle cx={fx} cy={fy} r={5} fill="#f59e0b" stroke="#fff" strokeWidth={1.5} />
+                <circle cx={ox} cy={oy} r={5} fill="none" stroke="#f59e0b" strokeWidth={2} />
+                {to &&
+                  (() => {
+                    // 仮 の 断面: 基準点 → 仮 の 位置 → その 外側 の 点 まで 繋ぐ。
+                    // 保持 / スライド の どちら を 選んで いる か が 形 で 分かる。
+                    const outer = calcPreview.outer ?? []
+                    const pts = [
+                      { x: fx, y: fy },
+                      { x: vx(to.offset), y: vy(to.elevation - centerHeight) },
+                      ...outer.map((p) => ({
+                        x: vx(p.offset),
+                        y: vy(p.elevation - centerHeight),
+                      })),
+                    ]
+                    const d = pts
+                      .map((p, k) => (k === 0 ? 'M ' : 'L ') + p.x + ' ' + p.y)
+                      .join(' ')
+                    return (
+                      <>
+                        <path
+                          d={d}
+                          fill="none"
+                          stroke="#db2777"
+                          strokeWidth={2}
+                          strokeDasharray="5,3"
+                        />
+                        {outer.map((p, k) => (
+                          <circle
+                            key={k}
+                            cx={vx(p.offset)}
+                            cy={vy(p.elevation - centerHeight)}
+                            r={3.5}
+                            fill="#fff"
+                            stroke="#db2777"
+                            strokeWidth={1.5}
+                          />
+                        ))}
+                        <circle
+                          cx={vx(to.offset)}
+                          cy={vy(to.elevation - centerHeight)}
+                          r={6}
+                          fill="#db2777"
+                          stroke="#fff"
+                          strokeWidth={2}
+                        />
+                      </>
+                    )
+                  })()}
+              </g>
+            )
+          })()}
 
           {/* 断面点 の 吹き出し。 点名 / 地盤高 / 幅 を 出す。
               枠 から はみ出す 側 は 反対 に 回す。 */}
@@ -3355,7 +4578,7 @@ function LandxmlSectionImport({
 export function OpenChannelAlignmentPage() {
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
-  const { coordinates, fetchCoordinates } = useCoordinateStore()
+  const { coordinates, fetchCoordinates, addCoordinatesBulk } = useCoordinateStore()
   const { channels, fetchChannels, addChannel, updateChannel, deleteChannel } = useOpenChannelStore()
 
   const farmId = currentFarm?.id
@@ -3695,6 +4918,79 @@ export function OpenChannelAlignmentPage() {
   const [newProfileDistText, setNewProfileDistText] = useState<string>('')
   const [newProfileHText, setNewProfileHText] = useState<string>('')
 
+  /**
+   * いま 編集 して いる 縦断。 null = 主縦断 (中心線)。
+   * 主縦断 だけ が 測点 の 中心設計高 / 杭打ち / エクスポート に 効く。
+   * 追加 の 縦断 は 縦断図 に 重ねて 管理 する ため だけ の もの。
+   */
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null)
+  // 参照 が 毎 レンダー 変わる と 下 の useEffect / useMemo が 回り 続ける
+  const extraProfiles = useMemo(() => selected?.extraProfiles ?? [], [selected])
+  // 路線 を 変えたり 縦断 を 消したり した とき は 主縦断 に 戻す
+  useEffect(() => {
+    if (activeProfileId != null && !extraProfiles.some((p) => p.id === activeProfileId)) {
+      setActiveProfileId(null)
+    }
+  }, [activeProfileId, extraProfiles])
+  const activeProfile = extraProfiles.find((p) => p.id === activeProfileId) ?? null
+  const activeProfileName = activeProfile ? activeProfile.name : '中心 (主縦断)'
+  const activeProfilePoints = useMemo<ProfilePoint[]>(
+    () => (activeProfile ? activeProfile.points : (selected?.profilePoints ?? [])),
+    [activeProfile, selected],
+  )
+
+  /** いま 編集 して いる 縦断 の 変化点列 を 書き戻す */
+  const writeActiveProfile = (next: ProfilePoint[]) => {
+    if (!selected) return
+    if (activeProfileId == null) {
+      updateChannel(selected.id, { profilePoints: next })
+      return
+    }
+    updateChannel(selected.id, {
+      extraProfiles: extraProfiles.map((p) =>
+        p.id === activeProfileId ? { ...p, points: next } : p,
+      ),
+    })
+  }
+
+  const handleAddExtraProfile = () => {
+    if (!selected) return
+    const name = window.prompt('縦断 の 名前 (例: 道路高 / 側溝高 / 左築堤高)', '')
+    if (name == null) return
+    const trimmed = name.trim()
+    if (trimmed === '') return
+    const id = `pf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+    updateChannel(selected.id, {
+      extraProfiles: [...extraProfiles, { id, name: trimmed, points: [] }],
+    })
+    setActiveProfileId(id)
+  }
+  const handleRenameExtraProfile = () => {
+    if (!selected || !activeProfile) return
+    const name = window.prompt('縦断 の 名前', activeProfile.name)
+    if (name == null) return
+    const trimmed = name.trim()
+    if (trimmed === '') return
+    updateChannel(selected.id, {
+      extraProfiles: extraProfiles.map((p) =>
+        p.id === activeProfile.id ? { ...p, name: trimmed } : p,
+      ),
+    })
+  }
+  const handleRemoveExtraProfile = () => {
+    if (!selected || !activeProfile) return
+    if (
+      !window.confirm(
+        `縦断 「${activeProfile.name}」 を 変化点 ${activeProfile.points.length} 点 ごと 消します。よろしいですか？`,
+      )
+    )
+      return
+    updateChannel(selected.id, {
+      extraProfiles: extraProfiles.filter((p) => p.id !== activeProfile.id),
+    })
+    setActiveProfileId(null)
+  }
+
   const commitNewProfile = () => {
     if (!selected) return
     // 入力欄 は SP 値 (中間点計算 と 同じ)。内部保存は 距離 = SP - spOffset
@@ -3702,20 +4998,17 @@ export function OpenChannelAlignmentPage() {
     const h = parseFloat(newProfileHText)
     if (!Number.isFinite(sp) || !Number.isFinite(h)) return
     const d = sp - (selected.spOffset ?? 0)
-    const next: ProfilePoint[] = [
-      ...selected.profilePoints,
-      { distance: d, floorHeight: h },
-    ]
+    const next: ProfilePoint[] = [...activeProfilePoints, { distance: d, floorHeight: h }]
     next.sort((a, b) => a.distance - b.distance)
-    updateChannel(selected.id, { profilePoints: next })
+    writeActiveProfile(next)
     setNewProfileDistText('')
     setNewProfileHText('')
   }
 
-  const sortedProfile = useMemo<ProfilePoint[]>(() => {
-    if (!selected) return []
-    return [...selected.profilePoints].sort((a, b) => a.distance - b.distance)
-  }, [selected])
+  const sortedProfile = useMemo<ProfilePoint[]>(
+    () => [...activeProfilePoints].sort((a, b) => a.distance - b.distance),
+    [activeProfilePoints],
+  )
 
   // 縦断曲線 (VCL > 0 の 中間 変化点) を PVI インデックス で 引ける Map
   const profileCurvesByPviIndex = useMemo(() => {
@@ -3725,15 +5018,12 @@ export function OpenChannelAlignmentPage() {
   }, [sortedProfile])
 
   const handleRemoveProfile = (idx: number) => {
-    if (!selected) return
-    const arr = selected.profilePoints.filter((_, i) => i !== idx)
-    updateChannel(selected.id, { profilePoints: arr })
+    writeActiveProfile(activeProfilePoints.filter((_, i) => i !== idx))
   }
   const handleChangeProfile = (idx: number, patch: Partial<ProfilePoint>) => {
-    if (!selected) return
-    const arr = selected.profilePoints.map((p, i) => (i === idx ? { ...p, ...patch } : p))
+    const arr = activeProfilePoints.map((p, i) => (i === idx ? { ...p, ...patch } : p))
     arr.sort((a, b) => a.distance - b.distance)
-    updateChannel(selected.id, { profilePoints: arr })
+    writeActiveProfile(arr)
   }
 
   // 幅杭 (width stakes) 操作 — 縦断線形 と 同じく テーブル末尾 の 空行 で 追加。
@@ -3833,8 +5123,18 @@ export function OpenChannelAlignmentPage() {
    * 何が 測られて いるか」を 常に 見せる ための もの で、開いた だけで
    * 勝手に 保存されると 手入力の 現況を 潰しかねない。
    */
-  const measuredPointsOnStation = (st: StationRow): MeasuredCrossPoint[] => {
+  const measuredPointsOnStation = (
+    st: StationRow,
+    opts?: {
+      /** 中心線 沿い の 帯 の 厚さ [m]。 既定 は 画面 の 横断幅 */
+      bandM?: number
+      /** 中心 から 左右 の 上限 [m]。 null / 未指定 は 制限 なし */
+      halfWidthM?: number | null
+    },
+  ): MeasuredCrossPoint[] => {
     if (!farmId) return []
+    const bandM = opts?.bandM != null && opts.bandM > 0 ? opts.bandM : crossBandM
+    const halfWidthM = opts?.halfWidthM ?? null
     const center = pointAtDistance(segments, st.distance)
     const tangent = tangentAtDistance(segments, st.distance)
     if (!center || !tangent) return []
@@ -3853,11 +5153,14 @@ export function OpenChannelAlignmentPage() {
       const z = r.measuredZ - sl.dz
       const dx = x - center.x
       const dy = y - center.y
-      // 中心線 沿い の ずれが 横断幅 に 収まる もの だけ
-      if (Math.abs(dx * tangent.x + dy * tangent.y) > crossBandM) continue
+      // 中心線 沿い の ずれが 帯 の 厚さ に 収まる もの だけ
+      if (Math.abs(dx * tangent.x + dy * tangent.y) > bandM) continue
+      const offset = Math.round((dx * perpX + dy * perpY) * 1000) / 1000
+      // 左右 の 幅 を 指定 して いる とき は その 外 を 捨てる
+      if (halfWidthM != null && Math.abs(offset) > halfWidthM) continue
       out.push({
         id: `sr-${r.id}`,
-        offset: Math.round((dx * perpX + dy * perpY) * 1000) / 1000,
+        offset,
         elevation: Math.round(z * 1000) / 1000,
         note: r.targetName ?? undefined,
       })
@@ -3871,6 +5174,324 @@ export function OpenChannelAlignmentPage() {
     return measuredPointsOnStation(selectedStation)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStation, farmId, segments, selected?.sideOrientation, stakingRecords, surveySlide, surveySets, crossBandM])
+
+  /**
+   * 表 の 上 の 取込 ボタン列。 「測点から追加」 は 一括 / 測点指定 に 分岐 し、
+   * 一括 と LandXML は 条件 の 入力 欄 を 開いて から 確定 する。
+   */
+  const [sectionImportPanel, setSectionImportPanel] = useState<'records' | 'landxml' | null>(null)
+  const [recordAddMenuOpen, setRecordAddMenuOpen] = useState(false)
+  /** 一括 の 条件。 厚さ = 中心線 沿い の 帯、 幅 = 左右 の 上限 (空 は 制限なし) */
+  const [bulkBandText, setBulkBandText] = useState<string>(() => String(crossBandM))
+  const [bulkHalfWidthText, setBulkHalfWidthText] = useState<string>('')
+  const bulkBandM = parseFloat(bulkBandText)
+  const bulkHalfWidthM = bulkHalfWidthText.trim() === '' ? null : parseFloat(bulkHalfWidthText)
+  const bulkCondOk =
+    Number.isFinite(bulkBandM) &&
+    bulkBandM > 0 &&
+    (bulkHalfWidthM == null || (Number.isFinite(bulkHalfWidthM) && bulkHalfWidthM > 0))
+  /** 条件 に 当たる 実測記録 (取込 前 の 件数 表示 用)。 測点 を 選んで いる とき だけ */
+  const bulkCandidates = useMemo<MeasuredCrossPoint[]>(() => {
+    if (!selectedStation || sectionImportPanel !== 'records' || !bulkCondOk) return []
+    return measuredPointsOnStation(selectedStation, {
+      bandM: bulkBandM,
+      halfWidthM: bulkHalfWidthM,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStation, sectionImportPanel, bulkBandM, bulkHalfWidthM, bulkCondOk, stakingRecords, segments, crossBandM])
+
+  /**
+   * 条件 に 当たる 実測記録 を いま 開いて いる 断面 に まとめて 足す。
+   * 既に 同じ 記録 が 入って いる 分 は 足さない。 並び は 中心 に 近い 順 に
+   * 直す (オーバーハング を 手 で 直して いた 場合 は その 並び も 戻る)。
+   */
+  const handleBulkAddFromRecords = () => {
+    if (!selectedStation || !bulkCondOk) return
+    const t = sectionTargetOfEditTarget(editTarget)
+    const cur = (selectedStation[sectionKeyOf(t)] as MeasuredCrossPoint[] | null) ?? []
+    const have = new Set(cur.map((p) => p.id))
+    const add = bulkCandidates.filter((p) => !have.has(p.id))
+    if (add.length === 0) {
+      window.alert('条件 に 当たる 実測記録 は ありません (既に 入って いる 分 は 除いて います)')
+      return
+    }
+    const next = [...cur, ...add].sort((a, b) => a.offset - b.offset)
+    handleReplaceStationSection(selectedStation.id, t, next)
+    setSectionImportPanel(null)
+  }
+
+  /**
+   * 断面 上 の 離れ → 実座標。
+   * computeStationVertices と 同じ 式 (中心 + 離れ × 中心線 の 直角方向)。
+   */
+  const sectionOffsetToWorld = (
+    st: StationRow,
+    offset: number,
+  ): { x: number; y: number } | null => {
+    const center = pointAtDistance(segments, st.distance)
+    const tangent = tangentAtDistance(segments, st.distance)
+    if (!center || !tangent) return null
+    const sign = selected?.sideOrientation === 'reverse' ? -1 : 1
+    const perp = { x: -tangent.y * sign, y: tangent.x * sign }
+    return { x: center.x + offset * perp.x, y: center.y + offset * perp.y }
+  }
+
+  /**
+   * トンボ を 解く。 基準 の 変化点 から 横 (dw) と 高さ (dh) だけ ずらす。
+   * dw は 中心 から 遠ざかる 向き が 正 な ので、 基準点 が 左 なら 左 へ 伸びる。
+   * 計画断面 を 取り込み 直す と 点 の id は 変わる ので、 見つから なければ
+   * 定義 した ときの 離れ に 一番 近い 点 に 寄せる。
+   */
+  const resolveTomboFor = (st: StationRow, t: TomboPoint): ResolvedTombo | null => {
+    const pts = st.plannedSectionRaw ?? []
+    let base = pts.find((p) => p.id === t.basePointId) ?? null
+    if (!base && pts.length > 0) {
+      base = pts.reduce(
+        (best, p) =>
+          Math.abs(p.offset - t.baseOffset) < Math.abs(best.offset - t.baseOffset) ? p : best,
+        pts[0],
+      )
+    }
+    if (!base) return null
+    const dir = base.offset >= 0 ? 1 : -1
+    const r3 = (v: number) => Math.round(v * 1000) / 1000
+    const offset = r3(base.offset + dir * t.dw)
+    const elevation = r3(base.elevation + t.dh)
+    return { base, offset, elevation, world: sectionOffsetToWorld(st, offset) }
+  }
+
+  /**
+   * 丁張 を 解く。
+   * 法尻 (基準点) から 外 へ W だけ 離した ところ に 杭 を 立て、 法尻 と 法肩 を
+   * 結ぶ 法面線 を その 位置 まで 延ばした 高さ が 丁張高。 そこ から 法肩 まで の
+   * 斜め の 長さ が 法長 に なる。
+   */
+  const resolveChohariFor = (st: StationRow, c: ChohariPoint): ResolvedChohari | null => {
+    const pts = st.plannedSectionRaw ?? []
+    const pick = (id: string, off: number) => {
+      const exact = pts.find((p) => p.id === id)
+      if (exact) return exact
+      if (pts.length === 0) return null
+      return pts.reduce(
+        (best, p) => (Math.abs(p.offset - off) < Math.abs(best.offset - off) ? p : best),
+        pts[0],
+      )
+    }
+    const base = pick(c.basePointId, c.baseOffset)
+    const crest = pick(c.crestPointId, c.crestOffset)
+    const r3 = (v: number) => Math.round(v * 1000) / 1000
+    // W は 法面 の 反対 (もう 一方 の 端 から 遠ざかる 向き) が 正
+    const dir = base && crest ? Math.sign(base.offset - crest.offset) || 1 : 1
+    const offset = base ? r3(base.offset + dir * c.w) : 0
+    const world = base ? sectionOffsetToWorld(st, offset) : null
+    if (!base || !crest) {
+      return { base, crest, offset, elevation: 0, slopeLength: 0, factor: null, world, error: '法尻 / 法肩 の 点 が 見つかりません' }
+    }
+    const dx = crest.offset - base.offset
+    if (Math.abs(dx) < 1e-9) {
+      return { base, crest, offset, elevation: 0, slopeLength: 0, factor: null, world, error: '法尻 と 法肩 の 離れ が 同じ です (直立 の 面 は 丁張 を 掛けられません)' }
+    }
+    // 法面線 の 傾き。 外 向き 1m あたり の 上がり に 直す
+    const m = (crest.elevation - base.elevation) / dx
+    const factor = m * dir
+    // 杭 の 位置 まで 法面線 を 延ばした 高さ
+    const elevation = r3(base.elevation + m * (offset - base.offset))
+    // 杭 の 位置 の 点 から 法肩 まで の 斜長
+    const slopeLength = r3(Math.hypot(crest.offset - offset, crest.elevation - elevation))
+    return { base, crest, offset, elevation, slopeLength, factor, world }
+  }
+
+  /** 丁張 を 座標管理 へ */
+  const handleRegisterChohari = async (
+    stationId: string,
+    items: { cho: ChohariPoint; resolved: ResolvedChohari }[],
+  ) => {
+    const st = stations.find((x) => x.id === stationId)
+    if (!st || items.length === 0) return
+    const rows = items.map(({ cho, resolved }) => ({
+      pointNumber:
+        cho.name?.trim() ||
+        `${st.label}-${resolved.base ? labelOfPoint(resolved.base) : 'C'}-丁張`,
+      x: resolved.world?.x ?? 0,
+      y: resolved.world?.y ?? 0,
+      z: resolved.elevation,
+      type: 'chohari' as const,
+      stakeType: '丁張',
+      notes: `${selected?.name ?? ''} ${st.label} W${cho.w >= 0 ? '+' : ''}${cho.w} 法長 ${resolved.slopeLength.toFixed(3)}`,
+    }))
+    const added = await addCoordinatesBulk(rows)
+    if (added.length !== items.length) return
+    const idOf = new Map(items.map((it, i) => [it.cho.id, added[i].id]))
+    setStations(
+      stations.map((x) =>
+        x.id === stationId
+          ? {
+              ...x,
+              chohari: (x.chohari ?? []).map((t) =>
+                idOf.has(t.id) ? { ...t, coordinateId: idOf.get(t.id) as string } : t,
+              ),
+            }
+          : x,
+      ),
+    )
+  }
+
+  /** トンボ を 座標管理 へ。 登録 できた 座標 id は トンボ に 書き戻す */
+  const handleRegisterTombos = async (
+    stationId: string,
+    items: { tombo: TomboPoint; resolved: ResolvedTombo }[],
+  ) => {
+    const st = stations.find((x) => x.id === stationId)
+    if (!st || items.length === 0) return
+    const sign = (v: number) => (v >= 0 ? '+' : '')
+    const rows = items.map(({ tombo, resolved }) => ({
+      pointNumber:
+        tombo.name?.trim() ||
+        `${st.label}-${resolved.base ? labelOfPoint(resolved.base) : 'T'}-トンボ`,
+      x: resolved.world?.x ?? 0,
+      y: resolved.world?.y ?? 0,
+      z: resolved.elevation,
+      type: 'tombo' as const,
+      stakeType: 'トンボ',
+      notes: `${selected?.name ?? ''} ${st.label} W${sign(tombo.dw)}${tombo.dw} H${sign(tombo.dh)}${tombo.dh}`,
+    }))
+    const added = await addCoordinatesBulk(rows)
+    if (added.length !== items.length) return
+    const idOf = new Map(items.map((it, i) => [it.tombo.id, added[i].id]))
+    setStations(
+      stations.map((x) =>
+        x.id === stationId
+          ? {
+              ...x,
+              tombos: (x.tombos ?? []).map((t) =>
+                idOf.has(t.id) ? { ...t, coordinateId: idOf.get(t.id) as string } : t,
+              ),
+            }
+          : x,
+      ),
+    )
+  }
+
+  /**
+   * 断面図 の 点 を 押した とき。 トンボ の 基準点 を 図 で 選んで いる 最中 なら
+   * その 点 を 基準 に して 待機 を 解く。 そう で なければ 従来 どおり 選択 だけ。
+   */
+  /**
+   * 丁張 の 対象 法面 を 図 の 線分 で 選んだ とき。
+   * 杭 は 土工 の 外 に 立てる ので、 線分 の うち 中心 から 遠い 方 の 端 を
+   * 基準 (W を 測る 起点) に し、 近い 方 を 法長 の 終端 に する。
+   */
+  const handleSelectSectionSegment = (fromId: string, toId: string) => {
+    const st = tomboStationId ? stations.find((x) => x.id === tomboStationId) : null
+    if (!st || !pickTarget || pickTarget.kind !== 'choSegment') return
+    const pts = st.plannedSectionRaw ?? []
+    const a = pts.find((p) => p.id === fromId)
+    const b = pts.find((p) => p.id === toId)
+    if (!a || !b) return
+    const outer = Math.abs(a.offset) >= Math.abs(b.offset) ? a : b
+    const inner = outer === a ? b : a
+    const rowId = pickTarget.rowId
+    setStations(
+      stations.map((x) =>
+        x.id === st.id
+          ? {
+              ...x,
+              chohari: (x.chohari ?? []).map((c) =>
+                c.id === rowId
+                  ? {
+                      ...c,
+                      basePointId: outer.id,
+                      baseOffset: outer.offset,
+                      crestPointId: inner.id,
+                      crestOffset: inner.offset,
+                    }
+                  : c,
+              ),
+            }
+          : x,
+      ),
+    )
+    // 次 は 基準点 (W を 測る 起点) を 選んで もらう
+    setPickTarget({ kind: 'choBase', rowId })
+  }
+
+  /** 丁張 の 杭 の 位置 を 図 で 決めた とき。 基準点 から の W に 直す */
+  const handlePickChohariOffset = (offset: number) => {
+    const st = tomboStationId ? stations.find((x) => x.id === tomboStationId) : null
+    if (!st || !pickTarget || pickTarget.kind !== 'choPos') return
+    const rowId = pickTarget.rowId
+    const cur = (st.chohari ?? []).find((c) => c.id === rowId)
+    if (!cur) return
+    const r = resolveChohariFor(st, cur)
+    if (!r || !r.base || !r.crest) return
+    // W は 法面 の 反対 へ 向かう 向き が 正
+    const dir = Math.sign(r.base.offset - r.crest.offset) || 1
+    const w = Math.round((offset - r.base.offset) * dir * 1000) / 1000
+    setStations(
+      stations.map((x) =>
+        x.id === st.id
+          ? {
+              ...x,
+              chohari: (x.chohari ?? []).map((c) => (c.id === rowId ? { ...c, w } : c)),
+            }
+          : x,
+      ),
+    )
+    setPickTarget(null)
+  }
+
+  const handleSelectSectionPoint = (id: string | null) => {
+    const st = tomboStationId ? stations.find((x) => x.id === tomboStationId) : null
+    const p = st && id ? (st.plannedSectionRaw ?? []).find((x) => x.id === id) : null
+    if (pickTarget && p && st) {
+      const target = pickTarget
+      setStations(
+        stations.map((x) => {
+          if (x.id !== st.id) return x
+          if (target.kind === 'tombo') {
+            return {
+              ...x,
+              tombos: (x.tombos ?? []).map((t) =>
+                t.id === target.rowId
+                  ? { ...t, basePointId: p.id, baseOffset: p.offset }
+                  : t,
+              ),
+            }
+          }
+          if (target.kind === 'choBase') {
+            return {
+              ...x,
+              chohari: (x.chohari ?? []).map((c) => {
+                if (c.id !== target.rowId) return c
+                // 反対 の 端 を 押したら 基準 と 相手端 を 入れ替える
+                if (p.id === c.crestPointId) {
+                  return {
+                    ...c,
+                    basePointId: c.crestPointId,
+                    baseOffset: c.crestOffset,
+                    crestPointId: c.basePointId,
+                    crestOffset: c.baseOffset,
+                  }
+                }
+                return c
+              }),
+            }
+          }
+          return x
+        }),
+      )
+      if (target.kind === 'tombo') setPickTarget(null)
+      // 基準点 を 決めたら 次 は 杭 の 位置 (W)。
+      // 線分 の 端 以外 を 押した ときは 何も せず 待機 の まま に する。
+      if (target.kind === 'choBase') {
+        const c = (st.chohari ?? []).find((y) => y.id === target.rowId)
+        if (c && (p.id === c.basePointId || p.id === c.crestPointId)) {
+          setPickTarget({ kind: 'choPos', rowId: target.rowId })
+        }
+      }
+    }
+    setSelectedPointId(id)
+  }
 
   /** 横断図 の 表示リセット を 表題行 の ボタン から 呼ぶ */
   const crossViewRef = useRef<CrossSectionViewHandle | null>(null)
@@ -3893,27 +5514,22 @@ export function OpenChannelAlignmentPage() {
       return def
     }
   })
-  const [crossLayerOpen, setCrossLayerOpen] = useState(false)
+  /** トンボ の 計算 パネル を 開いて いる 測点 */
+  const [tomboStationId, setTomboStationId] = useState<string | null>(null)
+  /** 断面図 の クリック で どの 欄 を 決めよう と して いるか */
+  const [pickTarget, setPickTarget] = useState<PickTarget | null>(null)
+  /** 標準断面 の 選択 パネル を 開いて いる 測点 */
+  const [standardSectionPicker, setStandardSectionPicker] = useState<{
+    stationId: string
+  } | null>(null)
+  /** 計算 ダイアログ で いま 狙って いる 線分 (断面図 に 重ねる) */
+  const [calcPreview, setCalcPreview] = useState<CalcPreview | null>(null)
   /** 図 と 表 で 共有 する 断面点 の 選択 */
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   // 測点 / 対象 を 変えたら 選択 は 外す
   useEffect(() => {
     setSelectedPointId(null)
   }, [selectedStationId, editTarget])
-  /** 選んで いる 点 を 並び の 前 / 後ろ へ 1 つ 動かす */
-  const moveSelectedPoint = (dir: -1 | 1) => {
-    if (!selectedStation || !selectedPointId) return
-    const t = sectionTargetOfEditTarget(editTarget)
-    const key = sectionKeyOf(t)
-    const arr = [...(((selectedStation[key] as MeasuredCrossPoint[] | null) ?? []).map((p) => p))]
-    const i = arr.findIndex((p) => p.id === selectedPointId)
-    const to = i + dir
-    if (i < 0 || to < 0 || to >= arr.length) return
-    const tmp = arr[i]
-    arr[i] = arr[to]
-    arr[to] = tmp
-    handleReplaceStationSection(selectedStation.id, t, arr)
-  }
   const toggleCrossLayer = (k: keyof typeof crossLayers) => {
     setCrossLayers((prev) => {
       const next = { ...prev, [k]: !prev[k] }
@@ -4219,20 +5835,32 @@ export function OpenChannelAlignmentPage() {
    * centerHeight が 取れない (縦断 情報なし) ケースは 0 を 基準に 保存し、
    * 再表示側で centerHeight を 引いて 相対 高さで 描画する ので 形状 は 崩れない。
    */
+  /**
+   * 測点 の 個別断面 を 差し替える。
+   * 「現況まで」 の 区間 が 解け なかった 場合 は その 手前 で 打ち切り、
+   * 打ち切った か どう か を 返す (呼び出し 側 で 知らせる ため)。
+   */
   const handleUpdateStationCrossSection = (
     id: string,
     crossSection: StandardCrossSection | null,
-  ) => {
+  ): { truncated: boolean; reasons: string[]; groundCount: number } => {
     const target = stations.find((s) => s.id === id)
-    if (!target) return
+    if (!target) return { truncated: false, reasons: [], groundCount: 0 }
     const centerZ =
       target.plannedCenterHeight ??
       interpolateProfileZOrNull(selected?.profilePoints ?? [], target.distance) ??
       0
-    const nextPoints =
+    // 「現況まで」 の 区間 は その 測点 の 現況断面 と の 交点 で 決まる。
+    // 保存済み が 無い 測点 で も 図 に は 実測記録 から の 現況線 が 出て いる ので、
+    // 取込 でも 同じ もの を 使う (図 と 食い違わ せない)。
+    const groundForResolve = target.currentSection?.length
+      ? target.currentSection
+      : measuredPointsOnStation(target)
+    const resolved =
       crossSection == null
         ? null
-        : standardCsToMeasuredPoints(crossSection, centerZ)
+        : standardCsToMeasuredPoints(crossSection, centerZ, groundForResolve)
+    const nextPoints = resolved?.points ?? null
     setStations(
       stations.map((s) =>
         s.id === id
@@ -4240,6 +5868,11 @@ export function OpenChannelAlignmentPage() {
           : s,
       ),
     )
+    return {
+      truncated: resolved?.truncated ?? false,
+      reasons: resolved?.reasons ?? [],
+      groundCount: groundForResolve.length,
+    }
   }
   /** 現況高 (中心線上の 地盤高) の 手入力を 保存。空文字 / NaN は null に。 */
   /**
@@ -5453,6 +7086,75 @@ export function OpenChannelAlignmentPage() {
                   追加 / 編集 / 削除 のみ。追加 は テーブル 末尾 の 空行 に
                   直接 入力 (Enter or + ボタン で 確定)。 */}
               <CollapsibleSection title="縦断" storageKey="oc:section:profile">
+                {/* 1 路線 に 複数 の 縦断。 主縦断 (中心線) だけ が 測点 の
+                    中心設計高 / 杭打ち / エクスポート に 効く。 追加 の 縦断 は
+                    道路高 / 側溝高 / 左右 の 築堤高 など を 並べて 管理 する 用。 */}
+                <div className="flex items-center gap-1 flex-wrap">
+                  <button
+                    onClick={() => setActiveProfileId(null)}
+                    className={
+                      'px-2 py-0.5 text-[11px] border rounded ' +
+                      (activeProfileId == null
+                        ? 'bg-sky-600 text-white border-sky-600'
+                        : 'bg-white hover:bg-slate-50 text-slate-700')
+                    }
+                    title="中心線 の 縦断。 測点 の 計画高 は これ で 決まる"
+                  >
+                    中心 (主)
+                  </button>
+                  {extraProfiles.map((p, i) => (
+                    <button
+                      key={p.id}
+                      onClick={() => setActiveProfileId(p.id)}
+                      className={
+                        'px-2 py-0.5 text-[11px] border rounded flex items-center gap-1 ' +
+                        (activeProfileId === p.id
+                          ? 'bg-slate-700 text-white border-slate-700'
+                          : 'bg-white hover:bg-slate-50 text-slate-700')
+                      }
+                    >
+                      <span
+                        className="inline-block w-2.5 h-2.5 rounded-sm"
+                        style={{
+                          backgroundColor:
+                            p.color ?? EXTRA_PROFILE_COLORS[i % EXTRA_PROFILE_COLORS.length],
+                        }}
+                      />
+                      {p.name}
+                      <span className="text-[10px] opacity-70">{p.points.length}</span>
+                    </button>
+                  ))}
+                  <button
+                    onClick={handleAddExtraProfile}
+                    disabled={!selected}
+                    className="px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-40"
+                    title="縦断 を 追加 (道路高 / 側溝高 など)"
+                  >
+                    ＋ 縦断
+                  </button>
+                  {activeProfile && (
+                    <span className="ml-auto flex items-center gap-1">
+                      <button
+                        onClick={handleRenameExtraProfile}
+                        className="px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50 text-slate-600"
+                      >
+                        名前
+                      </button>
+                      <button
+                        onClick={handleRemoveExtraProfile}
+                        className="px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-red-50 text-red-600"
+                      >
+                        削除
+                      </button>
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  編集中: <span className="font-semibold text-slate-700">{activeProfileName}</span>
+                  {activeProfile
+                    ? ' — 管理 / 表示 用。 測点 の 計画高 や 杭打ち に は 使われません。'
+                    : ' — 測点 の 計画高・中心設計高・杭打ち は この 縦断 で 決まります。'}
+                </div>
                 <div className="text-xs text-slate-500">
                   SP 値 (中間点計算 と 同じ 座標系) と 計画高 (m) を 変化点 ごと に 登録。
                   末尾 の 空行 に 入力 → Enter or + ボタン で 追加。
@@ -5482,7 +7184,7 @@ export function OpenChannelAlignmentPage() {
                     </thead>
                     <tbody>
                       {sortedProfile.map((p, i) => {
-                        const realIdx = selected.profilePoints.indexOf(p)
+                        const realIdx = activeProfilePoints.indexOf(p)
                         const prev = i > 0 ? sortedProfile[i - 1] : null
                         const slope = prev
                           ? (() => {
@@ -5610,23 +7312,10 @@ export function OpenChannelAlignmentPage() {
                 }
               >
                 <div className="flex items-center gap-1 flex-wrap">
-                  {EDIT_TARGET_TABS.map((t) => (
-                    <button
-                      key={t.key}
-                      onClick={() => {
-                        setEditTarget(t.key)
-                        // 対象を 切り替えたら 地図ピック モードは 解除 (下 の パネル と 同じ)
-                        setMapCaptureTarget(null)
-                      }}
-                      className={`px-3 py-1 text-xs border rounded ${
-                        editTarget === t.key ? t.act : t.idle
-                      }`}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
+                  {/* 編集対象 (現況 / 計画 / 出来形) の 切替 は 右下 横断図 の
+                      上 の バー に 一本化 した。 ここ に は 出さない。 */}
                   {/* 取込 で 拾う 範囲。 右下 横断図 の 「横断幅」 と 同じ 値 */}
-                  {editTarget === 'current' && (
+                  {(
                     <label
                       className="ml-auto flex items-center gap-1 text-[11px] text-slate-500"
                       title="中心線沿いにこの範囲内の実測記録を、その断面上の点として拾います"
@@ -5672,23 +7361,26 @@ export function OpenChannelAlignmentPage() {
                             >
                               管理
                             </th>
-                            {editTarget === 'plan' && (
-                              <th
-                                className="px-2 py-1 w-24 text-right whitespace-nowrap"
-                                title="縦断線形から 自動取込 (トレース/入力 が あれば 優先)"
-                              >
-                                計画高 (m)
-                              </th>
-                            )}
-                            {editTarget === 'current' && (
-                              <th
-                                className="px-2 py-1 w-24 text-right whitespace-nowrap"
-                                title="現況地盤高 を 直接入力"
-                              >
-                                現況高 (m)
-                              </th>
-                            )}
-                            <th className="px-2 py-1 w-28 text-center whitespace-nowrap">状態</th>
+                            {/* 3 つ の 中心高 を 常時 並べる。 状態 (個別設定 等) は
+                                出さない。 どの 断面 が 入って いる か は 高さ を 見れば 分かる。 */}
+                            <th
+                              className="px-2 py-1 w-24 text-right whitespace-nowrap"
+                              title="現況地盤高 を 直接入力"
+                            >
+                              現況高 (m)
+                            </th>
+                            <th
+                              className="px-2 py-1 w-24 text-right whitespace-nowrap"
+                              title="縦断線形から 自動取込 (トレース/入力 が あれば 優先)"
+                            >
+                              計画高 (m)
+                            </th>
+                            <th
+                              className="px-2 py-1 w-24 text-right whitespace-nowrap"
+                              title="出来形断面 の 中心 (離れ 0) の 標高。 断面 から 補間"
+                            >
+                              出来形高 (m)
+                            </th>
                           </tr>
                         </thead>
                         <tbody>
@@ -5720,9 +7412,25 @@ export function OpenChannelAlignmentPage() {
                                     title="管理測点 に する"
                                   />
                                 </td>
+                                {/* 現況高: 直接 入力。 空 なら 未計測扱い */}
+                                <td className="px-1 py-1 text-right whitespace-nowrap">
+                                  <ElevationField
+                                    value={s.currentGroundHeight ?? null}
+                                    allowEmpty
+                                    onClick={(e) => e.stopPropagation()}
+                                    onCommit={(v) =>
+                                      handleUpdateStationCurrentHeight(
+                                        s.id,
+                                        v == null ? '' : String(v),
+                                      )
+                                    }
+                                    placeholder="-"
+                                    className="w-full px-1 py-0.5 border rounded text-right tabular-nums text-amber-700 bg-amber-50/40"
+                                  />
+                                </td>
                                 {/* 計画高: plannedCenterHeight (トレース由来 or 手入力) を 最優先、
                                     無ければ 縦断線形から 内挿 (範囲外は null)。 どちらも 無ければ "-"。 */}
-                                {editTarget === 'plan' && (() => {
+                                {(() => {
                                   const fromPlanned = s.plannedCenterHeight ?? null
                                   const fromProfile = selected
                                     ? interpolateProfileZOrNull(selected.profilePoints, s.distance)
@@ -5746,54 +7454,23 @@ export function OpenChannelAlignmentPage() {
                                     </td>
                                   )
                                 })()}
-                                {/* 現況高: 直接 入力。空 なら 未計測扱い */}
-                                {editTarget === 'current' && (
-                                  <td className="px-1 py-1 text-right whitespace-nowrap">
-                                    <ElevationField
-                                      value={s.currentGroundHeight ?? null}
-                                      allowEmpty
-                                      onClick={(e) => e.stopPropagation()}
-                                      onCommit={(v) =>
-                                        handleUpdateStationCurrentHeight(
-                                          s.id,
-                                          v == null ? '' : String(v),
-                                        )
+                                {/* 出来形高: 専用 の フィールド は 無い ので、 出来形断面 の
+                                    中心 (離れ 0) を 補間 して 出す。 表示 だけ。 */}
+                                {(() => {
+                                  const v = interpolateSectionAtCenter(s.asbuiltSection ?? [])
+                                  return (
+                                    <td
+                                      className="px-2 py-1 text-right tabular-nums text-teal-700 whitespace-nowrap"
+                                      title={
+                                        v != null
+                                          ? '出来形断面 の 中心 を 補間'
+                                          : '出来形断面 が 無い か 中心 を 挟んで いません'
                                       }
-                                      placeholder="-"
-                                      className="w-full px-1 py-0.5 border rounded text-right tabular-nums text-amber-700 bg-amber-50/40"
-                                    />
-                                  </td>
-                                )}
-                                <td className="px-2 py-1 text-center text-[11px] whitespace-nowrap">
-                                  {(() => {
-                                    if (editTarget === 'plan') {
-                                      const n = s.plannedSectionRaw?.length ?? 0
-                                      if (s.crossSection)
-                                        return <span className="text-blue-700">個別設定</span>
-                                      if (n > 0)
-                                        return (
-                                          <span className="text-blue-700">トレース {n} 点</span>
-                                        )
-                                      return <span className="text-slate-400">標準を継承</span>
-                                    }
-                                    const n =
-                                      (editTarget === 'current'
-                                        ? s.currentSection?.length
-                                        : s.asbuiltSection?.length) ?? 0
-                                    if (n === 0) return <span className="text-slate-400">未作成</span>
-                                    return (
-                                      <span
-                                        className={
-                                          editTarget === 'current'
-                                            ? 'text-amber-700'
-                                            : 'text-emerald-700'
-                                        }
-                                      >
-                                        {n} 点
-                                      </span>
-                                    )
-                                  })()}
-                                </td>
+                                    >
+                                      {v != null ? v.toFixed(3) : '-'}
+                                    </td>
+                                  )
+                                })()}
                               </tr>
                             )
                           })}
@@ -6066,7 +7743,7 @@ export function OpenChannelAlignmentPage() {
           className="shrink-0 border-t bg-white flex flex-col relative isolate overflow-hidden"
           style={{ height: profileChartExpanded ? '420px' : 'auto' }}
         >
-          <div className="px-2 py-1 flex items-center gap-2 shrink-0 border-b bg-slate-50">
+          <div className="px-3 py-2 flex items-center gap-2.5 shrink-0 border-b bg-slate-50">
             <button
               type="button"
               onClick={toggleProfileChart}
@@ -6074,9 +7751,9 @@ export function OpenChannelAlignmentPage() {
               title={profileChartExpanded ? '折りたたむ' : '展開'}
             >
               {profileChartExpanded ? (
-                <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
+                <ChevronDown className="h-5 w-5 text-slate-500" />
               ) : (
-                <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
+                <ChevronRight className="h-5 w-5 text-slate-500" />
               )}
             </button>
             <div className="flex gap-0.5">
@@ -6086,7 +7763,7 @@ export function OpenChannelAlignmentPage() {
                   setBottomTab('profile')
                   if (!profileChartExpanded) toggleProfileChart()
                 }}
-                className={`px-2 py-0.5 text-xs rounded ${
+                className={`px-3 py-1 text-sm rounded ${
                   bottomTab === 'profile'
                     ? 'bg-blue-600 text-white'
                     : 'bg-white border hover:bg-slate-100 text-slate-700'
@@ -6100,7 +7777,7 @@ export function OpenChannelAlignmentPage() {
                   setBottomTab('crossSection')
                   if (!profileChartExpanded) toggleProfileChart()
                 }}
-                className={`px-2 py-0.5 text-xs rounded ${
+                className={`px-3 py-1 text-sm rounded ${
                   bottomTab === 'crossSection'
                     ? 'bg-blue-600 text-white'
                     : 'bg-white border hover:bg-slate-100 text-slate-700'
@@ -6109,13 +7786,78 @@ export function OpenChannelAlignmentPage() {
                 横断図
               </button>
             </div>
-            <span className="text-[11px] text-slate-500 truncate">
-              {bottomTab === 'profile'
-                ? '変化点 の 追加 / 編集 は 左サイドバー 「縦断」から'
-                : selectedStation
-                ? `${selectedStation.label} の 計画断面`
-                : '横断計画 (標準断面) — 中間点 で 計画 を 押すと 個別 に 編集 できます'}
-            </span>
+            {/* 断面図 の 上 に あった 表題行 は ここ に たたんだ。
+                測点 の 切替 と 編集対象 だけ 残し、図 の 高さ を 1 行 分 稼ぐ。 */}
+            {bottomTab === 'profile' ? (
+              <span className="text-sm text-slate-500 truncate">
+                変化点 の 追加 / 編集 は 左サイドバー 「縦断」から
+              </span>
+            ) : selectedStation ? (
+              <>
+                <span className="font-mono text-xl font-bold text-slate-800 tracking-tight">
+                  {selectedStation.label}
+                </span>
+                {(() => {
+                  const idx = stations.findIndex((s) => s.id === selectedStation.id)
+                  const prev = idx > 0 ? stations[idx - 1] : null
+                  const next =
+                    idx >= 0 && idx < stations.length - 1 ? stations[idx + 1] : null
+                  return (
+                    <span className="inline-flex items-center gap-0.5">
+                      <button
+                        onClick={() => prev && setSelectedStationId(prev.id)}
+                        disabled={!prev}
+                        className="px-2.5 py-1 text-sm border rounded bg-white hover:bg-slate-100 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={prev ? `前 の 断面 (${prev.label})` : '前 の 断面 は ありません'}
+                      >
+                        ◀ 前断面
+                      </button>
+                      <button
+                        onClick={() => next && setSelectedStationId(next.id)}
+                        disabled={!next}
+                        className="px-2.5 py-1 text-sm border rounded bg-white hover:bg-slate-100 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={next ? `次 の 断面 (${next.label})` : '次 の 断面 は ありません'}
+                      >
+                        次断面 ▶
+                      </button>
+                    </span>
+                  )
+                })()}
+                {/* 編集対象 の 切替。 左メニュー 「横断」 の タブ と 同じ state */}
+                <div className="flex items-center gap-0.5 border-l pl-2">
+                  <span className="text-xs text-slate-500 mr-0.5">編集</span>
+                  {EDIT_TARGET_TABS.map((b) => (
+                    <button
+                      key={b.key}
+                      onClick={() => {
+                        setEditTarget(b.key)
+                        // 対象を 切り替えたら 地図ピック モードは 解除
+                        setMapCaptureTarget(null)
+                      }}
+                      className={`px-3 py-1 text-sm border rounded ${
+                        editTarget === b.key ? b.act : b.idle
+                      }`}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <span className="text-sm text-slate-500 truncate">
+                横断計画 (標準断面) — 中間点 で 計画 を 押すと 個別 に 編集 できます
+              </span>
+            )}
+            {/* 断面図 の パン / ズーム を 戻す。 図 の 中 に 置く と 線 に 被る */}
+            {bottomTab === 'crossSection' && (
+              <button
+                onClick={() => crossViewRef.current?.resetView()}
+                className="ml-auto px-2.5 py-1 text-sm border rounded bg-white text-slate-600 hover:bg-slate-100"
+                title="断面図 の 表示 (パン / ズーム) を リセット"
+              >
+                表示リセット
+              </button>
+            )}
           </div>
           {/* 展開中 は 図 の 左 に 断面点 の 表 を 固定 する。 測点 を 選べば
               その 断面 の 中身 が そのまま 出る ので、別 の 呼び出し は 要らない。
@@ -6123,65 +7865,77 @@ export function OpenChannelAlignmentPage() {
           {profileChartExpanded && (
           <div className="flex-1 min-h-0 flex">
             <aside className="w-[624px] shrink-0 border-r p-2 overflow-hidden flex flex-col gap-1.5">
-              {/* 取込 の 入口 は 表 の 上 に まとめる。
-                  LandXML は 全測点 一括、地図 / DXF は 選んで いる 測点 に 対して。 */}
-              {stations.length > 0 && (
-                <div className="shrink-0 space-y-1">
-                  <LandxmlSectionImport
-                    farmId={farmId ?? null}
-                    channelName={selected?.name ?? null}
-                    target={sectionTargetOfEditTarget(editTarget)}
-                    stations={stations}
-                    segments={segments}
-                    sideOrientation={selected?.sideOrientation ?? 'forward'}
-                    onImported={(rows) =>
-                      handleReplaceStationSectionsBulk(
-                        sectionTargetOfEditTarget(editTarget),
-                        rows,
-                      )
-                    }
-                  />
-                  {selectedStation && (() => {
-                    const t = sectionTargetOfEditTarget(editTarget)
-                    const isMapMode = editTarget === 'current' || editTarget === 'asbuilt'
-                    return (
-                      <div className="flex items-center gap-1 flex-wrap">
-                        {isMapMode && (
+              {/* 取込 の 入口 は 1 行 の ボタン列 に まとめる。
+                  - 測点から追加: 実測記録 を 一括 (条件 で 絞る) / 測点指定 (地図 で 1 点 ずつ)
+                  - DXFから取込 : 既存 の 横断 DXF を トレース
+                  - LandXML取込 : TIN を サンプリング (押して から 条件 を 入れて 確定)
+                  条件 の 入力 欄 は 押す まで 出さ ない。 常時 出す と 幅 を 食う。 */}
+              {stations.length > 0 && (() => {
+                const t = sectionTargetOfEditTarget(editTarget)
+                const isMapMode = editTarget === 'current' || editTarget === 'asbuilt'
+                /** 地図 で 1 点 ずつ 拾う モード に 入る */
+                const startMapCapture = () => {
+                  if (!selectedStation) return
+                  // 現況 で まだ 何も 保存 して いない ときは、いま 断面図 に 出て いる
+                  // 実測点 を そのまま 土台 に する。 これ を しない と 1 点 拾った
+                  // 途端 に 実測点 が 消えて 「反映 されない」 ように 見える。
+                  if (
+                    t === 'current' &&
+                    !selectedStation.currentSection?.length &&
+                    autoCurrentSection.length > 0
+                  ) {
+                    handleReplaceStationSection(selectedStation.id, 'current', autoCurrentSection)
+                  }
+                  setMapCaptureTarget(t)
+                }
+                return (
+                  <div className="shrink-0 space-y-1">
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {selectedStation && isMapMode && (
+                        <div className="relative">
                           <button
-                            onClick={() => {
-                              if (mapCaptureTarget === t) {
-                                setMapCaptureTarget(null)
-                                return
-                              }
-                              // 現況 で まだ 何も 保存 して いない ときは、いま 断面図 に
-                              // 出て いる 実測点 を そのまま 土台 に する。
-                              // これ を しない と 1 点 拾った 途端 に 実測点 が 消えて
-                              // 「反映 されない」 ように 見える。
-                              if (
-                                t === 'current' &&
-                                !selectedStation.currentSection?.length &&
-                                autoCurrentSection.length > 0
-                              ) {
-                                handleReplaceStationSection(
-                                  selectedStation.id,
-                                  'current',
-                                  autoCurrentSection,
-                                )
-                              }
-                              setMapCaptureTarget(t)
-                            }}
+                            onClick={() => setRecordAddMenuOpen((v) => !v)}
                             className={`px-2 py-0.5 text-[11px] border rounded ${
-                              mapCaptureTarget === t
-                                ? 'bg-purple-600 text-white border-purple-600'
-                                : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50'
+                              recordAddMenuOpen || sectionImportPanel === 'records'
+                                ? 'bg-cyan-600 text-white border-cyan-600'
+                                : 'bg-cyan-50 text-cyan-800 border-cyan-300 hover:bg-cyan-100'
                             }`}
-                            title="地図で 測点マーカーを クリック すると 中心線に 垂直投影 して 追加"
+                            title="実測記録 から 断面 の 点 を 拾う"
                           >
-                            {mapCaptureTarget === t ? '地図取得: 選択中' : '地図から追加'}
+                            測点から追加
+                            <ChevronDown className="inline h-3 w-3 ml-0.5 -mt-0.5" />
                           </button>
-                        )}
-                        {/* DXF が 未登録 でも 出す。 トレース モーダル 側 で
-                            登録 できる ので、ここ が 入口 に なる。 */}
+                          {recordAddMenuOpen && (
+                            <div className="absolute top-full mt-1 left-0 z-[1400] bg-white border rounded shadow-lg py-1 min-w-[14rem]">
+                              <button
+                                onClick={() => {
+                                  setRecordAddMenuOpen(false)
+                                  setMapCaptureTarget(null)
+                                  setSectionImportPanel('records')
+                                }}
+                                className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-slate-50"
+                              >
+                                <div className="font-semibold text-slate-700">一括</div>
+                                <div className="text-slate-500">厚さ と 左右 の 幅 で 絞って まとめて 取込</div>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setRecordAddMenuOpen(false)
+                                  setSectionImportPanel(null)
+                                  startMapCapture()
+                                }}
+                                className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-slate-50"
+                              >
+                                <div className="font-semibold text-slate-700">測点指定</div>
+                                <div className="text-slate-500">地図 で 測点 を 1 点 ずつ 選ぶ</div>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {/* DXF が 未登録 でも 出す。 トレース モーダル 側 で
+                          登録 できる ので、ここ が 入口 に なる。 */}
+                      {selectedStation && (
                         <button
                           onClick={() =>
                             setDxfTraceContext({ stationId: selectedStation.id, target: t })
@@ -6191,11 +7945,151 @@ export function OpenChannelAlignmentPage() {
                         >
                           DXFから取込
                         </button>
+                      )}
+                      {/* 計画 だけ。 路線 の 標準断面 を この 測点 の 計画断面 に 落とす。
+                          以前 は 横断図 の 表題行 に あった 「個別設定 (標準を取込)」。
+                          取込 の 入口 を 1 行 に まとめた ので ここ に 置く。 */}
+                      {selectedStation && t === 'planned' && (
+                        <button
+                          onClick={() =>
+                            setStandardSectionPicker({ stationId: selectedStation.id })
+                          }
+                          className="px-2 py-0.5 text-[11px] border rounded bg-white text-blue-700 border-blue-300 hover:bg-blue-50"
+                          title="標準断面 を 選んで この 測点 の 計画断面 に する (新規作成 / ファイル読込 も ここ から)"
+                        >
+                          標準断面取込
+                        </button>
+                      )}
+                      <button
+                        onClick={() =>
+                          setSectionImportPanel((p) => (p === 'landxml' ? null : 'landxml'))
+                        }
+                        className={`px-2 py-0.5 text-[11px] border rounded ${
+                          sectionImportPanel === 'landxml'
+                            ? 'bg-emerald-600 text-white border-emerald-600'
+                            : 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50'
+                        }`}
+                        title="LandXML の TIN から 全測点 の 断面 を 作成 (幅 と 刻み を 入れて 確定)"
+                      >
+                        LandXML取込
+                      </button>
+                      {/* トンボ (丁張 の 目印)。 計画 の とき だけ */}
+                      {selectedStation && t === 'planned' && (
+                        <button
+                          onClick={() => setTomboStationId(selectedStation.id)}
+                          className="px-2 py-0.5 text-[11px] border rounded bg-white text-violet-700 border-violet-300 hover:bg-violet-50"
+                          title="計画横断 の 変化点 から 横 と 高さ を ずらして トンボ を 計算 する"
+                        >
+                          トンボ・丁張計算
+                        </button>
+                      )}
+                      {mapCaptureTarget === t && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 text-[11px] rounded bg-purple-600 text-white">
+                          地図取得: 選択中
+                          <button
+                            onClick={() => setMapCaptureTarget(null)}
+                            className="underline decoration-dotted"
+                          >
+                            やめる
+                          </button>
+                        </span>
+                      )}
+                      {/* 表 の 全消去 も 取込 と 同じ 行 に。 右端 に 寄せる */}
+                      {selectedStation && (() => {
+                        const cur =
+                          (selectedStation[sectionKeyOf(t)] as MeasuredCrossPoint[] | null) ?? []
+                        return (
+                          <button
+                            onClick={() => {
+                              if (cur.length === 0) return
+                              if (
+                                !window.confirm(
+                                  `${cur.length} 点 すべて を 消します。よろしいですか？`,
+                                )
+                              )
+                                return
+                              handleReplaceStationSection(selectedStation.id, t, [])
+                            }}
+                            disabled={cur.length === 0}
+                            className="ml-auto px-2 py-0.5 text-[11px] border rounded text-red-600 hover:bg-red-50 disabled:opacity-40"
+                          >
+                            全消去
+                          </button>
+                        )
+                      })()}
+                    </div>
+
+                    {/* 一括 の 条件。 厚さ = 中心線 沿い の 帯、 幅 = 中心 から 左右 の 上限 */}
+                    {selectedStation && sectionImportPanel === 'records' && (
+                      <div className="border rounded bg-slate-50 p-2 space-y-1 text-[11px]">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <label className="flex items-center gap-1 text-slate-600">
+                            <span>厚さ(m)</span>
+                            <input
+                              type="number"
+                              step={0.1}
+                              min={0.05}
+                              value={bulkBandText}
+                              onChange={(e) => setBulkBandText(e.target.value)}
+                              className="w-16 px-1 py-0.5 border rounded font-mono text-right"
+                              title="中心線 に 沿った 前後 の 帯。 この 中 に 入る 実測記録 を その 断面 の 点 と して 拾う"
+                            />
+                          </label>
+                          <label className="flex items-center gap-1 text-slate-600">
+                            <span>左右の幅(m)</span>
+                            <input
+                              type="number"
+                              step={0.5}
+                              min={0}
+                              value={bulkHalfWidthText}
+                              onChange={(e) => setBulkHalfWidthText(e.target.value)}
+                              placeholder="制限なし"
+                              className="w-20 px-1 py-0.5 border rounded font-mono text-right"
+                              title="中心 から 左右 それぞれ の 上限。 空 に すると 制限 しない"
+                            />
+                          </label>
+                          <span className={bulkCondOk ? 'text-slate-500' : 'text-red-600'}>
+                            {bulkCondOk ? `該当 ${bulkCandidates.length} 点` : '数値 を 入れて ください'}
+                          </span>
+                          <button
+                            onClick={handleBulkAddFromRecords}
+                            disabled={!bulkCondOk || bulkCandidates.length === 0}
+                            className="ml-auto px-2 py-0.5 border rounded bg-cyan-600 text-white border-cyan-600 hover:bg-cyan-700 disabled:opacity-40"
+                          >
+                            取込
+                          </button>
+                          <button
+                            onClick={() => setSectionImportPanel(null)}
+                            className="px-2 py-0.5 border rounded bg-white hover:bg-slate-100 text-slate-600"
+                          >
+                            閉じる
+                          </button>
+                        </div>
+                        <div className="text-slate-500">
+                          既に 入って いる 記録 は 足しません。 取込 後 は 中心 に 近い 順 に
+                          並べ 直します。
+                        </div>
                       </div>
-                    )
-                  })()}
-                </div>
-              )}
+                    )}
+
+                    {/* LandXML は 押して から 幅 (半分) と 刻み を 入れて 確定 */}
+                    {sectionImportPanel === 'landxml' && (
+                      <LandxmlSectionImport
+                        farmId={farmId ?? null}
+                        channelName={selected?.name ?? null}
+                        target={t}
+                        stations={stations}
+                        segments={segments}
+                        sideOrientation={selected?.sideOrientation ?? 'forward'}
+                        onImported={(rows) => {
+                          handleReplaceStationSectionsBulk(t, rows)
+                          setSectionImportPanel(null)
+                        }}
+                      />
+                    )}
+                  </div>
+                )
+              })()}
               <div className="flex-1 min-h-0">
               {selectedStation ? (
                 (() => {
@@ -6207,9 +8101,30 @@ export function OpenChannelAlignmentPage() {
                     <SectionPointsEditor
                       target={t}
                       stationId={selectedStation.id}
-                      stationLabel={selectedStation.label}
                       points={pts}
-                      autoPoints={t === 'current' ? autoCurrentSection : undefined}
+                      // 一番 内側 の 点 を 計算 する とき の 基準 (中心設計高)
+                      centerHeight={
+                        selectedStation.plannedCenterHeight ??
+                        interpolateProfileZOrNull(
+                          selected.profilePoints,
+                          selectedStation.distance,
+                        ) ??
+                        undefined
+                      }
+                      // 「縦断から計算」 用。 こちら は 縦断線形 だけ を 見る
+                      profileCenterHeight={
+                        interpolateProfileZOrNull(
+                          selected.profilePoints,
+                          selectedStation.distance,
+                        ) ?? undefined
+                      }
+                      // 「勾配 ～ 現況まで」 用。 未保存 の 間 は 図 と 同じ 実測点 を 使う
+                      groundPoints={
+                        selectedStation.currentSection?.length
+                          ? selectedStation.currentSection
+                          : autoCurrentSection
+                      }
+                      onCalcPreviewChange={setCalcPreview}
                       onChange={(next) =>
                         handleReplaceStationSection(selectedStation.id, t, next)
                       }
@@ -6230,6 +8145,7 @@ export function OpenChannelAlignmentPage() {
             <div className="flex-1 min-h-0 px-2 pb-2">
               <ProfileChart
                 points={selected.profilePoints}
+                extraProfiles={selected.extraProfiles}
                 totalLen={totalLen}
                 spOffset={spOffset}
                 currentGroundPoints={stations
@@ -6254,9 +8170,26 @@ export function OpenChannelAlignmentPage() {
                 //   crossSection と plannedSectionRaw は handleUpdateStationCrossSection /
                 //   handleReplaceStationSection('planned') で 常に 同期される 想定 だが、
                 //   旧データ (片方 のみ) との 互換 の ため plannedSectionRaw を 逆変換 で フォールバック。
+                /**
+                 * 図 に 出す 断面 (要素列)。
+                 *
+                 * 「現況まで」 (toGround) を 含む 断面 は 要素 だけ で は 形 が
+                 * 決まら ない。 その 区間 は 幅 0 で 保存 されて いる ので、
+                 * そのまま 描く と 長さ ゼロ に なって 見え なく なる。
+                 * 取込 の とき に 現況 と の 交点 で 解決 した 点列
+                 * (plannedSectionRaw) が ある ので、 そちら から 組み直す。
+                 */
+                const csHasToGround = (cs0: StandardCrossSection) =>
+                  cs0.left.some((e) => e.toGround) || cs0.right.some((e) => e.toGround)
                 const stationCs: StandardCrossSection | null = selectedStation
                   ? selectedStation.crossSection
-                    ? selectedStation.crossSection
+                    ? csHasToGround(selectedStation.crossSection) &&
+                      (selectedStation.plannedSectionRaw?.length ?? 0) > 0
+                      ? measuredPointsToStandardCs(
+                          selectedStation.plannedSectionRaw as MeasuredCrossPoint[],
+                          centerZ ?? 0,
+                        )
+                      : selectedStation.crossSection
                     : selectedStation.plannedSectionRaw &&
                         selectedStation.plannedSectionRaw.length > 0
                       ? measuredPointsToStandardCs(
@@ -6268,192 +8201,10 @@ export function OpenChannelAlignmentPage() {
                 const cs: StandardCrossSection = stationCs ?? selected.standardCrossSection
                 return (
                   <>
-                    {/* ヘッダー: 対象 表示 + 個別/標準 切替 */}
-                    <div className="flex items-center gap-2 flex-wrap text-xs shrink-0">
-                      {selectedStation ? (
-                        <>
-                          <span className="font-mono font-semibold text-slate-700">
-                            {selectedStation.label}
-                          </span>
-                          {/* 測点 の 切替。 表題 の 測点名 の 右 に 置く */}
-                          {(() => {
-                            const idx = stations.findIndex((s) => s.id === selectedStation.id)
-                            const prev = idx > 0 ? stations[idx - 1] : null
-                            const next =
-                              idx >= 0 && idx < stations.length - 1 ? stations[idx + 1] : null
-                            return (
-                              <span className="inline-flex items-center gap-0.5">
-                                <button
-                                  onClick={() => prev && setSelectedStationId(prev.id)}
-                                  disabled={!prev}
-                                  className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-100 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                                  title={
-                                    prev ? `前 の 断面 (${prev.label})` : '前 の 断面 は ありません'
-                                  }
-                                >
-                                  ◀ 前断面
-                                </button>
-                                <button
-                                  onClick={() => next && setSelectedStationId(next.id)}
-                                  disabled={!next}
-                                  className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-100 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                                  title={
-                                    next ? `次 の 断面 (${next.label})` : '次 の 断面 は ありません'
-                                  }
-                                >
-                                  次断面 ▶
-                                </button>
-                              </span>
-                            )
-                          })()}
-                          <span
-                            className={`text-[10px] px-1.5 py-0.5 rounded ${
-                              selectedStation.crossSection
-                                ? 'bg-amber-100 text-amber-700'
-                                : 'bg-slate-200 text-slate-600'
-                            }`}
-                          >
-                            {selectedStation.crossSection ? '個別設定' : '標準を継承'}
-                          </span>
-                          {/* 編集対象 の 切替。 左メニュー 「横断」 の タブ と 同じ state */}
-                          <div className="flex items-center gap-0.5 border-l pl-2 ml-1">
-                            <span className="text-[10px] text-slate-500 mr-0.5">編集</span>
-                            {EDIT_TARGET_TABS.map((b) => (
-                              <button
-                                key={b.key}
-                                onClick={() => {
-                                  setEditTarget(b.key)
-                                  // 対象を 切り替えたら 地図ピック モードは 解除
-                                  setMapCaptureTarget(null)
-                                }}
-                                className={`px-2 py-0.5 text-[11px] border rounded ${
-                                  editTarget === b.key ? b.act : b.idle
-                                }`}
-                              >
-                                {b.label}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="ml-auto flex gap-1">
-                            {/* 図 で 選んだ 点 を 並び の 前 / 後ろ へ。
-                                オーバーハング は 離れ で 順序 が 決まら ない ので、
-                                図 を 見ながら 直せる ように する。 */}
-                            {selectedPointId && (
-                              <span className="flex items-center gap-0.5 mr-1">
-                                <span className="text-[10px] text-pink-700">選択中</span>
-                                <button
-                                  onClick={() => moveSelectedPoint(-1)}
-                                  className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50"
-                                  title="並び の 1 つ 前 へ"
-                                >
-                                  ←前
-                                </button>
-                                <button
-                                  onClick={() => moveSelectedPoint(1)}
-                                  className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50"
-                                  title="並び の 1 つ 後ろ へ"
-                                >
-                                  後→
-                                </button>
-                                <button
-                                  onClick={() => setSelectedPointId(null)}
-                                  className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50 text-slate-500"
-                                  title="選択 を 外す"
-                                >
-                                  解除
-                                </button>
-                              </span>
-                            )}
-                            {/* どの レイヤ を 出す か。 線 が 重なる と 読め ない */}
-                            <div className="relative">
-                              <button
-                                onClick={() => setCrossLayerOpen((v) => !v)}
-                                className={`px-2 py-0.5 text-[11px] border rounded ${
-                                  crossLayerOpen
-                                    ? 'bg-slate-200 border-slate-400'
-                                    : 'bg-white text-slate-600 hover:bg-slate-50'
-                                }`}
-                                title="断面図 に 出す 線 と 文字 を 選ぶ"
-                              >
-                                表示
-                                <span className="ml-1 text-slate-400">
-                                  {Object.values(crossLayers).filter(Boolean).length}/5
-                                </span>
-                              </button>
-                              {crossLayerOpen && (
-                                <div className="absolute top-full mt-1 right-0 z-[1400] bg-white border rounded shadow-lg py-1 min-w-[9rem]">
-                                  {(
-                                    [
-                                      ['planned', '計画線'],
-                                      ['current', '現況線'],
-                                      ['asbuilt', '出来形線'],
-                                      ['dimText', '寸法 の 文字'],
-                                      ['pointText', '点名 の 文字'],
-                                    ] as const
-                                  ).map(([k, label]) => (
-                                    <label
-                                      key={k}
-                                      className="flex items-center gap-2 px-3 py-1 text-[11px] hover:bg-slate-50 cursor-pointer"
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={crossLayers[k]}
-                                        onChange={() => toggleCrossLayer(k)}
-                                      />
-                                      <span>{label}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                            <button
-                              onClick={() => crossViewRef.current?.resetView()}
-                              className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-600 hover:bg-slate-50"
-                              title="断面図 の 表示 (パン / ズーム) を リセット"
-                            >
-                              表示リセット
-                            </button>
-                            {selectedStation.crossSection ||
-                            (selectedStation.plannedSectionRaw?.length ?? 0) > 0 ? (
-                              <button
-                                onClick={() =>
-                                  handleUpdateStationCrossSection(selectedStation.id, null)
-                                }
-                                className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-600 hover:bg-slate-50"
-                              >
-                                標準に戻す
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() =>
-                                  handleUpdateStationCrossSection(
-                                    selectedStation.id,
-                                    cloneCrossSection(selected.standardCrossSection),
-                                  )
-                                }
-                                className="px-2 py-0.5 text-[11px] border rounded bg-blue-600 text-white hover:bg-blue-700"
-                              >
-                                個別設定（標準を取込）
-                              </button>
-                            )}
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <span className="font-semibold text-slate-700">
-                            横断計画 (標準断面)
-                          </span>
-                          <span className="text-[11px] text-slate-500">
-                            左メニュー 「横断」 で 測点 を 選ぶ と 個別断面 を 編集 できます。
-                          </span>
-                        </>
-                      )}
-                    </div>
-
-                    {/* 断面図 (表示)。 測点 の 切替 は 表題 の 測点名 の 右 の
-                        ◀ 前断面 / 次断面 ▶。 入力 は 左 の 断面入力欄 (表) で。
-                        表示リセット も 表題行 の ボタン (ref 経由)。 */}
-                    <div className="flex-1 min-h-0">
+                    {/* 断面図。 測点 の 切替 と 編集対象 は 上 の タブ バー、
+                        表示要素 と 表示リセット は 図 の 中 に 重ねた。
+                        入力 は 左 の 断面入力欄 (表) で。 */}
+                    <div className="flex-1 min-h-0 relative">
                       <CrossSectionView
                         ref={crossViewRef}
                         cs={cs}
@@ -6484,9 +8235,165 @@ export function OpenChannelAlignmentPage() {
                           return saved
                         })()}
                         editOnPath={editTarget === 'plan'}
+                        calcPreview={calcPreview}
+                        chohari={
+                          selectedStation
+                            ? (selectedStation.chohari ?? []).flatMap((c) => {
+                                const r = resolveChohariFor(selectedStation, c)
+                                return r && !r.error
+                                  ? [
+                                      {
+                                        id: c.id,
+                                        offset: r.offset,
+                                        elevation: r.elevation,
+                                        label: c.name?.trim() || '丁張',
+                                        slopeLength: r.slopeLength,
+                                        crestOffset: r.crest?.offset ?? r.offset,
+                                        crestElevation: r.crest?.elevation ?? r.elevation,
+                                        baseOffset: r.base?.offset ?? r.offset,
+                                        baseElevation: r.base?.elevation ?? r.elevation,
+                                        // 図 に 出て いる 現況線 と 同じ もの を 使う
+                                        groundElevation: groundElevationAt(
+                                          selectedStation.currentSection?.length
+                                            ? selectedStation.currentSection
+                                            : autoCurrentSection,
+                                          r.offset,
+                                        ),
+                                        // 法面線 が 現況 と ぶつかる 点。
+                                        //
+                                        // 盛土 なら 法面線 は 現況 より 上 に あり、 法肩 と は
+                                        // 逆 (下り) の 側 で 地盤 と 交わる。 切土 なら その 逆。
+                                        // どちら か は 断面 次第 な ので 両 向き を 探し、
+                                        // 杭 に 近い 方 を 採る。 線上 の 交点 な ので
+                                        // どちら から 探しても 同じ 点 に 行き着く。
+                                        groundHit: (() => {
+                                          const g = selectedStation.currentSection?.length
+                                            ? selectedStation.currentSection
+                                            : autoCurrentSection
+                                          const co = r.crest?.offset ?? r.offset
+                                          const ce = r.crest?.elevation ?? r.elevation
+                                          const dxAbs = Math.abs(co - r.offset)
+                                          if (dxAbs < 1e-9 || g.length < 2) return null
+                                          // 法肩 へ 向かう 向き と、 その 1m あたり の 上がり
+                                          const toCrest: 1 | -1 = co >= r.offset ? 1 : -1
+                                          const f = (ce - r.elevation) / dxAbs
+                                          const from = { offset: r.offset, elevation: r.elevation }
+                                          const opts = { extendEnds: true }
+                                          const up = intersectGround(from, toCrest, f, g, opts)
+                                          const down = intersectGround(
+                                            from,
+                                            (toCrest * -1) as 1 | -1,
+                                            -f,
+                                            g,
+                                            opts,
+                                          )
+                                          const pick =
+                                            up && down
+                                              ? up.t <= down.t
+                                                ? { t: up.t, dir: toCrest, fr: f }
+                                                : { t: down.t, dir: (toCrest * -1) as 1 | -1, fr: -f }
+                                              : up
+                                                ? { t: up.t, dir: toCrest, fr: f }
+                                                : down
+                                                  ? { t: down.t, dir: (toCrest * -1) as 1 | -1, fr: -f }
+                                                  : null
+                                          return pick
+                                            ? {
+                                                offset: r.offset + pick.dir * pick.t,
+                                                elevation: r.elevation + pick.fr * pick.t,
+                                              }
+                                            : null
+                                        })(),
+                                      },
+                                    ]
+                                  : []
+                              })
+                            : []
+                        }
+                        tombos={
+                          selectedStation
+                            ? (selectedStation.tombos ?? []).flatMap((t) => {
+                                const r = resolveTomboFor(selectedStation, t)
+                                return r
+                                  ? [
+                                      {
+                                        id: t.id,
+                                        offset: r.offset,
+                                        elevation: r.elevation,
+                                        label: t.name?.trim() || 'トンボ',
+                                        dw: t.dw,
+                                        dh: t.dh,
+                                        // 図 に 出て いる 現況線 と 同じ もの を 使う
+                                        groundElevation: groundElevationAt(
+                                          selectedStation.currentSection?.length
+                                            ? selectedStation.currentSection
+                                            : autoCurrentSection,
+                                          r.offset,
+                                        ),
+                                      },
+                                    ]
+                                  : []
+                              })
+                            : []
+                        }
                         selectedPointId={selectedPointId}
-                        onSelectPoint={setSelectedPointId}
+                        onSelectPoint={handleSelectSectionPoint}
+                        onSelectSegment={handleSelectSectionSegment}
+                        segmentPick={pickTarget?.kind === 'choSegment'}
+                        offsetPick={pickTarget?.kind === 'choPos'}
+                        onPickOffset={handlePickChohariOffset}
+                        pointPickIds={
+                          pickTarget?.kind === 'choBase' && selectedStation
+                            ? (() => {
+                                const c = (selectedStation.chohari ?? []).find(
+                                  (x) => x.id === pickTarget.rowId,
+                                )
+                                return c ? [c.basePointId, c.crestPointId] : null
+                              })()
+                            : null
+                        }
                       />
+                      {/* 凡例 兼 表示切替。 図 の 右下 に 常駐 させる。
+                          線 の 色 と 破線 は 本体 の 描画 と 同じ 値 を 使う。 */}
+                      <div className="absolute bottom-2 right-2 z-[1400] bg-white/90 border rounded shadow-sm py-1 px-1">
+                        {(
+                          [
+                            ['planned', '計画線', '#0ea5e9', ''],
+                            ['current', '現況線', '#a16207', '4,3'],
+                            ['asbuilt', '出来形線', '#059669', ''],
+                            ['dimText', '寸法 の 文字', '', ''],
+                            ['pointText', '点名 の 文字', '', ''],
+                          ] as const
+                        ).map(([k, label, color, dash]) => (
+                          <label
+                            key={k}
+                            className="flex items-center gap-1.5 px-1.5 py-0.5 text-[11px] hover:bg-slate-50 cursor-pointer whitespace-nowrap"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={crossLayers[k]}
+                              onChange={() => toggleCrossLayer(k)}
+                              className="h-3 w-3"
+                            />
+                            {color ? (
+                              <svg width="20" height="8" className="shrink-0">
+                                <line
+                                  x1={0}
+                                  y1={4}
+                                  x2={20}
+                                  y2={4}
+                                  stroke={color}
+                                  strokeWidth={2}
+                                  strokeDasharray={dash || undefined}
+                                />
+                              </svg>
+                            ) : (
+                              <span className="w-5 text-center text-slate-400 shrink-0">字</span>
+                            )}
+                            <span className="text-slate-700">{label}</span>
+                          </label>
+                        ))}
+                      </div>
                     </div>
                   </>
                 )
@@ -6497,6 +8404,79 @@ export function OpenChannelAlignmentPage() {
           </div>
           )}
         </div>
+      )}
+
+      {/* トンボ の 計算。 計画横断 の 変化点 から の ずらし で 1 点 を 決める */}
+      {tomboStationId &&
+        (() => {
+          const st = stations.find((x) => x.id === tomboStationId)
+          if (!st) return null
+          return (
+            <StakeoutModal
+              stationLabel={st.label}
+              planPoints={st.plannedSectionRaw ?? []}
+              tombos={st.tombos ?? []}
+              chohari={st.chohari ?? []}
+              resolveTombo={(t) => resolveTomboFor(st, t)}
+              resolveChohari={(c) => resolveChohariFor(st, c)}
+              onChangeTombos={(next) =>
+                setStations(
+                  stations.map((x) => (x.id === st.id ? { ...x, tombos: next } : x)),
+                )
+              }
+              onChangeChohari={(next) =>
+                setStations(
+                  stations.map((x) => (x.id === st.id ? { ...x, chohari: next } : x)),
+                )
+              }
+              onRegisterTombos={(items) => handleRegisterTombos(st.id, items)}
+              onRegisterChohari={(items) => handleRegisterChohari(st.id, items)}
+              picking={pickTarget}
+              onPick={setPickTarget}
+              onClose={() => {
+                setPickTarget(null)
+                setTomboStationId(null)
+              }}
+            />
+          )
+        })()}
+
+      {/* 標準断面 の 選択 / 作成。 取込 は 開いて いる 測点 の 計画断面 に 入れる */}
+      {standardSectionPicker && selected && (
+        <StandardSectionPickerModal
+          sections={selected.standardSections}
+          legacyCross={selected.standardCrossSection}
+          onChangeSections={(next) =>
+            updateChannel(selected.id, { standardSections: next })
+          }
+          onImport={(cross) => {
+            const st = stations.find((x) => x.id === standardSectionPicker.stationId)
+            if (!st) return
+            // 追加 で は なく 置き換え な ので、 既に 点 が ある ときは 確認 する
+            const nowCount = st.plannedSectionRaw?.length ?? 0
+            if (
+              nowCount > 0 &&
+              !window.confirm(
+                `${st.label} の 計画断面 (${nowCount} 点) を 標準断面 で 置き換えます。よろしいですか？`,
+              )
+            )
+              return
+            const res = handleUpdateStationCrossSection(st.id, cloneCrossSection(cross))
+            if (res.truncated) {
+              // 何 が 起きた の か を そのまま 出す。 現況 の 点数 も 添えて、
+              // 「現況 が 空」 なのか 「交わら ない」 のか を 区別 できる ように する。
+              window.alert(
+                [
+                  `${st.label}: 「現況まで」 の 区間 を 解け なかった ので その 手前 で 打ち切りました。`,
+                  ...res.reasons,
+                  `(この 測点 の 現況断面: ${res.groundCount} 点)`,
+                ].join('\n\n'),
+              )
+            }
+            setStandardSectionPicker(null)
+          }}
+          onClose={() => setStandardSectionPicker(null)}
+        />
       )}
 
       {/* 横断図 の DXF 出力 */}

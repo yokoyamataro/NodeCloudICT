@@ -72,6 +72,8 @@ const COORDINATE_MARKER_COLORS: Record<string, string> = {
   witness: '#eab308',
   confirmed_boundary: '#16a34a',
   measured: '#ec4899',
+  tombo: '#8b5cf6',
+  chohari: '#e11d48',
 }
 
 // 管種ごとの色

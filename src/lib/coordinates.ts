@@ -87,6 +87,8 @@ export type CoordinateType =
   | 'witness'            // 立会点
   | 'confirmed_boundary' // 確定筆界点
   | 'measured'           // 実測点
+  | 'tombo'              // トンボ (土木 の 丁張 用 目印)
+  | 'chohari'            // 丁張 (法面 の 目印。 幅杭 の 位置)
 
 export const COORDINATE_TYPE_NAMES: Record<CoordinateType, string> = {
   control: '基準点',
@@ -98,4 +100,6 @@ export const COORDINATE_TYPE_NAMES: Record<CoordinateType, string> = {
   witness: '立会点',
   confirmed_boundary: '確定筆界点',
   measured: '実測点',
+  tombo: 'トンボ',
+  chohari: '丁張',
 }

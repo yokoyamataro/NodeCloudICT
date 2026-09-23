@@ -163,6 +163,22 @@ interface CoordinateState {
   hydrateCoordinates: (rows: unknown[], zone: number, farmId: string) => void
   fetchCoordinates: (farmId: string) => Promise<void>
   addCoordinate: (type: CoordinateType) => Promise<void>
+  /**
+   * 値 を 入れた 座標 を まとめて 登録 する。
+   * addCoordinate は 空行 を 1 つ 作る だけ な ので、 計算 結果 (トンボ 等) を
+   * 流し込む 用途 に は 使え ない。 返り値 は 登録 できた 行。
+   */
+  addCoordinatesBulk: (
+    rows: {
+      pointNumber: string
+      x: number
+      y: number
+      z?: number | null
+      type: CoordinateType
+      stakeType?: string | null
+      notes?: string | null
+    }[],
+  ) => Promise<CoordinateRow[]>
   updateCoordinate: (id: string, field: keyof CoordinateRow, value: string | number | null) => void
   deleteCoordinate: (id: string) => Promise<void>
   deleteCoordinates: (ids: string[]) => Promise<void>
@@ -316,6 +332,63 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         loadingProgress: null,
         loadedFarmId: null,
       })
+    }
+  },
+
+  addCoordinatesBulk: async (rows) => {
+    const farmId = getCurrentFarmId()
+    if (!farmId) {
+      set({ error: '工区が選択されていません' })
+      return []
+    }
+    if (rows.length === 0) return []
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const uid = user?.id ?? null
+      const payload = rows.map((r) => ({
+        farm_id: farmId,
+        point_number: r.pointNumber,
+        x: r.x,
+        y: r.y,
+        z: r.z ?? null,
+        coordinate_type: r.type,
+        stake_type: r.stakeType ?? null,
+        notes: r.notes ?? null,
+        latitude: null,
+        longitude: null,
+        created_by: uid,
+        updated_by: uid,
+      }))
+      const { data, error } = await supabase
+        .from('design_coordinates')
+        .insert(payload as never)
+        .select()
+      if (error) throw error
+      const added: CoordinateRow[] = ((data ?? []) as unknown as DesignCoordinate[]).map(
+        (row) => ({
+          id: row.id,
+          pointNumber: row.point_number,
+          x: row.x,
+          y: row.y,
+          z: row.z,
+          lat: null,
+          lng: null,
+          type: normalizeCoordinateType(row.coordinate_type) as CoordinateType,
+          stakeType: row.stake_type ?? null,
+          stakeStatus: normalizeStakeStatus(row.stake_status),
+          notes: row.notes ?? null,
+          createdAt: row.created_at ?? null,
+          updatedAt: row.updated_at ?? null,
+          createdBy: row.created_by ?? null,
+          updatedBy: row.updated_by ?? null,
+        }),
+      )
+      set((st) => ({ coordinates: [...st.coordinates, ...added] }))
+      return added
+    } catch (err) {
+      console.error('[coordinateStore] addCoordinatesBulk failed', err)
+      set({ error: extractSupabaseErrorMessage(err, '座標の一括登録に失敗しました') })
+      return []
     }
   },
 

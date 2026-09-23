@@ -29,6 +29,25 @@ export interface ProfilePoint {
   vcl?: number
 }
 
+/**
+ * 追加 の 縦断 (管理用)。
+ *
+ * 中心線 の 縦断 は OpenChannelRow.profilePoints (主縦断) で、 測点 の
+ * 中心設計高 / 杭打ち / エクスポート は そちら だけ を 使う。 これ は
+ * 「道路高 と 側溝高」「河床高 と 左右 の 築堤高」 の ように、 1 路線 で
+ * 並べて 管理 したい 高さ を 縦断図 に 重ねて 見る ため の もの。
+ */
+export interface ExtraProfile {
+  /** クライアント 生成 の 一意 ID */
+  id: string
+  /** 表示名 (道路高 など) */
+  name: string
+  /** 縦断図 の 線 の 色。 省略 時 は 並び 順 の 既定色 */
+  color?: string
+  /** 変化点列。 形式 は 主縦断 と 同じ */
+  points: ProfilePoint[]
+}
+
 /** 勾配の表記単位
  *  - 'ratio'    : 1:i 表記（slopeValue=i, 符号で上下）
  *  - 'percent'  : i % 表記（slopeValue=i, 符号で上下）
@@ -53,6 +72,19 @@ export interface CrossSectionElement {
   width: number
   slopeValue: number
   slopeUnit: SlopeUnit
+  /**
+   * 「勾配 の まま 現況線 まで 伸ばす」 区間 (法面 の 摺り付け)。
+   *
+   * 付いて いる とき、 width は 使わ ない。 長さ は 現況断面 と の 交点 で
+   * 決まる ので、 測点 へ 取り込む とき に 解決 する (標準断面 の 定義 時 に は
+   * 決まら ない)。 marginW は 交点 から さらに 同じ 勾配 の まま 幅方向 に
+   * 伸ばす 量 [m]。
+   *
+   * この 印 を 知ら ない 古い 処理 (elementStep / buildCrossSectionPath 等) は
+   * width=0 の 区間 と して 素通り する。 形 が 崩れる より 短く 出る 方 が
+   * 安全 な ため、 保存 時 は width を 0 に して おく。
+   */
+  toGround?: { marginW: number }
 }
 
 export interface StandardCrossSection {
@@ -63,6 +95,83 @@ export interface StandardCrossSection {
 }
 
 export const emptyStandardCrossSection = (): StandardCrossSection => ({ right: [], left: [] })
+
+/**
+ * 名前 付き の 標準断面。
+ *
+ * 現場 で は 「台形水路 B=1.0 H=1.2」「道路部 W=4.0」 の ように 何種類 か を
+ * 使い分ける ので、 1 路線 に 複数 持てる ように する。 測点 の 計画断面 に
+ * 取り込む とき に ここ から 選ぶ。 他 現場 へ は ファイル で 持ち出す。
+ *
+ * 旧 の 単一断面 (OpenChannelRow.standardCrossSection) は 残して あり、
+ * 計画 を 開いた ときの 自動複製 など は 従来 どおり そちら を 見る。
+ */
+export interface NamedStandardSection {
+  /** クライアント 生成 の 一意 ID */
+  id: string
+  /** 表示名 */
+  name: string
+  /** 補足 (省略 可) */
+  note?: string
+  /** 中心 から 外 向き の 区間列 */
+  cross: StandardCrossSection
+}
+
+/**
+ * トンボ (丁張 の 目印)。
+ *
+ * 計画横断 の 変化点 を 基準 に、 横 (幅方向) と 高さ の ずらし を 与えて
+ * 1 点 を 決める。 現地 に 立てる 杭 の 位置 と 高さ に なる。
+ *
+ * 基準 の 変化点 は id で 結ぶ が、 計画断面 を 取り込み 直す と 点 の id は
+ * 振り直される。 その とき でも 追える ように、 定義 した ときの 離れ を
+ * 控えて おき、 id が 見つから なければ 一番 近い 離れ の 点 に 寄せる。
+ */
+export interface TomboPoint {
+  id: string
+  /** 基準 に する 計画断面 の 変化点 の id */
+  basePointId: string
+  /** 定義 した ときの 基準点 の 離れ [m]。 id が 変わった ときの 手がかり */
+  baseOffset: number
+  /**
+   * 基準点 から の 横 の ずらし [m]。 中心 から 遠ざかる 向き が 正。
+   * 例) 右側 の 変化点 で +0.5 なら さらに 0.5m 右
+   */
+  dw: number
+  /** 基準点 から の 高さ の ずらし [m]。 上 が 正 */
+  dh: number
+  /** 点名。 空 なら 測点名 と 基準点 から 自動 で 付ける */
+  name?: string
+  /** 座標管理 に 登録 した とき の 座標 id (再登録 の 判定 用) */
+  coordinateId?: string | null
+}
+
+/**
+ * 丁張 (法面 の 目印)。
+ *
+ * 法尻 など の 計画点 を 基準 に、 中心 から 遠ざかる 向き に W だけ 離して
+ * 幅杭 を 立てる。 対象 の 法面 は 「基準点 と もう 一方 の 端 (法肩)」 の
+ * 2 点 で 決まる。 その 法面 の 線 を 杭 の 位置 まで 延ばした 高さ が 丁張高、
+ * そこ から 法肩 まで の 斜め の 長さ が 法長 に なる。
+ *
+ * 点 の id は 計画断面 を 取り込み 直す と 変わる ので、 トンボ と 同じく
+ * 定義 した ときの 離れ を 控えて おき、 見つから なければ 近い 点 に 寄せる。
+ */
+export interface ChohariPoint {
+  id: string
+  /** 杭 の 基準 に する 計画点 (法尻 など) */
+  basePointId: string
+  baseOffset: number
+  /** 対象 法面 の もう 一方 の 端 (法肩 など) */
+  crestPointId: string
+  crestOffset: number
+  /** 基準点 から の オフセット幅 [m]。 中心 から 遠ざかる 向き が 正 */
+  w: number
+  /** 点名。 空 なら 測点名 と 基準点 から 自動 */
+  name?: string
+  /** 座標管理 に 登録 した とき の 座標 id */
+  coordinateId?: string | null
+}
 
 /**
  * 測定 断面 点 (現況 / 出来形 / トレース由来 の 計画 用)。
@@ -131,6 +240,10 @@ export interface StationRow {
    * 出来形 断面 (施工後の 実測点列)。現状 プレースホルダ (次ステップで 実装予定)。
    */
   asbuiltSection?: MeasuredCrossPoint[] | null
+  /** この 測点 に 置く トンボ (丁張 の 目印) */
+  tombos?: TomboPoint[] | null
+  /** この 測点 に 掛ける 丁張 (法面 の 目印) */
+  chohari?: ChohariPoint[] | null
   /**
    * 計画高 (中心線上の 計画 標高) [m]。 縦断線形 が ない (or 未計測) 時に
    * 個別測点として 直接 セット する 用途。 トレース時 に plannedSectionRaw を
@@ -185,11 +298,15 @@ export interface OpenChannelRow {
   id: string
   farmId: string
   name: string
-  /** 標準断面（要素列） */
+  /** 標準断面（要素列）。旧 の 単一断面。自動複製 など は これ を 見る */
   standardCrossSection: StandardCrossSection
+  /** 名前 付き の 標準断面 ライブラリ。測点 へ の 取込 は ここ から 選ぶ */
+  standardSections: NamedStandardSection[]
   alignmentPoints: AlignmentPoint[]
-  /** 縦断線形（変化点列） */
+  /** 縦断線形（変化点列）。中心線 の 主縦断 */
   profilePoints: ProfilePoint[]
+  /** 主縦断 と 別 に 管理 する 追加 の 縦断 (表示 のみ) */
+  extraProfiles: ExtraProfile[]
   /** 中間点（測点）リスト */
   stations: StationRow[]
   /** 左右の基準方向 */
@@ -224,6 +341,8 @@ interface OpenChannelDb {
   standard_cross_section: StandardCrossSection | null
   alignment_points: AlignmentPoint[]
   profile_points: ProfilePoint[] | null
+  extra_profiles: ExtraProfile[] | null
+  standard_sections: NamedStandardSection[] | null
   stations: StationRow[] | null
   side_orientation: SideOrientation | null
   sp_offset: number | null
@@ -234,6 +353,48 @@ interface OpenChannelDb {
   /** 旧: 単一 DXF (後方互換) */
   dxf_cross_section_path?: string | null
   dxf_cross_section_name?: string | null
+}
+
+/**
+ * 追加 縦断 の 正規化。 壊れた 行 は 落とす (id と points が 無いと 編集 できない)。
+ * 既存 の 路線 は この カラム が 空配列 な ので 何も 起き ない。
+ */
+/**
+ * 名前 付き 標準断面 の 正規化。 id / name が 無い 行 は 落とす。
+ * cross は normalizeCrossSection に 通して left / right を 必ず 配列 に する。
+ */
+export function normalizeStandardSections(raw: unknown): NamedStandardSection[] {
+  if (!Array.isArray(raw)) return []
+  const out: NamedStandardSection[] = []
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Partial<NamedStandardSection>
+    if (typeof o.id !== 'string' || o.id === '') continue
+    out.push({
+      id: o.id,
+      name: typeof o.name === 'string' && o.name !== '' ? o.name : '標準断面',
+      note: typeof o.note === 'string' && o.note !== '' ? o.note : undefined,
+      cross: normalizeCrossSection(o.cross),
+    })
+  }
+  return out
+}
+
+function normalizeExtraProfiles(raw: unknown): ExtraProfile[] {
+  if (!Array.isArray(raw)) return []
+  const out: ExtraProfile[] = []
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Partial<ExtraProfile>
+    if (typeof o.id !== 'string' || o.id === '') continue
+    out.push({
+      id: o.id,
+      name: typeof o.name === 'string' && o.name !== '' ? o.name : '縦断',
+      color: typeof o.color === 'string' ? o.color : undefined,
+      points: Array.isArray(o.points) ? (o.points as ProfilePoint[]) : [],
+    })
+  }
+  return out
 }
 
 function normalizeCrossSection(raw: unknown): StandardCrossSection {
@@ -271,6 +432,8 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     standardCrossSection: normalizeCrossSection(d.standard_cross_section),
     alignmentPoints: Array.isArray(d.alignment_points) ? d.alignment_points : [],
     profilePoints: Array.isArray(d.profile_points) ? d.profile_points : [],
+    extraProfiles: normalizeExtraProfiles(d.extra_profiles),
+    standardSections: normalizeStandardSections(d.standard_sections),
     stations: Array.isArray(d.stations) ? d.stations : [],
     sideOrientation: d.side_orientation === 'reverse' ? 'reverse' : 'forward',
     spOffset: Number.isFinite(Number(d.sp_offset)) ? Number(d.sp_offset) : 0,
@@ -323,8 +486,10 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         farm_id: farmId,
         name: name ?? `線形物 ${existing + 1}`,
         standard_cross_section: emptyStandardCrossSection(),
+        standard_sections: [],
         alignment_points: [],
         profile_points: [],
+        extra_profiles: [],
         stations: [],
         side_orientation: 'forward',
         sp_offset: 0,
@@ -353,8 +518,11 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       if (updates.name !== undefined) dbUpdates.name = updates.name
       if (updates.standardCrossSection !== undefined)
         dbUpdates.standard_cross_section = updates.standardCrossSection
+      if (updates.standardSections !== undefined)
+        dbUpdates.standard_sections = updates.standardSections
       if (updates.alignmentPoints !== undefined) dbUpdates.alignment_points = updates.alignmentPoints
       if (updates.profilePoints !== undefined) dbUpdates.profile_points = updates.profilePoints
+      if (updates.extraProfiles !== undefined) dbUpdates.extra_profiles = updates.extraProfiles
       if (updates.stations !== undefined) dbUpdates.stations = updates.stations
       if (updates.sideOrientation !== undefined) dbUpdates.side_orientation = updates.sideOrientation
       if (updates.spOffset !== undefined) dbUpdates.sp_offset = updates.spOffset

@@ -44,6 +44,10 @@ const MARKER_COLORS: Record<string, string> = {
   witness: '#eab308',           // 立会点: 黄
   confirmed_boundary: '#16a34a',// 確定筆界点: 深緑
   measured: '#ec4899',          // 実測点: ピンク
+
+  // 土木 の 丁張
+  tombo: '#8b5cf6',             // トンボ: バイオレット
+  chohari: '#e11d48',           // 丁張: ローズ
 }
 
 // カスタムマーカーアイコンを作成。
