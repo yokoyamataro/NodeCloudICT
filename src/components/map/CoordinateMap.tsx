@@ -48,6 +48,7 @@ const MARKER_COLORS: Record<string, string> = {
   // 土木 の 丁張
   tombo: '#8b5cf6',             // トンボ: バイオレット
   chohari: '#e11d48',           // 丁張: ローズ
+  width_stake: '#0ea5e9',       // 幅杭: スカイ
 }
 
 // カスタムマーカーアイコンを作成。

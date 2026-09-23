@@ -460,6 +460,82 @@ export function sampleAlignment(
 }
 
 /** XY サンプル列の合計距離 — 後方互換のため残置（折線近似のため arc は若干過小）。 */
+/**
+ * 線形 の 周り の 任意 の 点 を 中心線 に 逆投影 する (幅杭 の 逆計算)。
+ *
+ * 幅杭計算 は 「距離 + オフセット → 座標」 だが、 これ は その 逆 で
+ * 「座標 → 距離 + オフセット」 を 出す。 既設 の 杭 や 実測点 が 線形 の
+ * どこ に 当たる の か を 知る ため の もの。
+ *
+ * 中心線 は 直線 と 円弧 / 緩和曲線 の 組み合わせ な ので 解析 的 に 解かず、
+ * 距離 を 粗く 走査 して 一番 近い ところ を 見つけ、 その 前後 を 三分探索 で
+ * 詰める。 局所的 に は 距離 の 2 乗 が 下 に 凸 な ので これ で 十分。
+ *
+ * offset は 'forward' (起点→終点 視点) で 右 が 正。 河川 慣習 の 反転 は
+ * 呼び出し 側 で 符号 を 入れ替える。
+ *
+ * @returns distance = BP から の 内部 累積距離、 offset = 中心線 から の 垂距、
+ *          gap = 中心線 まで の 実距離 (当たり の 良さ を 見る 用)
+ */
+export function projectPointToAlignment(
+  segments: AlignmentSegment[],
+  p: XY,
+  opts?: { coarseStep?: number },
+): { distance: number; offset: number; gap: number } | null {
+  const total = totalLength(segments)
+  if (!(total > 0)) return null
+  // 長い 線形 で も 走査 回数 が 増え すぎ ない ように 刻み を 決める
+  const step = opts?.coarseStep ?? Math.max(0.25, total / 2000)
+  const d2at = (d: number): number => {
+    const c = pointAtDistance(segments, d)
+    if (!c) return Number.POSITIVE_INFINITY
+    const dx = c.x - p.x
+    const dy = c.y - p.y
+    return dx * dx + dy * dy
+  }
+
+  let best = 0
+  let bestD2 = Number.POSITIVE_INFINITY
+  for (let d = 0; d <= total; d += step) {
+    const v = d2at(d)
+    if (v < bestD2) {
+      bestD2 = v
+      best = d
+    }
+  }
+  // 終端 は 刻み から こぼれ やすい ので 別 に 見る
+  {
+    const v = d2at(total)
+    if (v < bestD2) {
+      bestD2 = v
+      best = total
+    }
+  }
+
+  // 粗い 最小 の 前後 を 三分探索 で 詰める
+  let lo = Math.max(0, best - step)
+  let hi = Math.min(total, best + step)
+  for (let i = 0; i < 60 && hi - lo > 1e-6; i++) {
+    const m1 = lo + (hi - lo) / 3
+    const m2 = hi - (hi - lo) / 3
+    if (d2at(m1) < d2at(m2)) hi = m2
+    else lo = m1
+  }
+  const d = (lo + hi) / 2
+
+  const c = pointAtDistance(segments, d)
+  const t = tangentAtDistance(segments, d)
+  if (!c || !t) return null
+  // (x=北, y=東) 系 で 進行方向 の CCW 90° = (-t.y, t.x) が 右
+  const dx = p.x - c.x
+  const dy = p.y - c.y
+  return {
+    distance: d,
+    offset: dx * -t.y + dy * t.x,
+    gap: Math.hypot(dx, dy),
+  }
+}
+
 export function alignmentLength(samples: XY[]): number {
   let total = 0
   for (let i = 1; i < samples.length; i++) total += dist(samples[i - 1], samples[i])

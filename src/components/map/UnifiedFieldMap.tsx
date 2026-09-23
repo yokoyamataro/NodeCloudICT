@@ -74,6 +74,7 @@ const COORDINATE_MARKER_COLORS: Record<string, string> = {
   measured: '#ec4899',
   tombo: '#8b5cf6',
   chohari: '#e11d48',
+  width_stake: '#0ea5e9',
 }
 
 // 管種ごとの色

@@ -179,6 +179,21 @@ interface CoordinateState {
       notes?: string | null
     }[],
   ) => Promise<CoordinateRow[]>
+  /**
+   * 既存 の 座標 の 中身 を まとめて 直す。
+   * 点 を 選び 直して 名前 や 点種 を 付け替える 用途 (幅杭 の 逆計算 など)。
+   * 新規 に は 作ら ない ので 二重 登録 に なら ない。
+   * 返り値 は 直せた 件数。
+   */
+  updateCoordinatesBulk: (
+    rows: {
+      id: string
+      pointNumber?: string
+      type?: CoordinateType
+      stakeType?: string | null
+      notes?: string | null
+    }[],
+  ) => Promise<number>
   updateCoordinate: (id: string, field: keyof CoordinateRow, value: string | number | null) => void
   deleteCoordinate: (id: string) => Promise<void>
   deleteCoordinates: (ids: string[]) => Promise<void>
@@ -389,6 +404,54 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       console.error('[coordinateStore] addCoordinatesBulk failed', err)
       set({ error: extractSupabaseErrorMessage(err, '座標の一括登録に失敗しました') })
       return []
+    }
+  },
+
+  updateCoordinatesBulk: async (rows) => {
+    if (rows.length === 0) return 0
+    const before = get().coordinates
+    // 先 に 画面 を 更新 し、 失敗 したら 戻す
+    set((st) => ({
+      coordinates: st.coordinates.map((c) => {
+        const r = rows.find((x) => x.id === c.id)
+        if (!r) return c
+        return {
+          ...c,
+          pointNumber: r.pointNumber ?? c.pointNumber,
+          type: (r.type ?? c.type) as CoordinateType,
+          stakeType: r.stakeType !== undefined ? r.stakeType : c.stakeType,
+          notes: r.notes !== undefined ? r.notes : c.notes,
+        }
+      }),
+    }))
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const uid = user?.id ?? null
+      // 行 ごと に 値 が 違う ので まとめ られ ない。 件数 は 多く ない 想定
+      const results = await Promise.all(
+        rows.map(async (r) => {
+          const patch: Record<string, unknown> = { updated_by: uid }
+          if (r.pointNumber !== undefined) patch.point_number = r.pointNumber
+          if (r.type !== undefined) patch.coordinate_type = r.type
+          if (r.stakeType !== undefined) patch.stake_type = r.stakeType
+          if (r.notes !== undefined) patch.notes = r.notes
+          const { error } = await supabase
+            .from('design_coordinates')
+            .update(patch as never)
+            .eq('id', r.id)
+          return error == null
+        }),
+      )
+      const ok = results.filter(Boolean).length
+      if (ok !== rows.length) throw new Error('一部 の 更新 に 失敗 しました')
+      return ok
+    } catch (err) {
+      console.error('[coordinateStore] updateCoordinatesBulk failed', err)
+      set({
+        coordinates: before,
+        error: extractSupabaseErrorMessage(err, '座標の更新に失敗しました'),
+      })
+      return 0
     }
   },
 

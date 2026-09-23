@@ -17,6 +17,12 @@ import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Ch
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
 import { StandardSectionPickerModal } from './StandardSectionModals'
+import { ReverseStakePanel, type ReverseStakeRow } from './ReverseStakePanel'
+import {
+  useCoordinatePointTypeStore,
+  getCoordinateTypeOptions,
+} from '@/stores/coordinatePointTypeStore'
+import { KEEP_SOURCE_TYPE, defaultStakeName } from './stakeName'
 import {
   StakeoutModal,
   type PickTarget,
@@ -80,6 +86,7 @@ import {
   alignmentTotalLength,
   buildSegments,
   pointAtDistance,
+  projectPointToAlignment,
   tangentAtDistance,
   getCurveMarkers,
   getCornerIpStations,
@@ -4578,7 +4585,8 @@ function LandxmlSectionImport({
 export function OpenChannelAlignmentPage() {
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
-  const { coordinates, fetchCoordinates, addCoordinatesBulk } = useCoordinateStore()
+  const { coordinates, fetchCoordinates, addCoordinatesBulk, updateCoordinatesBulk } =
+    useCoordinateStore()
   const { channels, fetchChannels, addChannel, updateChannel, deleteChannel } = useOpenChannelStore()
 
   const farmId = currentFarm?.id
@@ -4823,6 +4831,49 @@ export function OpenChannelAlignmentPage() {
   const handlePickCoordFromMap = (coordId: string) => {
     if (!selected) return
 
+    // 幅杭 の 逆計算: 選んだ 座標 を 中心線 に 逆投影 して 一覧 に 溜める。
+    // 登録 は モーダル 下 の 一括ボタン で まとめて 行う。
+    if (widthStakePick) {
+      const coord = coordinates.find((c) => c.id === coordId)
+      if (!coord) return
+      if (segments.length === 0) {
+        window.alert('線形 が まだ 計算 されて いません')
+        return
+      }
+      if (reverseRows.some((r) => r.id === coord.id)) return // 同じ 点 は 1 回 だけ
+      const r = projectPointToAlignment(segments, { x: coord.x, y: coord.y })
+      if (!r) {
+        window.alert('中心線 に 投影 できません でした')
+        return
+      }
+      // offset は 'forward' (起点→終点 視点) で 右 が 正。 河川 慣習 は 反転
+      const sign = selected.sideOrientation === 'reverse' ? -1 : 1
+      const off = Math.round(r.offset * sign * 1000) / 1000
+      const sp = Math.round((r.distance + (selected.spOffset ?? 0)) * 1000) / 1000
+      setReverseRows((prev) => [
+        ...prev,
+        {
+          id: coord.id,
+          sourceName: coord.pointNumber ?? '(名前なし)',
+          x: coord.x,
+          y: coord.y,
+          z: coord.z,
+          sp,
+          offset: off,
+          gap: Math.round(r.gap * 1000) / 1000,
+          name: defaultStakeName(sp, off),
+          sourceType: coord.type,
+          // 点種 は 直前 に 選んだ 行 に ならう。 続けて 拾う とき に
+          // 毎回 選び 直さ なくて 済む。 1 点目 だけ 既定 の 幅杭。
+          type: prev.length > 0 ? prev[prev.length - 1].type : 'width_stake',
+          stakeType: '',
+          // メモ は 自動 で は 入れない (要る とき だけ 手 で 入れる)
+          notes: '',
+        },
+      ])
+      return
+    }
+
     // 現況/出来形 の 地図取得 モード
     if (mapCaptureTarget && selectedStation) {
       const coord = coordinates.find((c) => c.id === coordId)
@@ -5026,6 +5077,29 @@ export function OpenChannelAlignmentPage() {
     writeActiveProfile(arr)
   }
 
+  /**
+   * 幅杭 の 逆計算 の 待機。 地図 の 座標 を 押す と、 その 点 を 中心線 に
+   * 逆投影 して SP と オフセット を 出し、 幅杭 と して 足す。
+   */
+  const [widthStakePick, setWidthStakePick] = useState(false)
+  // 点種 は プロジェクト 単位 で 足せる ので、 その 一覧 を 引いて おく
+  const pointTypesByProject = useCoordinatePointTypeStore((st) => st.byProject)
+  const fetchPointTypes = useCoordinatePointTypeStore((st) => st.fetchForProject)
+  const addPointType = useCoordinatePointTypeStore((st) => st.addType)
+  const projectId = currentFarm?.project_id ?? null
+  useEffect(() => {
+    if (projectId) void fetchPointTypes(projectId)
+  }, [projectId, fetchPointTypes])
+  const coordTypeOptions = useMemo(
+    () => getCoordinateTypeOptions(projectId, pointTypesByProject),
+    [projectId, pointTypesByProject],
+  )
+
+  /** 逆計算 で 拾った 点。 まとめて 座標登録 する まで ここ に 溜める */
+  const [reverseRows, setReverseRows] = useState<ReverseStakeRow[]>([])
+  /** 座標登録 と 一緒 に 幅杭計算 の 表 にも 入れる か */
+  const [reverseAlsoWidthStake, setReverseAlsoWidthStake] = useState(true)
+
   // 幅杭 (width stakes) 操作 — 縦断線形 と 同じく テーブル末尾 の 空行 で 追加。
   const [newStakeSpText, setNewStakeSpText] = useState<string>('')
   const [newStakeOffsetText, setNewStakeOffsetText] = useState<string>('')
@@ -5051,6 +5125,40 @@ export function OpenChannelAlignmentPage() {
     setNewStakeSpText('')
     setNewStakeOffsetText('')
     setNewStakeNoteText('')
+  }
+
+  /**
+   * 逆計算 の 結果 を 座標管理 に 反映 する。
+   *
+   * 選んで いる の は 既に 登録 済み の 座標 な ので、 新しく 作る と 二重 に
+   * なる。 名前 / 点種 / 杭種 / メモ を その 座標 に 上書き する。
+   * 「幅杭計算 の 表 にも 追加」 が 入って いれば 幅杭 に も 入れる。
+   */
+  const handleRegisterReverseStakes = async (rows: ReverseStakeRow[]): Promise<number> => {
+    if (!selected || rows.length === 0) return 0
+    const n = await updateCoordinatesBulk(
+      rows.map((r) => ({
+        id: r.id,
+        pointNumber: r.name.trim() || defaultStakeName(r.sp, r.offset),
+        // 「元 の まま」 は ここ で 元 の 座標 の 種別 に 戻す
+        type: r.type === KEEP_SOURCE_TYPE ? r.sourceType : r.type,
+        stakeType: r.stakeType.trim() || null,
+        notes: r.notes.trim() || null,
+      })),
+    )
+    if (n === 0) return 0
+    if (reverseAlsoWidthStake) {
+      const stakes: WidthStake[] = rows.map((r) => ({
+        id: newWidthStakeId(),
+        distance: Math.round((r.sp - (selected.spOffset ?? 0)) * 1000) / 1000,
+        offset: r.offset,
+        note: r.name.trim() || undefined,
+      }))
+      const next = [...selected.widthStakes, ...stakes].sort((a, b) => a.distance - b.distance)
+      updateChannel(selected.id, { widthStakes: next })
+    }
+    setReverseRows([])
+    return n
   }
 
   const handleRemoveWidthStake = (id: string) => {
@@ -7081,6 +7189,34 @@ export function OpenChannelAlignmentPage() {
                 </div>
               </CollapsibleSection>
 
+              {/* 測点 の 幅杭逆計算。
+                  幅杭計算 が 「距離 + オフセット → 座標」 な の に 対し、
+                  こちら は その 逆 で 「既設 の 座標 → 距離 + オフセット」。
+                  用途 が 違う ので メニュー を 分けて ある。 */}
+              <CollapsibleSection
+                title="測点の幅杭逆計算"
+                storageKey="oc:section:width-stake-reverse"
+              >
+                <ReverseStakePanel
+                  rows={reverseRows}
+                  picking={widthStakePick}
+                  canPick={segments.length > 0}
+                  typeOptions={coordTypeOptions}
+                  onAddType={
+                    projectId
+                      ? async (code, label) => {
+                          await addPointType(projectId, code, label)
+                        }
+                      : undefined
+                  }
+                  alsoAddWidthStake={reverseAlsoWidthStake}
+                  onTogglePick={setWidthStakePick}
+                  onChangeRows={setReverseRows}
+                  onChangeAlsoAdd={setReverseAlsoWidthStake}
+                  onApply={handleRegisterReverseStakes}
+                />
+              </CollapsibleSection>
+
               {/* 縦断 (幅杭 と 横断 の 間 に 配置)。
                   縦断図 の プロット は 地図の 下に 残す。ここでは 変化点 の
                   追加 / 編集 / 削除 のみ。追加 は テーブル 末尾 の 空行 に
@@ -7514,6 +7650,18 @@ export function OpenChannelAlignmentPage() {
                 <button
                   type="button"
                   onClick={() => setMapCaptureTarget(null)}
+                  className="ml-1 px-2 py-0.5 rounded bg-white/20 hover:bg-white/30"
+                >
+                  やめる
+                </button>
+              </div>
+            )}
+            {widthStakePick && (
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1200] flex items-center gap-2 px-3 py-1.5 rounded bg-pink-600 text-white text-xs shadow-lg">
+                <span>幅杭 の 逆計算: 座標 を 選ぶ と SP と オフセット を 出します</span>
+                <button
+                  type="button"
+                  onClick={() => setWidthStakePick(false)}
                   className="ml-1 px-2 py-0.5 rounded bg-white/20 hover:bg-white/30"
                 >
                   やめる
