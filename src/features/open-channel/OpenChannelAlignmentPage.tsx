@@ -1561,6 +1561,15 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
   const vx = (x: number) => viewPan.x + viewZoom * tx(x)
   const vy = (y: number) => viewPan.y + viewZoom * ty(y)
 
+  // 編集中 の 点 は 計画 の 折点 と 同じ 位置 に 出る (editOnPath)。
+  // 両方 描く と 白丸 が 二重 に なり 読め ない ので、折点 側 を 省く 判定。
+  const editOverlapsPlannedVertices =
+    !!editOnPath &&
+    centerHeight !== undefined &&
+    !!editPoints &&
+    editPoints.length > 0 &&
+    editPoints.length === points.length
+
   const onSvgMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
     // 左ボタン のみ pan 候補。右クリックは 通常メニュー を 出す (何もしない)
     if (e.button !== 0) return
@@ -1651,8 +1660,9 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
             />
           )}
 
-          {/* 各 折点 */}
-          {showPlanned && points.map((p, i) => (
+          {/* 各 折点。 編集点 マーカー が 同じ 位置 に 重なる ときは そちら に 任せる
+              (重ねる と 白丸 が 二重 に 見える) */}
+          {showPlanned && !editOverlapsPlannedVertices && points.map((p, i) => (
             <circle
               key={`v-${i}`}
               cx={tx(p.x)}
@@ -1919,7 +1929,10 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
           </text>
 
           {/* 編集中 の 点。 図 の 上 で 押して 選べる ように、他 の 線 より 上 に 置く。
-              選んで いる 点 は 色 と 大きさ を 変えて 表 の 行 と 対 に する。 */}
+              選んで いる 点 は 色 と 大きさ を 変えて 表 の 行 と 対 に する。
+              世界レイヤ (g transform) の 外 な ので 座標 は vx/vy (パン/ズーム 込み)。
+              tx/ty だと 線 だけ 動いて マーカー が 取り残される。
+              大きさ は ズーム しても 一定 に なり 掴み やすい。 */}
           {editPoints && editPoints.length > 0 && centerHeight !== undefined && (
             <g>
               {editPoints.map((p, i) => {
@@ -1930,8 +1943,8 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
                 return (
                   <circle
                     key={`ep-${p.id ?? i}`}
-                    cx={tx(onPath ? onPath.x : p.offset)}
-                    cy={ty(onPath ? onPath.y : p.elevation - centerHeight)}
+                    cx={vx(onPath ? onPath.x : p.offset)}
+                    cy={vy(onPath ? onPath.y : p.elevation - centerHeight)}
                     r={on ? 6 : 4}
                     fill={on ? '#db2777' : '#fff'}
                     stroke={on ? '#db2777' : '#64748b'}
@@ -6362,7 +6375,7 @@ export function OpenChannelAlignmentPage() {
                                 </span>
                               </button>
                               {crossLayerOpen && (
-                                <div className="absolute bottom-full mb-1 right-0 z-[1400] bg-white border rounded shadow-lg py-1 min-w-[9rem]">
+                                <div className="absolute top-full mt-1 right-0 z-[1400] bg-white border rounded shadow-lg py-1 min-w-[9rem]">
                                   {(
                                     [
                                       ['planned', '計画線'],
