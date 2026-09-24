@@ -287,3 +287,17 @@ input[type="number"] {
   paint-order: stroke fill;
   -webkit-text-stroke: 3px rgba(255, 255, 255, 0.85);
 }
+
+/* 背景 の 箱 を 出さ ない 地図 ラベル。
+   文字 の 読みやすさ は 各要素 の text-shadow (白 の 縁取り) で 出す。 */
+.map-plain-label {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  white-space: nowrap !important;
+}
+
+.map-plain-label::before {
+  display: none !important;
+}

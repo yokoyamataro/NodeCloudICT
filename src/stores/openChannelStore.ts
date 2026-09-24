@@ -97,6 +97,71 @@ export interface StandardCrossSection {
 export const emptyStandardCrossSection = (): StandardCrossSection => ({ right: [], left: [] })
 
 /**
+ * 路線 の 種別。
+ *   channel : 線形物 (水路 / 道路)。 IP と 曲線 を 持てる
+ *   grading : 整地。 BP と EP の 直線 だけ。 平行 縦断 で 格子 を 作る
+ * データ の 形 は 同じ な ので テーブル と 画面 を 共有 し、 これ で 使い分ける。
+ */
+export type ChannelKind = 'channel' | 'grading'
+
+/**
+ * 整地 の 格子 (平行 縦断) の 設定。
+ * 平行 縦断 の 高さ は 各 測点 の 横断 の 点列 を 縦 に 読んだ もの な ので、
+ * ここ に は 「どこ に 何本 引く か」 と 名前 だけ を 持つ。
+ */
+export interface GridLinesConfig {
+  /** 平行 縦断 の 間隔 [m]。 中間点 の ピッチ も これ に 揃える */
+  spacing: number
+  /** 中心 の 左 に 何本 */
+  leftCount: number
+  /** 中心 の 右 に 何本 */
+  rightCount: number
+  /** 中心線 の 名前。 左右 は ここ から アルファベット で 自動 (F → 左 E,D… / 右 G,H…) */
+  centerName: string
+  /**
+   * アルファベット の 進む 向き。 既定 (false) は 右 へ 進む (F → 右 G,H… / 左 E,D…)。
+   * true に する と 逆 で、 左 へ 進む (F → 左 G,H… / 右 E,D…)。
+   * 現場 の 呼び方 が 右回り / 左回り の どちら でも 合わせ られる ように する。
+   */
+  reverseNames?: boolean
+  /** 自動 の 名前 を 個別 に 上書き。 キー は 中心 から の 本数 (左 が 負) */
+  names?: Record<string, string>
+}
+
+export const defaultGridLines = (): GridLinesConfig => ({
+  spacing: 20,
+  leftCount: 3,
+  rightCount: 3,
+  centerName: 'F',
+})
+
+/** grid_lines の 正規化。 欠け や 壊れ は 既定 で 埋める */
+export function normalizeGridLines(raw: unknown): GridLinesConfig {
+  const d = defaultGridLines()
+  if (!raw || typeof raw !== 'object') return d
+  const o = raw as Partial<GridLinesConfig>
+  const num = (v: unknown, fb: number, min: number) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= min ? v : fb
+  const names: Record<string, string> = {}
+  if (o.names && typeof o.names === 'object') {
+    for (const [k, v] of Object.entries(o.names)) {
+      if (typeof v === 'string' && v.trim() !== '' && /^-?\d+$/.test(k)) names[k] = v.trim()
+    }
+  }
+  return {
+    spacing: num(o.spacing, d.spacing, 0.1),
+    leftCount: Math.floor(num(o.leftCount, d.leftCount, 0)),
+    rightCount: Math.floor(num(o.rightCount, d.rightCount, 0)),
+    centerName:
+      typeof o.centerName === 'string' && o.centerName.trim() !== ''
+        ? o.centerName.trim()
+        : d.centerName,
+    reverseNames: o.reverseNames === true,
+    names: Object.keys(names).length > 0 ? names : undefined,
+  }
+}
+
+/**
  * 名前 付き の 標準断面。
  *
  * 現場 で は 「台形水路 B=1.0 H=1.2」「道路部 W=4.0」 の ように 何種類 か を
@@ -298,6 +363,10 @@ export interface OpenChannelRow {
   id: string
   farmId: string
   name: string
+  /** 線形物 か 整地 か。 画面 と メニュー を 分ける 目印 */
+  kind: ChannelKind
+  /** 整地 の 格子 (平行 縦断) の 設定。 線形物 でも 既定 値 を 持つ が 使わ ない */
+  gridLines: GridLinesConfig
   /** 標準断面（要素列）。旧 の 単一断面。自動複製 など は これ を 見る */
   standardCrossSection: StandardCrossSection
   /** 名前 付き の 標準断面 ライブラリ。測点 へ の 取込 は ここ から 選ぶ */
@@ -338,6 +407,8 @@ interface OpenChannelDb {
   id: string
   farm_id: string
   name: string
+  kind: string | null
+  grid_lines: unknown
   standard_cross_section: StandardCrossSection | null
   alignment_points: AlignmentPoint[]
   profile_points: ProfilePoint[] | null
@@ -429,6 +500,8 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     id: d.id,
     farmId: d.farm_id,
     name: d.name,
+    kind: d.kind === 'grading' ? 'grading' : 'channel',
+    gridLines: normalizeGridLines(d.grid_lines),
     standardCrossSection: normalizeCrossSection(d.standard_cross_section),
     alignmentPoints: Array.isArray(d.alignment_points) ? d.alignment_points : [],
     profilePoints: Array.isArray(d.profile_points) ? d.profile_points : [],
@@ -451,7 +524,11 @@ interface OpenChannelState {
   error: string | null
 
   fetchChannels: (farmId: string) => Promise<void>
-  addChannel: (farmId: string, name?: string) => Promise<OpenChannelRow | null>
+  addChannel: (
+    farmId: string,
+    name?: string,
+    kind?: ChannelKind,
+  ) => Promise<OpenChannelRow | null>
   updateChannel: (id: string, updates: Partial<Omit<OpenChannelRow, 'id' | 'farmId'>>) => Promise<void>
   deleteChannel: (id: string) => Promise<void>
 }
@@ -479,12 +556,15 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
     }
   },
 
-  addChannel: async (farmId, name) => {
+  addChannel: async (farmId, name, kind = 'channel') => {
     try {
-      const existing = get().channels.length
+      // 通し番号 は 同じ 種別 の 中 で 数える (線形物 3 と 整地 3 が 混ざら ない ように)
+      const existing = get().channels.filter((c) => c.kind === kind).length
       const insert = {
         farm_id: farmId,
-        name: name ?? `線形物 ${existing + 1}`,
+        name: name ?? `${kind === 'grading' ? '整地路線' : '線形物'} ${existing + 1}`,
+        kind,
+        grid_lines: defaultGridLines(),
         standard_cross_section: emptyStandardCrossSection(),
         standard_sections: [],
         alignment_points: [],
@@ -528,6 +608,8 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       if (updates.spOffset !== undefined) dbUpdates.sp_offset = updates.spOffset
       if (updates.widthStakes !== undefined) dbUpdates.width_stakes = updates.widthStakes
       if (updates.notes !== undefined) dbUpdates.notes = updates.notes
+      if (updates.kind !== undefined) dbUpdates.kind = updates.kind
+      if (updates.gridLines !== undefined) dbUpdates.grid_lines = updates.gridLines
       if (updates.dxfCrossSections !== undefined)
         dbUpdates.dxf_cross_sections = updates.dxfCrossSections
       if (updates.dxfCrossSectionPath !== undefined)

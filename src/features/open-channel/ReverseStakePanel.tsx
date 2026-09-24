@@ -50,6 +50,7 @@ export function ReverseStakePanel({
   typeOptions,
   onAddType,
   alsoAddWidthStake,
+  showAlsoAdd = true,
   onTogglePick,
   onChangeRows,
   onChangeAlsoAdd,
@@ -66,6 +67,8 @@ export function ReverseStakePanel({
   onAddType?: (code: string, label: string) => Promise<void>
   /** 座標 を 直す のと 一緒 に 幅杭計算 の 表 にも 入れる か */
   alsoAddWidthStake: boolean
+  /** 幅杭計算 を 使わ ない 画面 (整地 など) で は チェック 欄 を 出さ ない */
+  showAlsoAdd?: boolean
   onTogglePick: (v: boolean) => void
   onChangeRows: (next: ReverseStakeRow[]) => void
   onChangeAlsoAdd: (v: boolean) => void
@@ -293,14 +296,16 @@ export function ReverseStakePanel({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <label className="flex items-center gap-1 text-xs text-slate-600 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={alsoAddWidthStake}
-                onChange={(e) => onChangeAlsoAdd(e.target.checked)}
-              />
-              幅杭計算 の 表 にも 追加 する
-            </label>
+            {showAlsoAdd && (
+              <label className="flex items-center gap-1 text-xs text-slate-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={alsoAddWidthStake}
+                  onChange={(e) => onChangeAlsoAdd(e.target.checked)}
+                />
+                幅杭計算 の 表 にも 追加 する
+              </label>
+            )}
             <button
               onClick={() => onChangeRows([])}
               disabled={busy}
