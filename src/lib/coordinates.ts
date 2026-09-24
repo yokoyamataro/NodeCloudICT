@@ -89,6 +89,7 @@ export type CoordinateType =
   | 'measured'           // 実測点
   | 'tombo'              // トンボ (土木 の 丁張 用 目印)
   | 'chohari'            // 丁張 (法面 の 目印。 幅杭 の 位置)
+  | 'width_stake'        // 幅杭 (中心線 から の 離れ を 示す 杭)
 
 export const COORDINATE_TYPE_NAMES: Record<CoordinateType, string> = {
   control: '基準点',
@@ -102,4 +103,5 @@ export const COORDINATE_TYPE_NAMES: Record<CoordinateType, string> = {
   measured: '実測点',
   tombo: 'トンボ',
   chohari: '丁張',
+  width_stake: '幅杭',
 }

@@ -366,9 +366,11 @@ function AppRoutes() {
         <Route path="simple-grading">
           <Route path="work-area" element={<SimpleGradingWorkAreaPage />} />
         </Route>
-        {/* 整地 */}
+        {/* 整地。 路線 は 線形物 と 同じ 画面 を kind='grading' で 使う */}
         <Route path="grading">
           <Route path="work-area" element={<GradingWorkAreaPage />} />
+          <Route path="alignment" element={<OpenChannelAlignmentPage kind="grading" />} />
+          <Route path="alignment/:channelId" element={<OpenChannelAlignmentPage kind="grading" />} />
         </Route>
         {/* 心破土改 */}
         <Route path="subsoil">

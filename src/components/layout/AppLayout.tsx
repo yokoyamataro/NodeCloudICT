@@ -245,8 +245,11 @@ const navigation: NavGroup[] = [
       name: '整地',
       href: '/grading',
       icon: LandPlot,
+      // 「路線」 の 下 は 工区 の 整地路線 ごと に 1 つ (線形物 と 同じ 仕組み)。
+      // ここ の 子 は 1 本 も 無い とき の 入口 だけ。
       children: [
         { name: '工事区域', href: '/grading/work-area', icon: Square },
+        { name: '路線登録', href: '/grading/alignment', icon: Square },
       ],
     },
     {
@@ -335,21 +338,48 @@ export function AppLayout() {
     if (!currentFarm?.id) return
     void fetchOpenChannels(currentFarm.id)
   }, [currentFarm?.id, fetchOpenChannels])
-  /** 路線線形 の children を 実際 の 線形 に 差し替えた メニュー */
+  /**
+   * 路線 の children を 実際 の 路線 に 差し替えた メニュー。
+   * 線形物 は 「路線線形」 の 直下、 整地 の 路線 は 「農地整備 > 整地」 の 下 に 出す。
+   */
   const navItems = useMemo<NavGroup[]>(() => {
-    if (openChannels.length === 0) return navigation
-    return navigation.map((g) =>
-      g.href === '/open-channel'
-        ? {
-            ...g,
-            children: openChannels.map((c) => ({
+    const channels = openChannels.filter((c) => c.kind !== 'grading')
+    const gradings = openChannels.filter((c) => c.kind === 'grading')
+    if (channels.length === 0 && gradings.length === 0) return navigation
+    const swap = (g: NavGroup): NavGroup => {
+      if (g.href === '/open-channel' && channels.length > 0) {
+        return {
+          ...g,
+          children: channels.map((c) => ({
+            name: c.name,
+            href: `/open-channel/alignment/${c.id}`,
+            icon: Square,
+          })),
+        }
+      }
+      if (g.href === '/grading' && gradings.length > 0) {
+        return {
+          ...g,
+          children: [
+            { name: '工事区域', href: '/grading/work-area', icon: Square },
+            ...gradings.map((c) => ({
               name: c.name,
-              href: `/open-channel/alignment/${c.id}`,
+              href: `/grading/alignment/${c.id}`,
               icon: Square,
             })),
-          }
-        : g,
-    )
+          ],
+        }
+      }
+      // 農地整備 の 中 に 整地 が 入って いる ので 1 段 潜って 差し替える
+      if (g.children && g.children.some((c) => c.href === '/grading')) {
+        return {
+          ...g,
+          children: g.children.map((c) => (c.href === '/grading' ? swap(c as NavGroup) : c)),
+        }
+      }
+      return g
+    }
+    return navigation.map(swap)
   }, [openChannels])
   const [chatOpen, setChatOpen] = useState(false)
   /** 共同作業者 の 丸 を 押して 開いた ときの 宛先。 入力欄 に @名前 を 入れて おく */

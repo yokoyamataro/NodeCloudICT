@@ -17,6 +17,22 @@ import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Ch
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
 import { StandardSectionPickerModal } from './StandardSectionModals'
+import { ReverseStakePanel, type ReverseStakeRow } from './ReverseStakePanel'
+import {
+  useCoordinatePointTypeStore,
+  getCoordinateTypeOptions,
+} from '@/stores/coordinatePointTypeStore'
+import { KEEP_SOURCE_TYPE, defaultStakeName } from './stakeName'
+import { GridTable, type GridCellRef } from './GridTable'
+import {
+  gridLineIndices,
+  gridLineName,
+  gridLineOffset,
+  gridPlanFromExtent,
+  gridPointName,
+  pointNearOffset,
+  type GridExtent,
+} from '@/lib/openChannel/gridLines'
 import {
   StakeoutModal,
   type PickTarget,
@@ -48,6 +64,7 @@ import { parseLandXml, type ParsedSurface } from '@/lib/landxml/parser'
 import { indexTin } from '@/lib/landxml/tinInterpolation'
 import { sampleStationCrossSection } from '@/lib/openChannel/tinCrossSection'
 import { useFarmStore } from '@/stores/farmStore'
+import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import {
@@ -62,6 +79,7 @@ import {
   type SideOrientation,
   type WidthStake,
   type MeasuredCrossPoint,
+  type ChannelKind,
   type TomboPoint,
   type ChohariPoint,
   type OpenChannelRow,
@@ -80,6 +98,7 @@ import {
   alignmentTotalLength,
   buildSegments,
   pointAtDistance,
+  projectPointToAlignment,
   tangentAtDistance,
   getCurveMarkers,
   getCornerIpStations,
@@ -4575,18 +4594,61 @@ function LandxmlSectionImport({
   )
 }
 
-export function OpenChannelAlignmentPage() {
+/**
+ * 路線線形 の 画面。 線形物 (kind='channel') と 整地 (kind='grading') で 共用 する。
+ * 整地 は 線形 が BP と EP の 直線 だけ で、 平行 縦断 の 格子 を 持つ。
+ */
+export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelKind } = {}) {
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
-  const { coordinates, fetchCoordinates, addCoordinatesBulk } = useCoordinateStore()
-  const { channels, fetchChannels, addChannel, updateChannel, deleteChannel } = useOpenChannelStore()
+  const { coordinates, fetchCoordinates, addCoordinatesBulk, updateCoordinatesBulk } =
+    useCoordinateStore()
+  const {
+    channels: allChannels,
+    fetchChannels,
+    addChannel,
+    updateChannel,
+    deleteChannel,
+  } = useOpenChannelStore()
+  // 追加 / 保存 の 失敗 は ストア に しか 残ら ない ので、 ここ で 拾って 出す。
+  // マイグレーション 未適用 (kind 列 が 無い) など は これ で 気付ける
+  const channelStoreError = useOpenChannelStore((st) => st.error)
+  // この 画面 は 1 種別 だけ を 扱う。 サイドバー も 同じ 分け方
+  const channels = useMemo(() => allChannels.filter((c) => c.kind === kind), [allChannels, kind])
+  const isGrading = kind === 'grading'
+  const basePath = isGrading ? '/grading/alignment' : '/open-channel/alignment'
 
   const farmId = currentFarm?.id
+  /** 整地 の 路線 を 二重 に 作ら ない ため の 錠 */
+  const gradingCreatingRef = useRef(false)
   useEffect(() => {
     if (!farmId) return
     fetchCoordinates(farmId)
-    fetchChannels(farmId)
-  }, [farmId, fetchCoordinates, fetchChannels])
+    void (async () => {
+      await fetchChannels(farmId)
+      // 整地 は 1 工区 に 1 路線 だけ。 追加 ボタン は 出さ ず、 無ければ ここ で 作る
+      if (!isGrading || gradingCreatingRef.current) return
+      const exists = useOpenChannelStore
+        .getState()
+        .channels.some((c) => c.farmId === farmId && c.kind === 'grading')
+      if (exists) return
+      gradingCreatingRef.current = true
+      try {
+        await addChannel(farmId, '整地路線', 'grading')
+      } finally {
+        gradingCreatingRef.current = false
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [farmId, isGrading, fetchCoordinates, fetchChannels])
+
+  // 整地 の 工事区域。 グリッド の 範囲 は これ から 決める
+  const fetchWorkAreas = useWorkAreaStore((st) => st.fetchWorkAreas)
+  const gradingAreas = useWorkAreaStore((st) => st.workAreas.grading)
+  useEffect(() => {
+    if (!isGrading || !farmId) return
+    void fetchWorkAreas(farmId)
+  }, [isGrading, farmId, fetchWorkAreas])
 
   // 座標系
   const zone = useMemo(() => {
@@ -4602,7 +4664,7 @@ export function OpenChannelAlignmentPage() {
   const selectedId = channelId ?? null
   /** 線形 を 切り替える (新規追加 の 直後 など に 使う) */
   const gotoChannel = (id: string | null) =>
-    navigate(id ? `/open-channel/alignment/${id}` : '/open-channel/alignment', { replace: true })
+    navigate(id ? `${basePath}/${id}` : basePath, { replace: true })
   // URL が 無い / 消えた 線形 を 指して いる ときは 先頭 に 寄せる
   useEffect(() => {
     if (channels.length === 0) return
@@ -4806,6 +4868,11 @@ export function OpenChannelAlignmentPage() {
 
   const handleAddPoint = () => {
     if (!selected || !addCoordId) return
+    // 整地 は 直線 だけ。 BP と EP が 揃って いたら それ 以上 は 足さ ない
+    if (isGrading && selected.alignmentPoints.length >= 2) {
+      window.alert('整地 の 路線 は BP と EP の 2 点 だけ です。 変える ときは 既存 の 点 を 消して ください。')
+      return
+    }
     const next: AlignmentPoint[] = normalizeKinds([
       ...selected.alignmentPoints,
       { coordId: addCoordId, kind: 'ip', radius: addRadius > 0 ? addRadius : undefined },
@@ -4822,6 +4889,49 @@ export function OpenChannelAlignmentPage() {
   // として、選択測点 の 中心線に 垂直投影して 追加 (offset, elevation)。
   const handlePickCoordFromMap = (coordId: string) => {
     if (!selected) return
+
+    // 幅杭 の 逆計算: 選んだ 座標 を 中心線 に 逆投影 して 一覧 に 溜める。
+    // 登録 は モーダル 下 の 一括ボタン で まとめて 行う。
+    if (widthStakePick) {
+      const coord = coordinates.find((c) => c.id === coordId)
+      if (!coord) return
+      if (segments.length === 0) {
+        window.alert('線形 が まだ 計算 されて いません')
+        return
+      }
+      if (reverseRows.some((r) => r.id === coord.id)) return // 同じ 点 は 1 回 だけ
+      const r = projectPointToAlignment(segments, { x: coord.x, y: coord.y })
+      if (!r) {
+        window.alert('中心線 に 投影 できません でした')
+        return
+      }
+      // offset は 'forward' (起点→終点 視点) で 右 が 正。 河川 慣習 は 反転
+      const sign = selected.sideOrientation === 'reverse' ? -1 : 1
+      const off = Math.round(r.offset * sign * 1000) / 1000
+      const sp = Math.round((r.distance + (selected.spOffset ?? 0)) * 1000) / 1000
+      setReverseRows((prev) => [
+        ...prev,
+        {
+          id: coord.id,
+          sourceName: coord.pointNumber ?? '(名前なし)',
+          x: coord.x,
+          y: coord.y,
+          z: coord.z,
+          sp,
+          offset: off,
+          gap: Math.round(r.gap * 1000) / 1000,
+          name: defaultStakeName(sp, off),
+          sourceType: coord.type,
+          // 点種 は 直前 に 選んだ 行 に ならう。 続けて 拾う とき に
+          // 毎回 選び 直さ なくて 済む。 1 点目 だけ 既定 の 幅杭。
+          type: prev.length > 0 ? prev[prev.length - 1].type : 'width_stake',
+          stakeType: '',
+          // メモ は 自動 で は 入れない (要る とき だけ 手 で 入れる)
+          notes: '',
+        },
+      ])
+      return
+    }
 
     // 現況/出来形 の 地図取得 モード
     if (mapCaptureTarget && selectedStation) {
@@ -4863,6 +4973,8 @@ export function OpenChannelAlignmentPage() {
     // 通常: 線形点として 追加
     if (!linearPointsExpanded) return
     if (selected.alignmentPoints.some((p) => p.coordId === coordId)) return
+    // 整地 は BP と EP の 直線 だけ
+    if (isGrading && selected.alignmentPoints.length >= 2) return
     const next: AlignmentPoint[] = normalizeKinds([
       ...selected.alignmentPoints,
       { coordId, kind: 'ip', radius: addRadius > 0 ? addRadius : undefined },
@@ -5026,6 +5138,29 @@ export function OpenChannelAlignmentPage() {
     writeActiveProfile(arr)
   }
 
+  /**
+   * 幅杭 の 逆計算 の 待機。 地図 の 座標 を 押す と、 その 点 を 中心線 に
+   * 逆投影 して SP と オフセット を 出し、 幅杭 と して 足す。
+   */
+  const [widthStakePick, setWidthStakePick] = useState(false)
+  // 点種 は プロジェクト 単位 で 足せる ので、 その 一覧 を 引いて おく
+  const pointTypesByProject = useCoordinatePointTypeStore((st) => st.byProject)
+  const fetchPointTypes = useCoordinatePointTypeStore((st) => st.fetchForProject)
+  const addPointType = useCoordinatePointTypeStore((st) => st.addType)
+  const projectId = currentFarm?.project_id ?? null
+  useEffect(() => {
+    if (projectId) void fetchPointTypes(projectId)
+  }, [projectId, fetchPointTypes])
+  const coordTypeOptions = useMemo(
+    () => getCoordinateTypeOptions(projectId, pointTypesByProject),
+    [projectId, pointTypesByProject],
+  )
+
+  /** 逆計算 で 拾った 点。 まとめて 座標登録 する まで ここ に 溜める */
+  const [reverseRows, setReverseRows] = useState<ReverseStakeRow[]>([])
+  /** 座標登録 と 一緒 に 幅杭計算 の 表 にも 入れる か */
+  const [reverseAlsoWidthStake, setReverseAlsoWidthStake] = useState(true)
+
   // 幅杭 (width stakes) 操作 — 縦断線形 と 同じく テーブル末尾 の 空行 で 追加。
   const [newStakeSpText, setNewStakeSpText] = useState<string>('')
   const [newStakeOffsetText, setNewStakeOffsetText] = useState<string>('')
@@ -5051,6 +5186,40 @@ export function OpenChannelAlignmentPage() {
     setNewStakeSpText('')
     setNewStakeOffsetText('')
     setNewStakeNoteText('')
+  }
+
+  /**
+   * 逆計算 の 結果 を 座標管理 に 反映 する。
+   *
+   * 選んで いる の は 既に 登録 済み の 座標 な ので、 新しく 作る と 二重 に
+   * なる。 名前 / 点種 / 杭種 / メモ を その 座標 に 上書き する。
+   * 「幅杭計算 の 表 にも 追加」 が 入って いれば 幅杭 に も 入れる。
+   */
+  const handleRegisterReverseStakes = async (rows: ReverseStakeRow[]): Promise<number> => {
+    if (!selected || rows.length === 0) return 0
+    const n = await updateCoordinatesBulk(
+      rows.map((r) => ({
+        id: r.id,
+        pointNumber: r.name.trim() || defaultStakeName(r.sp, r.offset),
+        // 「元 の まま」 は ここ で 元 の 座標 の 種別 に 戻す
+        type: r.type === KEEP_SOURCE_TYPE ? r.sourceType : r.type,
+        stakeType: r.stakeType.trim() || null,
+        notes: r.notes.trim() || null,
+      })),
+    )
+    if (n === 0) return 0
+    if (reverseAlsoWidthStake) {
+      const stakes: WidthStake[] = rows.map((r) => ({
+        id: newWidthStakeId(),
+        distance: Math.round((r.sp - (selected.spOffset ?? 0)) * 1000) / 1000,
+        offset: r.offset,
+        note: r.name.trim() || undefined,
+      }))
+      const next = [...selected.widthStakes, ...stakes].sort((a, b) => a.distance - b.distance)
+      updateChannel(selected.id, { widthStakes: next })
+    }
+    setReverseRows([])
+    return n
   }
 
   const handleRemoveWidthStake = (id: string) => {
@@ -5167,6 +5336,32 @@ export function OpenChannelAlignmentPage() {
     }
     out.sort((a, b) => a.offset - b.offset)
     return out
+  }
+
+  /**
+   * 整地 の 横断図 を 描く 基準 高。
+   *
+   * 横断図 は 中心設計高 を 基準 に 組み立てる ので、 これ が 決まら ない と
+   * 現況線 まで 出 なく なる。 整地 は 縦断 を 持た ない ので 中心 の 計画高 →
+   * 現況 の 中心 → 断面 に ある 点、 の 順 に 代わり を 探す。
+   * 線形物 は 従来 どおり 縦断 が 無ければ 描か ない (計画高 の 取り違え を 防ぐ)。
+   */
+  const stationDrawDatum = (st: StationRow): number | undefined => {
+    const at0 = (pts: MeasuredCrossPoint[] | null | undefined) =>
+      pointNearOffset(pts ?? [], 0, 0.5)?.elevation
+    const planned = at0(st.plannedSectionRaw)
+    if (planned != null) return planned
+    if (st.currentGroundHeight != null) return st.currentGroundHeight
+    const ground = st.currentSection?.length ? st.currentSection : measuredPointsOnStation(st)
+    const cur = at0(ground)
+    if (cur != null) return cur
+    const asb = at0(st.asbuiltSection)
+    if (asb != null) return asb
+    // 中心 に 点 が 無い 断面 (片側 だけ 測った など) は 平均 を 基準 に して 出す
+    if (ground.length > 0) {
+      return ground.reduce((acc, p) => acc + p.elevation, 0) / ground.length
+    }
+    return undefined
   }
 
   const autoCurrentSection = useMemo<MeasuredCrossPoint[]>(() => {
@@ -5514,6 +5709,82 @@ export function OpenChannelAlignmentPage() {
       return def
     }
   })
+  /**
+   * 格子 点 の 高さ を 測点 の 横断 に 書く。
+   * その 離れ に 点 が あれば 標高 を 差し替え、 無ければ 足す。 null なら 消す。
+   * 中心 (離れ 0) の 現況 / 計画 は replaceSectionIn が 中心高 も 同期 して くれる。
+   */
+  const setGridHeight = (
+    stationId: string,
+    target: SectionTarget,
+    offset: number,
+    elevation: number | null,
+  ) => {
+    const st = stations.find((x) => x.id === stationId)
+    if (!st) return
+    const key = sectionKeyOf(target)
+    const cur = ((st[key] as MeasuredCrossPoint[] | null | undefined) ??
+      (target === 'current' ? measuredPointsOnStation(st) : [])).map((p) => ({ ...p }))
+    const hit = pointNearOffset(cur, offset, 0.5)
+    let next: MeasuredCrossPoint[]
+    if (elevation == null) {
+      next = hit ? cur.filter((p) => p !== hit) : cur
+    } else if (hit) {
+      next = cur.map((p) => (p === hit ? { ...p, offset, elevation } : p))
+    } else {
+      next = [...cur, { id: `grid-${stationId}-${offset}`, offset, elevation }]
+      // 折れ線 の 並び を 保つ ため 離れ 順 に 入れ 直す (格子 は 単調 な 断面)
+      next.sort((a, b) => a.offset - b.offset)
+    }
+    handleReplaceStationSection(stationId, target, next)
+  }
+
+  /**
+   * 表計算 から の 貼り付け を まとめて 入れる。
+   *
+   * 1 点 ずつ 保存 する と 測点 の 数 だけ 書き込み が 走る ので、
+   * 測点 ごと に 点列 を 組み直して から 1 回 で 保存 する。
+   * 中心高 の 同期 は replaceSectionIn が 見て くれる。
+   */
+  const applyGridPaste = (
+    cells: { stationId: string; idx: number; value: number | null }[],
+    target: SectionTarget,
+  ) => {
+    if (!selected || cells.length === 0) return
+    const cfg = selected.gridLines
+    const key = sectionKeyOf(target)
+    /** 測点 ごと に (離れ, 値) を まとめる */
+    const byStation = new Map<string, { offset: number; value: number | null }[]>()
+    for (const c of cells) {
+      const list = byStation.get(c.stationId) ?? []
+      list.push({ offset: gridLineOffset(cfg, c.idx), value: c.value })
+      byStation.set(c.stationId, list)
+    }
+    let next = stations
+    for (const [id, items] of byStation) {
+      const st = next.find((x) => x.id === id)
+      if (!st) continue
+      let pts = (
+        (st[key] as MeasuredCrossPoint[] | null | undefined) ??
+        (target === 'current' ? measuredPointsOnStation(st) : [])
+      ).map((p) => ({ ...p }))
+      for (const it of items) {
+        const hit = pointNearOffset(pts, it.offset, 0.5)
+        if (it.value == null) {
+          if (hit) pts = pts.filter((p) => p !== hit)
+        } else if (hit) {
+          hit.offset = it.offset
+          hit.elevation = it.value
+        } else {
+          pts.push({ id: `grid-${id}-${it.offset}`, offset: it.offset, elevation: it.value })
+        }
+      }
+      pts.sort((a, b) => a.offset - b.offset)
+      next = replaceSectionIn(next, id, target, pts)
+    }
+    void updateChannel(selected.id, { stations: next })
+  }
+
   /** トンボ の 計算 パネル を 開いて いる 測点 */
   const [tomboStationId, setTomboStationId] = useState<string | null>(null)
   /** 断面図 の クリック で どの 欄 を 決めよう と して いるか */
@@ -5582,6 +5853,33 @@ export function OpenChannelAlignmentPage() {
     }
   }
   /** 各セクション の 右上 に 置く 出力ボタン */
+  /**
+   * 横断 の 書き出し。 整地 は 横断 セクション を 出さ ない ので
+   * グリッド計算 の 側 に 同じ もの を 置く。
+   */
+  const crossExportButtons = () => (
+    <>
+                  <button
+                    type="button"
+                    onClick={() => setDxfModalOpen(true)}
+                    disabled={stations.length === 0}
+                    className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                    title="横断図 を DXF で 出力 (用紙 / 縮尺 / DL / 中心位置 を 指定)"
+                  >
+                    DXF出力
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportLandXml}
+                    disabled={!stationTin || stationTin.triangles.length === 0}
+                    className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                    title="計画断面 を つないだ TIN を LandXML で 出力 (隣り合う 測点 の 同じ 要素 同士 を 結ぶ)"
+                  >
+                    LandXML
+                  </button>
+    </>
+  )
+
   const reportButton = (kind: AlignmentReportKind, label: string) => (
     <button
       type="button"
@@ -5737,6 +6035,173 @@ export function OpenChannelAlignmentPage() {
     return merged
   }
 
+  /** 地図 に 格子 を 重ねる か */
+  const [showGridOnMap, setShowGridOnMap] = useState(true)
+  /** グリッド表 で 選んで いる セル。 地図 に その 格子点 を 出す */
+  const [gridCell, setGridCell] = useState<GridCellRef | null>(null)
+  /** グリッド表 で 選んで いる 列。 下 の 縦断図 に その 線 を 出す */
+  const [gridLineIdx, setGridLineIdx] = useState<number | null>(null)
+
+  /**
+   * 整地: 格子点 の 平面位置。 各 測点 の 中心 から 接線 に 直角 に 離れ だけ 進めた 点。
+   * 幅杭 と 同じ 向き の 決め方 (sideOrientation='reverse' なら 左右 反転)。
+   * 高さ が 入って いる か も 一緒 に 持たせて、 地図 上 で 調査 の 進み 具合 が 分かる ように する。
+   */
+  const gridMapRows = useMemo(() => {
+    if (!isGrading || !selected || segments.length === 0) return []
+    const cfg = selected.gridLines
+    const sign = selected.sideOrientation === 'reverse' ? -1 : 1
+    const sorted = [...stations].sort((a, b) => a.distance - b.distance)
+    return gridLineIndices(cfg).map((idx) => {
+      const offset = gridLineOffset(cfg, idx)
+      const pts = sorted.flatMap((st) => {
+        const c = pointAtDistance(segments, st.distance)
+        const t = tangentAtDistance(segments, st.distance)
+        if (!c || !t) return []
+        // (x=北, y=東) 系 で 進行方向 の CCW 90° が 右
+        const perpX = -t.y * sign
+        const perpY = t.x * sign
+        const ll = converter.toLatLng(c.x + offset * perpX, c.y + offset * perpY)
+        const cur = st.currentSection?.length ? st.currentSection : measuredPointsOnStation(st)
+        return [
+          {
+            stationId: st.id,
+            label: st.label,
+            distance: st.distance,
+            lat: ll.lat,
+            lng: ll.lng,
+            current: pointNearOffset(cur, offset, 0.5)?.elevation ?? null,
+            planned: pointNearOffset(st.plannedSectionRaw ?? [], offset, 0.5)?.elevation ?? null,
+          },
+        ]
+      })
+      return { idx, name: gridLineName(cfg, idx), offset, pts }
+    })
+    // measuredPointsOnStation は 毎 レンダ 作り直される ので 依存 に 入れない
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGrading, selected, segments, stations, converter])
+
+  /**
+   * 整地: 選んだ 列 の 縦断。 計画 は 格子点 の 計画高、 現況 は 実測 から。
+   * 中心 (idx=0) も 同じ 作り 方 に する。 主縦断 (profilePoints) と は 別物 で、
+   * こちら は 横断 に 入って いる 高さ を 縦 に 読んだ もの。
+   */
+  const gridProfile = useMemo(() => {
+    if (!isGrading || !selected || gridLineIdx == null) return null
+    const cfg = selected.gridLines
+    const off = gridLineOffset(cfg, gridLineIdx)
+    const sorted = [...stations].sort((a, b) => a.distance - b.distance)
+    const planned: ProfilePoint[] = sorted.flatMap((st) => {
+      const p = pointNearOffset(st.plannedSectionRaw ?? [], off, 0.5)
+      return p ? [{ distance: st.distance, floorHeight: p.elevation }] : []
+    })
+    const current = sorted.flatMap((st) => {
+      const src = st.currentSection?.length ? st.currentSection : measuredPointsOnStation(st)
+      const p = pointNearOffset(src, off, 0.5)
+      return p ? [{ distance: st.distance, z: p.elevation }] : []
+    })
+    return { name: gridLineName(cfg, gridLineIdx), offset: off, planned, current }
+    // measuredPointsOnStation は 毎 レンダ 作り直される ので 依存 に 入れない
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGrading, selected, gridLineIdx, stations])
+
+  /** 列 を 選ぶ: 下 の パネル を 縦断図 に 切り替えて 開く */
+  const handleSelectGridLine = (idx: number) => {
+    setGridLineIdx(idx)
+    setBottomTab('profile')
+    setProfileChartExpanded(true)
+  }
+
+  /** 選んだ セル に あたる 格子点 (地図 の 強調 と 寄せ に 使う) */
+  const gridCellPoint = useMemo(() => {
+    if (!gridCell) return null
+    const row = gridMapRows.find((r) => r.idx === gridCell.idx)
+    const p = row?.pts.find((x) => x.stationId === gridCell.stationId)
+    return p && row ? { ...p, name: row.name, offset: row.offset } : null
+  }, [gridCell, gridMapRows])
+
+  /** 同じ 測点 の 格子点 を 横 に 結ぶ 線 (横断 方向) */
+  const gridCrossLines = useMemo(() => {
+    if (gridMapRows.length < 2) return []
+    const count = gridMapRows[0].pts.length
+    const out: [number, number][][] = []
+    for (let j = 0; j < count; j++) {
+      const line = gridMapRows
+        .map((r) => r.pts[j])
+        .filter((p) => p != null)
+        .map((p) => [p.lat, p.lng] as [number, number])
+      if (line.length >= 2) out.push(line)
+    }
+    return out
+  }, [gridMapRows])
+
+  /** グリッド間隔 の 下書き。 空 なら 保存済み の 値 を 使う */
+  const [gridSpacingDraft, setGridSpacingDraft] = useState('')
+  const gridSpacing = (() => {
+    const v = parseFloat(gridSpacingDraft)
+    if (Number.isFinite(v) && v > 0) return v
+    return selected?.gridLines.spacing ?? 20
+  })()
+
+  /**
+   * 整地 の 工事区域 を 中心線 に 投影 した 広がり。
+   * 投影 は 線形 の 中 に 丸められる ので、 SP 方向 の 「1 つ 外」 は
+   * 線形 が 区域 より 長い 分 だけ 出る。
+   */
+  const gradingAreaExtent = useMemo<GridExtent | null>(() => {
+    if (!isGrading || segments.length === 0) return null
+    const sign = selected?.sideOrientation === 'reverse' ? -1 : 1
+    let dMin = Infinity
+    let dMax = -Infinity
+    let oMin = Infinity
+    let oMax = -Infinity
+    for (const area of gradingAreas ?? []) {
+      for (const p of area.points) {
+        const r = projectPointToAlignment(segments, { x: p.x, y: p.y })
+        if (!r) continue
+        const off = r.offset * sign
+        if (r.distance < dMin) dMin = r.distance
+        if (r.distance > dMax) dMax = r.distance
+        if (off < oMin) oMin = off
+        if (off > oMax) oMax = off
+      }
+    }
+    if (!Number.isFinite(dMin) || !Number.isFinite(oMin)) return null
+    return { dMin, dMax, oMin, oMax }
+  }, [isGrading, segments, selected?.sideOrientation, gradingAreas])
+
+  /**
+   * グリッド計算。 間隔 を 決める と 中間点 (横断) と 平行 縦断 の 本数 が 決まる。
+   * 範囲 は 工事区域 の 1 つ 外 の 格子 まで。 区域 が 無ければ 線形 の 全長。
+   * 既に ある 測点 は 同じ SP なら 中身 ごと 引き継ぐ。
+   */
+  const handleGridCompute = () => {
+    if (!selected || segments.length === 0) return
+    if (!(gridSpacing > 0)) return
+    const ext = gradingAreaExtent ?? { dMin: 0, dMax: totalLen, oMin: 0, oMax: 0 }
+    const plan = gridPlanFromExtent(ext, gridSpacing, totalLen)
+    if (plan.distances.length === 0) {
+      window.alert('グリッド点 が 1 つ も できません でした。 間隔 と 工事区域 を 確かめて ください。')
+      return
+    }
+    const byLabel = new Map(stations.map((st) => [st.label, st]))
+    const rows: StationRow[] = plan.distances.map((d) => {
+      const label = formatSp(d)
+      const ex = byLabel.get(label)
+      return ex ? { ...ex, distance: d } : { id: newStationId(), label, distance: d, crossSection: null }
+    })
+    setGridSpacingDraft('')
+    void updateChannel(selected.id, {
+      stations: rows,
+      gridLines: {
+        ...selected.gridLines,
+        spacing: gridSpacing,
+        leftCount: plan.leftCount,
+        rightCount: plan.rightCount,
+      },
+    })
+  }
+
   const handleAddStation = () => {
     if (!selected || segments.length === 0) return
     // 線形物 の 有効 SP 範囲 = [spOffset, spOffset + totalLen]
@@ -5756,7 +6221,8 @@ export function OpenChannelAlignmentPage() {
       setStations(next)
     } else {
       // ピッチ割: 指定 SP 範囲 [startSp, endSp] を pitch 毎 に 生成。
-      const pitch = stationPitch
+      // 整地 は 平行 縦断 と 同じ 間隔 で 切る (格子 に する ため)
+      const pitch = isGrading ? (selected?.gridLines.spacing ?? stationPitch) : stationPitch
       if (!Number.isFinite(pitch) || pitch <= 0) return
       // 範囲を 有効 SP 範囲 に クランプ
       const startSp = Math.max(minSp, Math.min(stationStartSp, maxSp))
@@ -6374,31 +6840,55 @@ export function OpenChannelAlignmentPage() {
                   >
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
-                  <button
-                    onClick={async () => {
-                      if (!farmId) return
-                      const row = await addChannel(farmId)
-                      if (row) gotoChannel(row.id)
-                    }}
-                    title="新規追加"
-                    className="shrink-0 p-1 border rounded hover:bg-slate-50"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!selected) return
-                      if (window.confirm(`「${selected.name}」を削除しますか？`)) deleteChannel(selected.id)
-                    }}
-                    disabled={!selected}
-                    title="この線形物を削除"
-                    className="shrink-0 p-1 border rounded text-red-600 hover:bg-red-50 disabled:opacity-30"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {/* 整地 は 1 工区 に 1 路線 な ので 追加 も 削除 も 出さ ない */}
+                  {!isGrading && (
+                    <>
+                      <button
+                        onClick={async () => {
+                          if (!farmId) return
+                          const row = await addChannel(farmId, undefined, kind)
+                          if (row) gotoChannel(row.id)
+                        }}
+                        title="新規追加"
+                        className="shrink-0 p-1 border rounded hover:bg-slate-50"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (!selected) return
+                          if (window.confirm(`「${selected.name}」を削除しますか？`)) deleteChannel(selected.id)
+                        }}
+                        disabled={!selected}
+                        title="この線形物を削除"
+                        className="shrink-0 p-1 border rounded text-red-600 hover:bg-red-50 disabled:opacity-30"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  )}
                 </>
               )}
             </div>
+
+            {channelStoreError && (
+              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 break-words">
+                保存 に 失敗 しました: {channelStoreError}
+                {/kind|grid_lines/i.test(channelStoreError) && (
+                  <div className="mt-1 text-red-600">
+                    DB に kind / grid_lines 列 が ありません。
+                    migrations/20260924_open_channel_kind_grid.sql を 当てて ください。
+                  </div>
+                )}
+              </div>
+            )}
+            {!selected && channels.length === 0 && (
+              <div className="text-xs text-slate-500 border rounded bg-slate-50 px-2 py-2">
+                {isGrading ? '整地 の 路線' : '線形物'} が まだ ありません。
+                上 の ＋ で 追加 する と、 線形点 / 中間点 / 縦断 / 横断
+                {isGrading ? ' / 平行縦断' : ''} の 各 セクション が 出ます。
+              </div>
+            )}
 
             {selected && (
               <>
@@ -6596,7 +7086,10 @@ export function OpenChannelAlignmentPage() {
                   <select
                     value={addCoordId}
                     onChange={(e) => setAddCoordId(e.target.value)}
-                    className="col-span-8 px-2 py-1 border rounded text-sm"
+                    className={
+                      (isGrading ? 'col-span-10' : 'col-span-8') +
+                      ' px-2 py-1 border rounded text-sm'
+                    }
                   >
                     <option value="">座標を選択…</option>
                     {(coordinates as CoordinateRow[]).map((c) => (
@@ -6605,15 +7098,18 @@ export function OpenChannelAlignmentPage() {
                       </option>
                     ))}
                   </select>
-                  <input
-                    type="number"
-                    step={0.5}
-                    value={addRadius}
-                    onChange={(e) => setAddRadius(parseFloat(e.target.value) || 0)}
-                    placeholder="R (IP用)"
-                    title="IP になった 場合の 曲線半径 R (0=角折れ)"
-                    className="col-span-2 px-2 py-1 border rounded text-sm text-right"
-                  />
+                  {/* 整地 は IP を 持た ない ので 半径 の 入力 は 出さ ない */}
+                  {!isGrading && (
+                    <input
+                      type="number"
+                      step={0.5}
+                      value={addRadius}
+                      onChange={(e) => setAddRadius(parseFloat(e.target.value) || 0)}
+                      placeholder="R (IP用)"
+                      title="IP になった 場合の 曲線半径 R (0=角折れ)"
+                      className="col-span-2 px-2 py-1 border rounded text-sm text-right"
+                    />
+                  )}
                   <button
                     onClick={handleAddPoint}
                     disabled={!addCoordId}
@@ -6647,10 +7143,89 @@ export function OpenChannelAlignmentPage() {
 
               {/* 中間点計算 */}
               <CollapsibleSection
-                title="中間点計算"
+                title={isGrading ? 'グリッド計算' : '中間点計算'}
                 storageKey="oc:section:stations"
-                actions={reportButton('station', '計算書')}
+                actions={
+                  isGrading ? (
+                    <span className="flex items-center gap-1">
+                      {crossExportButtons()}
+                      {reportButton('station', '計算書')}
+                    </span>
+                  ) : (
+                    reportButton('station', '計算書')
+                  )
+                }
               >
+                {isGrading ? (
+                  <>
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                      <label className="col-span-5 flex flex-col gap-0.5 text-xs">
+                        <span className="text-slate-500">グリッド間隔 (m)</span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={gridSpacingDraft || String(selected.gridLines.spacing)}
+                          onChange={(e) => setGridSpacingDraft(e.target.value)}
+                          className="px-2 py-1 border rounded text-right text-sm"
+                        />
+                      </label>
+                      <button
+                        onClick={handleGridCompute}
+                        disabled={segments.length === 0 || !(gridSpacing > 0)}
+                        className="col-span-7 flex items-center justify-center gap-1 px-2 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                        title="中間点 と 平行縦断 を まとめて 作り直す"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        グリッドを計算
+                      </button>
+                    </div>
+
+                    <div className="text-[11px] text-slate-500">
+                      {gradingAreaExtent ? (
+                        <>
+                          工事区域:{' '}
+                          <span className="font-mono">
+                            SP{(gradingAreaExtent.dMin + spOffset).toFixed(2)} 〜 SP
+                            {(gradingAreaExtent.dMax + spOffset).toFixed(2)}
+                          </span>
+                          {' / 離れ '}
+                          <span className="font-mono">
+                            {gradingAreaExtent.oMin < 0
+                              ? `L${Math.abs(gradingAreaExtent.oMin).toFixed(2)}`
+                              : `R${gradingAreaExtent.oMin.toFixed(2)}`}
+                            {' 〜 '}
+                            {gradingAreaExtent.oMax < 0
+                              ? `L${Math.abs(gradingAreaExtent.oMax).toFixed(2)}`
+                              : `R${gradingAreaExtent.oMax.toFixed(2)}`}
+                          </span>
+                          {' → 平行縦断 '}
+                          <span className="font-mono">
+                            左 {gridPlanFromExtent(gradingAreaExtent, gridSpacing, totalLen).leftCount} 本
+                            / 右 {gridPlanFromExtent(gradingAreaExtent, gridSpacing, totalLen).rightCount} 本
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-amber-700">
+                          工事区域 が まだ ありません。 この まま 計算 する と 線形 の 全長 を
+                          中心 の 前後 1 本 分 だけ 対象 に します。
+                        </span>
+                      )}
+                    </div>
+
+                    <label className="flex items-center gap-1 text-xs text-slate-600 cursor-pointer w-fit">
+                      <input
+                        type="checkbox"
+                        checked={showGridOnMap}
+                        onChange={(e) => setShowGridOnMap(e.target.checked)}
+                      />
+                      地図 に 格子 を 表示 する
+                      <span className="text-slate-400">
+                        (現況 が 入った 点 は 塗りつぶし)
+                      </span>
+                    </label>
+                  </>
+                ) : (
+                  <>
                 <div className="text-xs text-slate-500">
                   線形上の 任意位置の 座標を 算出します。SP 値 = BP の SP (
                   {spOffset.toFixed(2)}) + BP からの 内部距離。
@@ -6767,7 +7342,31 @@ export function OpenChannelAlignmentPage() {
                   </div>
                 )}
 
-                {stations.length > 0 && (
+                  </>
+                )}
+
+                {/* 整地: 測点 の 一覧 は そのまま 格子。 座標 と 距離 は 出さ ない */}
+                {isGrading && (
+                  <GridTable
+                    cfg={selected.gridLines}
+                    stations={[...stations].sort((a, b) => a.distance - b.distance)}
+                    spOffset={spOffset}
+                    onChangeCfg={(next) => updateChannel(selected.id, { gridLines: next })}
+                    resolveCurrent={(st) =>
+                      st.currentSection?.length ? st.currentSection : measuredPointsOnStation(st)
+                    }
+                    onSetHeight={setGridHeight}
+                    selectedCell={gridCell}
+                    onSelectCell={setGridCell}
+                    selectedStationId={selectedStationId}
+                    onSelectStation={setSelectedStationId}
+                    selectedLineIdx={gridLineIdx}
+                    onSelectLine={handleSelectGridLine}
+                    onPasteCells={applyGridPaste}
+                  />
+                )}
+
+                {!isGrading && stations.length > 0 && (
                   <>
                     {/* 表示列 トグル (SP / 距離 / X / Y)。 # と 削除 は 常時 表示 */}
                     <div className="flex items-center gap-1 flex-wrap text-[11px]">
@@ -6919,6 +7518,10 @@ export function OpenChannelAlignmentPage() {
                   SP 値 と 中心線 から の 垂直方向 オフセット (右 +/左 -) を
                   入力する と、平面 座標 XY が 算出される。 追加 は テーブル
                   末尾 の 空行 に 直接 入力 (Enter or + ボタン で 確定)。 */}
+              {/* 幅杭計算 / 幅杭逆計算 / 縦断 は 整地 で は 使わ ない。
+                  整地 の 高さ は グリッド表 の 列 が そのまま 平行 縦断 に なる。 */}
+              {!isGrading && (
+                <>
               <CollapsibleSection
                 title="幅杭計算"
                 storageKey="oc:section:width-stakes"
@@ -7079,6 +7682,35 @@ export function OpenChannelAlignmentPage() {
                     </tbody>
                   </table>
                 </div>
+              </CollapsibleSection>
+
+              {/* 測点 の 幅杭逆計算。
+                  幅杭計算 が 「距離 + オフセット → 座標」 な の に 対し、
+                  こちら は その 逆 で 「既設 の 座標 → 距離 + オフセット」。
+                  用途 が 違う ので メニュー を 分けて ある。 */}
+              <CollapsibleSection
+                title="測点の幅杭逆計算"
+                storageKey="oc:section:width-stake-reverse"
+              >
+                <ReverseStakePanel
+                  rows={reverseRows}
+                  picking={widthStakePick}
+                  canPick={segments.length > 0}
+                  typeOptions={coordTypeOptions}
+                  onAddType={
+                    projectId
+                      ? async (code, label) => {
+                          await addPointType(projectId, code, label)
+                        }
+                      : undefined
+                  }
+                  alsoAddWidthStake={!isGrading && reverseAlsoWidthStake}
+                  showAlsoAdd={!isGrading}
+                  onTogglePick={setWidthStakePick}
+                  onChangeRows={setReverseRows}
+                  onChangeAlsoAdd={setReverseAlsoWidthStake}
+                  onApply={handleRegisterReverseStakes}
+                />
               </CollapsibleSection>
 
               {/* 縦断 (幅杭 と 横断 の 間 に 配置)。
@@ -7267,34 +7899,22 @@ export function OpenChannelAlignmentPage() {
                   </table>
                 </div>
               </CollapsibleSection>
+                </>
+              )}
 
               {/* 横断 (現況・計画・出来形)。 中間点 の 表 に 並んで いた
                   現況 / 計画 / 出来形 の ボタン と 計画高 / 現況高 を ここ に 移した。
                   タブ は 右下 の 横断図 パネル の 編集対象 と 同じ state を 見る ので、
                   ここ で 切り替える と 下 の エディタ も 一緒 に 切り替わる。 */}
+              {/* 横断 は 整地 で は グリッド計算 に 統合。 表 の 測点 を 押す と
+                  右下 の 横断図 に その 断面 が 出る。 */}
+              {!isGrading && (
               <CollapsibleSection
                 title="横断 (現況・計画・出来形)"
                 storageKey="oc:section:cross"
                 actions={
                   <span className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setDxfModalOpen(true)}
-                    disabled={stations.length === 0}
-                    className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                    title="横断図 を DXF で 出力 (用紙 / 縮尺 / DL / 中心位置 を 指定)"
-                  >
-                    DXF出力
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleExportLandXml}
-                    disabled={!stationTin || stationTin.triangles.length === 0}
-                    className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                    title="計画断面 を つないだ TIN を LandXML で 出力 (隣り合う 測点 の 同じ 要素 同士 を 結ぶ)"
-                  >
-                    LandXML
-                  </button>
+                  {crossExportButtons()}
                   <button
                     type="button"
                     onClick={toggleControlOnly}
@@ -7486,6 +8106,7 @@ export function OpenChannelAlignmentPage() {
                   </>
                 )}
               </CollapsibleSection>
+              )}
 
               {/* 断面 の 編集 は 右下 パネル の 横断図 タブ。 横断 セクション の
                   「編集」 で 該当測点、選択なし の 場合 は 標準断面 を 編集 する。 */}
@@ -7520,6 +8141,18 @@ export function OpenChannelAlignmentPage() {
                 </button>
               </div>
             )}
+            {widthStakePick && (
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1200] flex items-center gap-2 px-3 py-1.5 rounded bg-pink-600 text-white text-xs shadow-lg">
+                <span>幅杭 の 逆計算: 座標 を 選ぶ と SP と オフセット を 出します</span>
+                <button
+                  type="button"
+                  onClick={() => setWidthStakePick(false)}
+                  className="ml-1 px-2 py-0.5 rounded bg-white/20 hover:bg-white/30"
+                >
+                  やめる
+                </button>
+              </div>
+            )}
             <CoordinateMap
               farmId={farmId ?? null}
               showLabels
@@ -7537,10 +8170,122 @@ export function OpenChannelAlignmentPage() {
               )}
               {/* 測点選択で その 位置に パン+拡大。 選択解除 で は 触らない */}
               <StationFocus latLng={selectedStationLatLng} />
+              {/* グリッド表 で 選んだ セル。 選んだ 側 が 動く ので こちら を 優先 */}
+              <StationFocus
+                latLng={gridCellPoint ? [gridCellPoint.lat, gridCellPoint.lng] : null}
+              />
 
 
               {sampledLatLng.length >= 2 && (
                 <Polyline positions={sampledLatLng} pathOptions={{ color: '#0ea5e9', weight: 5 }} />
+              )}
+
+              {/* 整地: 格子。 平行 縦断 (縦) と 横断 (横) を 細線 で 結び、
+                  交点 に 格子点 を 打つ。 中心線 は 上 で 太線 を 引いて いる ので
+                  ここ の 中心 の 列 は 少し 濃い 破線 に する。 */}
+              {isGrading && showGridOnMap && (
+                <>
+                  {gridCrossLines.map((line, j) => (
+                    <Polyline
+                      key={`gridcross-${j}`}
+                      positions={line}
+                      interactive={false}
+                      pathOptions={{ color: '#10b981', weight: 1, opacity: 0.5 }}
+                    />
+                  ))}
+                  {gridMapRows.map((row) => {
+                    const line = row.pts.map((p) => [p.lat, p.lng] as [number, number])
+                    const lineColor = row.idx === 0 ? '#0284c7' : '#047857'
+                    return (
+                    <div key={`gridrow-${row.idx}`}>
+                      {line.length >= 2 && (
+                        <Polyline
+                          positions={line}
+                          interactive={false}
+                          pathOptions={{
+                            color: row.idx === 0 ? '#0284c7' : '#10b981',
+                            weight: 1,
+                            opacity: row.idx === 0 ? 0.8 : 0.5,
+                            dashArray: '4,4',
+                          }}
+                        />
+                      )}
+                      {row.pts.map((p, j) => (
+                        <CircleMarker
+                          key={`gridpt-${row.idx}-${p.stationId}`}
+                          center={[p.lat, p.lng]}
+                          radius={3}
+                          // 断面点 を 拾って いる 間 は 座標 の マーカー を 邪魔 しない
+                          interactive={mapCaptureTarget == null}
+                          pathOptions={{
+                            color: '#fff',
+                            weight: 1,
+                            fillColor: p.current != null ? '#10b981' : '#94a3b8',
+                            fillOpacity: p.current != null ? 0.95 : 0.45,
+                          }}
+                        >
+                          {/* 列 の 名前 は 線 の 両端 に 常時 出す (背景 の 箱 は 出さ ない) */}
+                          {(j === 0 || j === row.pts.length - 1) && (
+                            <Tooltip
+                              permanent
+                              direction={j === 0 ? 'top' : 'bottom'}
+                              offset={j === 0 ? [0, -4] : [0, 4]}
+                              className="map-plain-label"
+                            >
+                              <span
+                                style={{
+                                  color: lineColor,
+                                  fontWeight: 700,
+                                  fontSize: '13px',
+                                  textShadow:
+                                    '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                                }}
+                              >
+                                {row.name}
+                              </span>
+                            </Tooltip>
+                          )}
+                        </CircleMarker>
+                      ))}
+                    </div>
+                    )
+                  })}
+                </>
+              )}
+
+              {/* グリッド表 で 選んだ 格子点。 格子 を 消して いて も 出す */}
+              {isGrading && gridCellPoint && (
+                <CircleMarker
+                  center={[gridCellPoint.lat, gridCellPoint.lng]}
+                  radius={8}
+                  interactive={false}
+                  pathOptions={{
+                    color: '#f97316',
+                    weight: 3,
+                    fillColor: '#fb923c',
+                    fillOpacity: 0.5,
+                  }}
+                >
+                  <Tooltip permanent direction="right" offset={[8, 0]} className="map-plain-label">
+                    <span
+                      style={{
+                        color: '#c2410c',
+                        fontWeight: 700,
+                        fontSize: '13px',
+                        textShadow:
+                          '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                      }}
+                    >
+                      {gridPointName(gridCellPoint.name, gridCellPoint.distance + spOffset)}
+                      {gridCellPoint.current != null
+                        ? ` 現況 ${gridCellPoint.current.toFixed(3)}`
+                        : ''}
+                      {gridCellPoint.planned != null
+                        ? ` 計画 ${gridCellPoint.planned.toFixed(3)}`
+                        : ''}
+                    </span>
+                  </Tooltip>
+                </CircleMarker>
               )}
 
               {/* IP に R (単曲線) や 緩和曲線 が 効いている 折れ点は、実線は 円弧側に 譲るため
@@ -7789,9 +8534,23 @@ export function OpenChannelAlignmentPage() {
             {/* 断面図 の 上 に あった 表題行 は ここ に たたんだ。
                 測点 の 切替 と 編集対象 だけ 残し、図 の 高さ を 1 行 分 稼ぐ。 */}
             {bottomTab === 'profile' ? (
-              <span className="text-sm text-slate-500 truncate">
-                変化点 の 追加 / 編集 は 左サイドバー 「縦断」から
-              </span>
+              gridProfile ? (
+                <span className="text-sm text-slate-600 truncate">
+                  <span className="font-mono text-lg font-bold text-sky-800">
+                    {gridProfile.name}
+                  </span>
+                  <span className="ml-2 text-slate-500">
+                    {gridProfile.offset === 0
+                      ? '中心線'
+                      : `離れ ${gridProfile.offset < 0 ? 'L' : 'R'}${Math.abs(gridProfile.offset).toFixed(1)}m`}
+                    {' — 高さ の 編集 は グリッド計算 の 表 から'}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-sm text-slate-500 truncate">
+                  変化点 の 追加 / 編集 は 左サイドバー 「縦断」から
+                </span>
+              )
             ) : selectedStation ? (
               <>
                 <span className="font-mono text-xl font-bold text-slate-800 tracking-tight">
@@ -8109,7 +8868,7 @@ export function OpenChannelAlignmentPage() {
                           selected.profilePoints,
                           selectedStation.distance,
                         ) ??
-                        undefined
+                        (isGrading ? stationDrawDatum(selectedStation) : undefined)
                       }
                       // 「縦断から計算」 用。 こちら は 縦断線形 だけ を 見る
                       profileCenterHeight={
@@ -8144,13 +8903,17 @@ export function OpenChannelAlignmentPage() {
           {profileChartExpanded && bottomTab === 'profile' && (
             <div className="flex-1 min-h-0 px-2 pb-2">
               <ProfileChart
-                points={selected.profilePoints}
-                extraProfiles={selected.extraProfiles}
+                points={gridProfile ? gridProfile.planned : selected.profilePoints}
+                extraProfiles={gridProfile ? undefined : selected.extraProfiles}
                 totalLen={totalLen}
                 spOffset={spOffset}
-                currentGroundPoints={stations
-                  .filter((s) => s.currentGroundHeight != null)
-                  .map((s) => ({ distance: s.distance, z: s.currentGroundHeight as number }))}
+                currentGroundPoints={
+                  gridProfile
+                    ? gridProfile.current
+                    : stations
+                        .filter((s) => s.currentGroundHeight != null)
+                        .map((s) => ({ distance: s.distance, z: s.currentGroundHeight as number }))
+                }
               />
             </div>
           )}
@@ -8164,7 +8927,7 @@ export function OpenChannelAlignmentPage() {
                 const centerZ = selectedStation
                   ? (selectedStation.plannedCenterHeight ??
                       interpolateProfileZOrNull(selected.profilePoints, selectedStation.distance) ??
-                      undefined)
+                      (isGrading ? stationDrawDatum(selectedStation) : undefined))
                   : undefined
                 // 編集対象 = 選択測点 の 個別断面 (element or 点列 の いずれか) / なければ 標準断面。
                 //   crossSection と plannedSectionRaw は handleUpdateStationCrossSection /
