@@ -4,6 +4,7 @@ import {
   Map,
   GitBranch,
   Settings,
+  ChevronUp,
   FolderOpen,
   ChevronDown,
   ChevronRight,
@@ -529,6 +530,24 @@ export function AppLayout() {
   }
   const showSidebar = allowSidebar && !sidebarCollapsed
 
+  // ヘッダ の 折りたたみ (縦 領域 を 広く 使いたい とき)。 折りたたむ と
+  // 極薄 の バー だけ が 残り、右端 に 展開 ボタン が 出る。
+  const [headerCollapsed, setHeaderCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem('nodecloud_header_collapsed') === '1'
+  })
+  const toggleHeader = () => {
+    setHeaderCollapsed((v) => {
+      const next = !v
+      try {
+        window.localStorage.setItem('nodecloud_header_collapsed', next ? '1' : '0')
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
+
   // 別ウィンドウ (?panel=...) で開かれた場合は ヘッダ / サイドバー を隠して
   // Outlet だけ全画面表示する。
   const isPopupPanel =
@@ -544,8 +563,22 @@ export function AppLayout() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
-      {/* 上部ヘッダー */}
-      <header className="bg-slate-900 text-white border-b border-slate-700">
+      {/* 上部ヘッダー (折りたたみ 対応) */}
+      <header className="bg-slate-900 text-white border-b border-slate-700 relative">
+        {/* 折りたたみ 中 は 極薄 バー + 展開 ボタン のみ */}
+        {headerCollapsed && (
+          <div className="flex items-center justify-between px-2 h-4">
+            <div className="flex-1" />
+            <button
+              onClick={toggleHeader}
+              className="p-0.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded"
+              title="ヘッダを展開"
+            >
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          </div>
+        )}
+        {!headerCollapsed && (
         <div className="px-4 py-3 flex items-center justify-between">
           {/* タイトル部分 */}
           <div className="flex items-center gap-3">
@@ -687,8 +720,17 @@ export function AppLayout() {
               <span className="text-sm text-slate-300" title={user?.email ?? ''}>{displayName}</span>
             </div>
             <UserMenu onSignOut={handleSignOut} isSiteOwner={isAdmin(user?.email)} />
+            {/* ヘッダ を 折りたたむ (縦 領域 を 広く 使いたい とき) */}
+            <button
+              onClick={toggleHeader}
+              className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="ヘッダを折りたたむ"
+            >
+              <ChevronUp className="h-4 w-4" />
+            </button>
           </div>
         </div>
+        )}
       </header>
 
       {/* メインコンテンツ領域 */}

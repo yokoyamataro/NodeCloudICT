@@ -16,6 +16,7 @@ import 'leaflet/dist/leaflet.css'
 import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Check, X, Upload, Loader2, Calculator } from 'lucide-react'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
+import { parseSxfFile } from '@/lib/sxf'
 import { StandardSectionPickerModal } from './StandardSectionModals'
 import { ReverseStakePanel, type ReverseStakeRow } from './ReverseStakePanel'
 import {
@@ -565,6 +566,7 @@ function ProfileChart({
   totalLen,
   spOffset = 0,
   currentGroundPoints,
+  stationTicks,
 }: {
   points: ProfilePoint[]
   /**
@@ -582,6 +584,11 @@ function ProfileChart({
   /** 距離 (BP からの 内部距離) を SP 表示に 変換する ため の オフセット。
    *  SP = distance + spOffset。 中間点計算 の 表と 同じ 目盛で x 軸 ラベルを 出す */
   spOffset?: number
+  /**
+   * 縦線 (整地) 縦断図 で、格子 の 測点 (SP20/40/60 等) を 強調 する 目印。
+   * 通常 の X 軸 目盛 と 別 に、破線 の 縦線 と 上端 の ラベル で 描く。
+   */
+  stationTicks?: { distance: number; label: string }[]
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 280, h: 140 })
@@ -869,6 +876,32 @@ function ProfileChart({
                   const sp = d + spOffset
                   return xStep < 1 ? sp.toFixed(1) : String(Math.round(sp))
                 })()}
+              </text>
+            </g>
+          ))}
+
+          {/* 整地: 格子 の 測点 (SP20/40/60 …) を 強調。 破線 の 縦線 + 上端 ラベル */}
+          {(stationTicks ?? []).map((st, i) => (
+            <g key={`gs-${i}`}>
+              <line
+                x1={tx(st.distance)}
+                y1={padding.top}
+                x2={tx(st.distance)}
+                y2={padding.top + innerH}
+                stroke="#a78bfa"
+                strokeWidth={1}
+                strokeDasharray="4,3"
+                opacity={0.65}
+              />
+              <text
+                x={tx(st.distance)}
+                y={padding.top - 2}
+                textAnchor="middle"
+                fontSize={10}
+                fontWeight={700}
+                fill="#6d28d9"
+              >
+                {st.label}
               </text>
             </g>
           ))}
@@ -2368,6 +2401,12 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
   /** 図 と 表 で 共有 する 選択 */
   selectedPointId?: string | null
   onSelectPoint?: (id: string | null) => void
+  /**
+   * 整地 の 横断図 で、平行縦断 (F/G/H…) の 位置 を 強調 する 目印。
+   * 通常 の CL 表示 の 代わり に、各 縦線 の 名前 を offset に 出す。
+   * null / 空 なら 従来 の CL 1 本 だけ を 描く。
+   */
+  gridLines?: { offset: number; name: string }[]
 }>(function CrossSectionView(
   {
     cs,
@@ -2388,6 +2427,7 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
     pointPickIds,
     selectedPointId,
     onSelectPoint,
+    gridLines,
   },
   ref,
 ) {
@@ -2397,6 +2437,9 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
   const showDimText = show?.dimText !== false
   const showPointText = show?.pointText !== false
   const containerRef = useRef<HTMLDivElement | null>(null)
+  // SVG 自身 の 参照。 wheel イベント の 拡大中心 を マウス位置 と 正確 に
+  // 一致させる ため、SVG の getScreenCTM で 座標変換 する。
+  const svgRef = useRef<SVGSVGElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 720, h: 340 })
 
   // 断面 の 入力 は 左 の 断面入力欄 (表) に 一本化 した ので、
@@ -2406,6 +2449,13 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
   // 重ねる 「ユーザー操作 の 視点」。 データ を 変えても 保持し、リセットボタンで 戻す。
   const [viewPan, setViewPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const [viewZoom, setViewZoom] = useState<number>(1)
+  // wheel ハンドラ 内 で 最新値 を 直接 読む ため の ref。 StrictMode で
+  // updater が 2 回 呼ばれる の を 避ける (updater 内 で 別 setter を 呼ぶ と
+  // 副作用 が 2 回 走って pan が 2 倍 動く)。
+  const viewRef = useRef({ pan: { x: 0, y: 0 }, zoom: 1 })
+  useEffect(() => {
+    viewRef.current = { pan: viewPan, zoom: viewZoom }
+  }, [viewPan, viewZoom])
   // ドラッグ 中 に click を 発火させない ため の ガード。ref で 持ち 再レンダー を 避ける。
   const wasDraggingRef = useRef<boolean>(false)
   const panStartRef = useRef<{ px: number; py: number; panX: number; panY: number } | null>(null)
@@ -2426,23 +2476,40 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
 
   // ホイール ズーム。 React の onWheel は passive で preventDefault が 効かない ため、
   // 生 addEventListener で { passive: false } で 張る。カーソル 位置 を 中心に 拡縮。
+  //
+  // React 18 StrictMode で は updater が 2 回 呼ばれる の で、updater の 中 で
+  // 別 の setState を 呼ぶ と 副作用 が 2 回 走って pan が 2 倍 動いて ズレ が
+  // 累積 する。 updater を 使わず ref から 最新値 を 読んで トップレベル で 2 つ
+  // まとめて 更新 する。
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
-      const rect = el.getBoundingClientRect()
-      const px = e.clientX - rect.left
-      const py = e.clientY - rect.top
+      let px: number, py: number
+      const svg = svgRef.current
+      if (svg) {
+        const rect = svg.getBoundingClientRect()
+        const attrW = svg.width?.baseVal?.value || rect.width || 1
+        const attrH = svg.height?.baseVal?.value || rect.height || 1
+        const sx = rect.width / attrW
+        const sy = rect.height / attrH
+        px = (e.clientX - rect.left) / (sx || 1)
+        py = (e.clientY - rect.top) / (sy || 1)
+      } else {
+        const rect = el.getBoundingClientRect()
+        px = e.clientX - rect.left
+        py = e.clientY - rect.top
+      }
       const factor = e.deltaY > 0 ? 0.9 : 1.1
-      setViewZoom((prevZoom) => {
-        const nextZoom = Math.max(0.2, Math.min(10, prevZoom * factor))
-        const k = nextZoom / prevZoom
-        setViewPan((prevPan) => ({
-          x: px - (px - prevPan.x) * k,
-          y: py - (py - prevPan.y) * k,
-        }))
-        return nextZoom
+      const oldZoom = viewRef.current.zoom
+      const oldPan = viewRef.current.pan
+      const nz = Math.max(0.2, Math.min(10, oldZoom * factor))
+      const k = nz / oldZoom
+      setViewZoom(nz)
+      setViewPan({
+        x: px - (px - oldPan.x) * k,
+        y: py - (py - oldPan.y) * k,
       })
     }
     el.addEventListener('wheel', onWheel, { passive: false })
@@ -2619,6 +2686,7 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
         className="flex-1 min-h-0 border rounded bg-slate-50 relative overflow-hidden"
       >
         <svg
+          ref={svgRef}
           width={size.w}
           height={size.h}
           onMouseDown={onSvgMouseDown}
@@ -2644,27 +2712,57 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
         >
           {/* 中心線 (縦) は 画面 端まで 伸ばす (パン/ズームで 端が 見切れないよう、
               transform の 外で 位置を 手計算)。 中心設計高 は 横線で なく 中心線上の
-              点マーカー だけで 示す (下の 中心設計高 マーカー 参照)。 */}
-          <line
-            x1={vx(0)}
-            y1={padding.top}
-            x2={vx(0)}
-            y2={size.h - padding.bottom}
-            stroke="#cbd5e1"
-            strokeDasharray="3,3"
-            strokeWidth={1}
-          />
-          {/* 中心線 の 目印。 線 と 同じ vx(0) に 乗せる ので パン/ズーム に 追従 する */}
-          <text
-            x={vx(0)}
-            y={24}
-            fontSize={14}
-            fontWeight={700}
-            fill="#94a3b8"
-            textAnchor="middle"
-          >
-            CL
-          </text>
+              点マーカー だけで 示す (下の 中心設計高 マーカー 参照)。
+              整地 で gridLines が 渡された 場合 は CL/L/R では なく 各 平行縦断 の
+              名前 (A/B/C…) を 目印 に 出す。 */}
+          {gridLines && gridLines.length > 0 ? (
+            gridLines.map((gl, i) => (
+              <g key={`gl-${i}`}>
+                <line
+                  x1={vx(gl.offset)}
+                  y1={padding.top}
+                  x2={vx(gl.offset)}
+                  y2={size.h - padding.bottom}
+                  stroke="#a78bfa"
+                  strokeDasharray="4,3"
+                  strokeWidth={1}
+                  opacity={0.65}
+                />
+                <text
+                  x={vx(gl.offset)}
+                  y={24}
+                  fontSize={14}
+                  fontWeight={700}
+                  fill="#6d28d9"
+                  textAnchor="middle"
+                >
+                  {gl.name}
+                </text>
+              </g>
+            ))
+          ) : (
+            <>
+              <line
+                x1={vx(0)}
+                y1={padding.top}
+                x2={vx(0)}
+                y2={size.h - padding.bottom}
+                stroke="#cbd5e1"
+                strokeDasharray="3,3"
+                strokeWidth={1}
+              />
+              <text
+                x={vx(0)}
+                y={24}
+                fontSize={14}
+                fontWeight={700}
+                fill="#94a3b8"
+                textAnchor="middle"
+              >
+                CL
+              </text>
+            </>
+          )}
 
           {/* トンボ / 丁張 の 「木」 は 計画線 の 後ろ に 回す。
               文字 だけ は 読めない と 困る ので 線 の 前 (下 の 別 の 層) に 出す。
@@ -3583,6 +3681,8 @@ function DxfTraceModal({
   }
 
   const [dxfText, setDxfText] = useState<string | null>(null)
+  // SFC / P21 は 独自パーサ で 変換 して parsedDoc として ビューア に 渡す
+  const [parsedDoc, setParsedDoc] = useState<import('@/lib/dxfRender').DxfDocument | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // DXF アップロード / 削除 の busy 状態 (サイドバー DXF 管理 で 使用)
@@ -3633,16 +3733,23 @@ function DxfTraceModal({
     station.dxfCalibration?.vScale != null ? String(station.dxfCalibration.vScale) : '100',
   )
 
-  // 対象 DXF が 変わる 度 (=測点切替 or DXF セレクタ 変更) に 再ダウンロード。
+  // 対象 CAD 図面 (DXF / SFC / P21) が 変わる 度 に 再ダウンロード。
+  // SFC / P21 は parseSxfFile で パース して parsedDoc に、
+  // DXF は そのまま dxfText に セット する。
   useEffect(() => {
     if (!activeDxf) {
       setDxfText(null)
+      setParsedDoc(null)
       return
     }
     let cancelled = false
     setDxfText(null)
+    setParsedDoc(null)
     setLoading(true)
     setError(null)
+    const ext =
+      (activeDxf.path.split('.').pop()?.toLowerCase() ?? '') ||
+      (activeDxf.name.split('.').pop()?.toLowerCase() ?? '')
     supabase.storage
       .from('open-channel-dxf')
       .download(activeDxf.path)
@@ -3651,11 +3758,29 @@ function DxfTraceModal({
         if (dlErr || !data) throw dlErr ?? new Error('DL 失敗')
         const buf = await data.arrayBuffer()
         if (cancelled) return
-        setDxfText(decodeDxfBytes(buf))
+        const text = decodeDxfBytes(buf)
+        if (ext === 'sfc' || ext === 'p21') {
+          try {
+            const doc = parseSxfFile(text)
+            if (cancelled) return
+            if (doc.shapes.length === 0) {
+              setError(`${ext.toUpperCase()} を 解析 しました が 図形 が ありません`)
+              setParsedDoc(doc)
+            } else {
+              setParsedDoc(doc)
+            }
+          } catch (err) {
+            if (cancelled) return
+            console.error('[sxf parse]', err)
+            setError(err instanceof Error ? err.message : 'SXF 解析 失敗')
+          }
+        } else {
+          setDxfText(text)
+        }
       })
       .catch((e) => {
         if (cancelled) return
-        console.error('[dxf trace download]', e)
+        console.error('[cad trace download]', e)
         setError(e instanceof Error ? e.message : '取得 失敗')
       })
       .finally(() => {
@@ -3961,11 +4086,11 @@ function DxfTraceModal({
             {/* DXF 図面 管理: 取込 + 一覧 (ラジオ 選択 + 削除)。 校正は 選択 中の 図面
                 (station.dxfCrossSectionId) に 対して 記録される。 */}
             <div>
-              <div className="font-semibold mb-1">DXF 図面</div>
+              <div className="font-semibold mb-1">CAD 図面 (DXF / SFC / P21)</div>
               <input
                 ref={dxfFileInputRef}
                 type="file"
-                accept=".dxf,application/dxf"
+                accept=".dxf,.sfc,.p21,.DXF,.SFC,.P21,application/dxf,application/octet-stream"
                 onChange={(e) => void handleUploadDxfFile(e.target.files?.[0] ?? null)}
                 className="hidden"
               />
@@ -3980,7 +4105,7 @@ function DxfTraceModal({
                   ) : (
                     <Upload className="h-3 w-3" />
                   )}
-                  DXF を 取込
+                  CAD 図面 を 取込
                 </button>
               ) : (
                 <>
@@ -4019,7 +4144,7 @@ function DxfTraceModal({
                             }}
                             disabled={dxfBusy}
                             className="p-0.5 text-red-600 hover:bg-red-50 rounded disabled:opacity-40"
-                            title="この DXF を 削除"
+                            title="この 図面 を 削除"
                           >
                             <Trash2 className="h-3 w-3" />
                           </button>
@@ -4037,7 +4162,7 @@ function DxfTraceModal({
                     ) : (
                       <Upload className="h-3 w-3" />
                     )}
-                    + DXF 追加
+                    + 図面 追加
                   </button>
                 </>
               )}
@@ -4300,13 +4425,14 @@ function DxfTraceModal({
               )}
             </div>
           </div>
-          {/* 中央: DXF ビューア */}
+          {/* 中央: CAD ビューア (DXF / SFC / P21) */}
           <div className="flex-1 min-w-0 p-2">
-            {loading && <div className="text-xs text-slate-500">DXF 読込中...</div>}
+            {loading && <div className="text-xs text-slate-500">図面 読込中...</div>}
             {error && <div className="text-xs text-red-600">{error}</div>}
-            {dxfText && (
+            {(dxfText || parsedDoc) && (
               <DxfCrossSectionViewer
-                dxfText={dxfText}
+                dxfText={dxfText ?? ''}
+                parsedDoc={parsedDoc}
                 onCanvasPick={pickMode ? handleCanvasPick : undefined}
                 pickCursorHint={pickMode ?? undefined}
                 highlightDlY={dlY}
@@ -6091,16 +6217,31 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
     const cfg = selected.gridLines
     const off = gridLineOffset(cfg, gridLineIdx)
     const sorted = [...stations].sort((a, b) => a.distance - b.distance)
-    const planned: ProfilePoint[] = sorted.flatMap((st) => {
+    const gridPlanned: ProfilePoint[] = sorted.flatMap((st) => {
       const p = pointNearOffset(st.plannedSectionRaw ?? [], off, 0.5)
       return p ? [{ distance: st.distance, floorHeight: p.elevation }] : []
     })
+    // 縦線 上 の 中間点 (extras) を 差し込む。 同 SP に 格子交点 と 中間点 が
+    // 両方 ある 場合 は 中間点 を 優先 する (現場 で 打ち 直した 高さ の 想定)。
+    const extras = (selected.gradingLineExtras ?? []).filter(
+      (e) => e.lineIdx === gridLineIdx,
+    )
+    const merged = new Map<number, ProfilePoint>()
+    for (const p of gridPlanned) merged.set(p.distance, p)
+    for (const e of extras) merged.set(e.sp, { distance: e.sp, floorHeight: e.elevation })
+    const planned = Array.from(merged.values()).sort((a, b) => a.distance - b.distance)
     const current = sorted.flatMap((st) => {
       const src = st.currentSection?.length ? st.currentSection : measuredPointsOnStation(st)
       const p = pointNearOffset(src, off, 0.5)
       return p ? [{ distance: st.distance, z: p.elevation }] : []
     })
-    return { name: gridLineName(cfg, gridLineIdx), offset: off, planned, current }
+    return {
+      name: gridLineName(cfg, gridLineIdx),
+      offset: off,
+      planned,
+      current,
+      extras,
+    }
     // measuredPointsOnStation は 毎 レンダ 作り直される ので 依存 に 入れない
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isGrading, selected, gridLineIdx, stations])
@@ -6936,8 +7077,48 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                   </span>
                 </div>
 
-                {/* 線形点テーブル (種別 は 位置から 自動決定: 先頭=BP、末尾=EP、中間=IP) */}
-                {selected.alignmentPoints.length > 0 ? (
+                {/* 線形点テーブル (種別 は 位置から 自動決定: 先頭=BP、末尾=EP、中間=IP)
+                    整地 は BP / EP 2 点 のみ なので、横並び の 簡素 レイアウト を 使う。 */}
+                {isGrading && selected.alignmentPoints.length > 0 ? (
+                  <div className="flex gap-2 items-stretch">
+                    {selected.alignmentPoints.map((p, i) => {
+                      const c = coordinates.find((cc) => cc.id === p.coordId)
+                      const kind = inferKindByIndex(i, selected.alignmentPoints.length)
+                      const kindLabel = kind === 'bp' ? 'BP' : kind === 'ep' ? 'EP' : 'IP'
+                      const kindColor =
+                        kind === 'bp'
+                          ? 'bg-green-100 text-green-700'
+                          : kind === 'ep'
+                            ? 'bg-red-100 text-red-700'
+                            : 'bg-amber-100 text-amber-700'
+                      return (
+                        <div
+                          key={i}
+                          className="flex-1 border rounded flex items-center gap-2 px-2 py-1 bg-white"
+                        >
+                          <span
+                            className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-semibold font-mono ${kindColor}`}
+                          >
+                            {kindLabel}
+                          </span>
+                          <span
+                            className="flex-1 truncate text-sm"
+                            title={c?.pointNumber ?? '？'}
+                          >
+                            {c?.pointNumber ?? '？'}
+                          </span>
+                          <button
+                            onClick={() => handleRemovePoint(i)}
+                            className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                            title="この点を削除"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : selected.alignmentPoints.length > 0 ? (
                   <div className="border rounded overflow-hidden">
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50 text-slate-600 text-xs">
@@ -8901,20 +9082,64 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
             </aside>
             <div className="flex-1 min-w-0 min-h-0 flex flex-col">
           {profileChartExpanded && bottomTab === 'profile' && (
-            <div className="flex-1 min-h-0 px-2 pb-2">
-              <ProfileChart
-                points={gridProfile ? gridProfile.planned : selected.profilePoints}
-                extraProfiles={gridProfile ? undefined : selected.extraProfiles}
-                totalLen={totalLen}
-                spOffset={spOffset}
-                currentGroundPoints={
-                  gridProfile
-                    ? gridProfile.current
-                    : stations
-                        .filter((s) => s.currentGroundHeight != null)
-                        .map((s) => ({ distance: s.distance, z: s.currentGroundHeight as number }))
-                }
-              />
+            <div className="flex-1 min-h-0 flex flex-col px-2 pb-2 gap-1">
+              {gridProfile && (
+                <GradingExtrasBar
+                  spOffset={spOffset}
+                  extras={gridProfile.extras}
+                  onAdd={(sp, elevation, note) => {
+                    if (!selected || gridLineIdx == null) return
+                    const nextExtras = [
+                      ...(selected.gradingLineExtras ?? []),
+                      {
+                        id: `x-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                        lineIdx: gridLineIdx,
+                        sp,
+                        elevation,
+                        note,
+                      },
+                    ]
+                    updateChannel(selected.id, { gradingLineExtras: nextExtras })
+                  }}
+                  onEdit={(id, patch) => {
+                    if (!selected) return
+                    const nextExtras = (selected.gradingLineExtras ?? []).map((e) =>
+                      e.id === id ? { ...e, ...patch } : e,
+                    )
+                    updateChannel(selected.id, { gradingLineExtras: nextExtras })
+                  }}
+                  onRemove={(id) => {
+                    if (!selected) return
+                    const nextExtras = (selected.gradingLineExtras ?? []).filter(
+                      (e) => e.id !== id,
+                    )
+                    updateChannel(selected.id, { gradingLineExtras: nextExtras })
+                  }}
+                />
+              )}
+              <div className="flex-1 min-h-0">
+                <ProfileChart
+                  points={gridProfile ? gridProfile.planned : selected.profilePoints}
+                  extraProfiles={gridProfile ? undefined : selected.extraProfiles}
+                  totalLen={totalLen}
+                  spOffset={spOffset}
+                  currentGroundPoints={
+                    gridProfile
+                      ? gridProfile.current
+                      : stations
+                          .filter((s) => s.currentGroundHeight != null)
+                          .map((s) => ({ distance: s.distance, z: s.currentGroundHeight as number }))
+                  }
+                  stationTicks={
+                    isGrading && gridProfile
+                      ? stations
+                          .slice()
+                          .sort((a, b) => a.distance - b.distance)
+                          .map((s) => ({ distance: s.distance, label: s.label }))
+                      : undefined
+                  }
+                />
+              </div>
             </div>
           )}
           {profileChartExpanded && bottomTab === 'crossSection' && (
@@ -8986,7 +9211,16 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                         show={crossLayers}
                         editPoints={(() => {
                           if (!selectedStation) return null
-                          const t = sectionTargetOfEditTarget(editTarget)
+                          // トンボ / 丁張 の 基準点 選択中 は 計画点 (plannedSectionRaw)
+                          // を 選ばせる。 handleSelectSectionPoint と resolveTombo/Chohari
+                          // が 計画点 の id で 引く ため、現況点 を 押しても 反応 しない
+                          // (見えて いる の と 選べる の が 食い違う) を 避ける。
+                          const forcePlanned =
+                            pickTarget != null &&
+                            (pickTarget.kind === 'tombo' || pickTarget.kind === 'choBase')
+                          const t = forcePlanned
+                            ? 'planned'
+                            : sectionTargetOfEditTarget(editTarget)
                           const saved =
                             (selectedStation[sectionKeyOf(t)] as MeasuredCrossPoint[] | null) ??
                             null
@@ -8997,7 +9231,11 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                           }
                           return saved
                         })()}
-                        editOnPath={editTarget === 'plan'}
+                        editOnPath={
+                          editTarget === 'plan' ||
+                          (pickTarget != null &&
+                            (pickTarget.kind === 'tombo' || pickTarget.kind === 'choBase'))
+                        }
                         calcPreview={calcPreview}
                         chohari={
                           selectedStation
@@ -9114,6 +9352,14 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                                 return c ? [c.basePointId, c.crestPointId] : null
                               })()
                             : null
+                        }
+                        gridLines={
+                          isGrading && selected
+                            ? gridLineIndices(selected.gridLines).map((i) => ({
+                                offset: gridLineOffset(selected.gridLines, i),
+                                name: gridLineName(selected.gridLines, i),
+                              }))
+                            : undefined
                         }
                       />
                       {/* 凡例 兼 表示切替。 図 の 右下 に 常駐 させる。
@@ -9283,11 +9529,17 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
               const uid =
                 globalThis.crypto?.randomUUID?.() ??
                 Math.random().toString(36).slice(2)
-              const path = `${selected.farmId}/${selected.id}-${uid}.dxf`
+              // 拡張子 を 保持 して upload 先 の path に 反映 (DXF / SFC / P21)
+              const rawExt = file.name.split('.').pop()?.toLowerCase() ?? ''
+              const ext =
+                rawExt === 'sfc' || rawExt === 'p21' ? rawExt : 'dxf'
+              const path = `${selected.farmId}/${selected.id}-${uid}.${ext}`
+              const contentType =
+                ext === 'dxf' ? 'application/dxf' : 'application/octet-stream'
               const { error: upErr } = await supabase.storage
                 .from('open-channel-dxf')
                 .upload(path, file, {
-                  contentType: 'application/dxf',
+                  contentType,
                   upsert: false,
                 })
               if (upErr) throw upErr
@@ -9333,6 +9585,169 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
           />
         )
       })()}
+    </div>
+  )
+}
+
+// 整地 の 縦線 縦断図 の 上 に 出す 「中間点」 管理バー。
+// 表示 は チップ形式、 追加 は 右端 の インライン フォーム。
+function GradingExtrasBar({
+  spOffset,
+  extras,
+  onAdd,
+  onEdit,
+  onRemove,
+}: {
+  spOffset: number
+  extras: Array<{ id: string; sp: number; elevation: number; note?: string }>
+  onAdd: (sp: number, elevation: number, note?: string) => void
+  onEdit: (id: string, patch: { sp?: number; elevation?: number; note?: string }) => void
+  onRemove: (id: string) => void
+}) {
+  const [addSp, setAddSp] = useState('')
+  const [addEl, setAddEl] = useState('')
+  const [addNote, setAddNote] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editSp, setEditSp] = useState('')
+  const [editEl, setEditEl] = useState('')
+  const [editNote, setEditNote] = useState('')
+
+  const startEdit = (e: { id: string; sp: number; elevation: number; note?: string }) => {
+    setEditingId(e.id)
+    setEditSp(String(e.sp + spOffset))
+    setEditEl(String(e.elevation))
+    setEditNote(e.note ?? '')
+  }
+  const commitEdit = () => {
+    if (!editingId) return
+    const spNum = parseFloat(editSp)
+    const elNum = parseFloat(editEl)
+    if (!Number.isFinite(spNum) || !Number.isFinite(elNum)) {
+      setEditingId(null)
+      return
+    }
+    onEdit(editingId, {
+      sp: spNum - spOffset,
+      elevation: elNum,
+      note: editNote.trim() || undefined,
+    })
+    setEditingId(null)
+  }
+
+  const commitAdd = () => {
+    const spNum = parseFloat(addSp)
+    const elNum = parseFloat(addEl)
+    if (!Number.isFinite(spNum) || !Number.isFinite(elNum)) return
+    onAdd(spNum - spOffset, elNum, addNote.trim() || undefined)
+    setAddSp('')
+    setAddEl('')
+    setAddNote('')
+  }
+
+  const sorted = [...extras].sort((a, b) => a.sp - b.sp)
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 border-b bg-slate-50 px-2 py-1 text-xs">
+      <span className="text-slate-500 mr-1">
+        中間点 <span className="font-mono">{sorted.length}</span> 件
+      </span>
+      {sorted.map((e) => (
+        <span
+          key={e.id}
+          className="flex items-center gap-1 rounded border border-slate-300 bg-white px-1.5 py-0.5"
+          title={e.note ?? ''}
+        >
+          {editingId === e.id ? (
+            <>
+              <input
+                type="number"
+                step="0.01"
+                value={editSp}
+                onChange={(ev) => setEditSp(ev.target.value)}
+                className="w-16 rounded border px-1 text-right tabular-nums"
+                placeholder="SP"
+              />
+              <input
+                type="number"
+                step="0.001"
+                value={editEl}
+                onChange={(ev) => setEditEl(ev.target.value)}
+                className="w-20 rounded border px-1 text-right tabular-nums"
+                placeholder="EL"
+              />
+              <input
+                type="text"
+                value={editNote}
+                onChange={(ev) => setEditNote(ev.target.value)}
+                className="w-20 rounded border px-1"
+                placeholder="メモ"
+              />
+              <button
+                onClick={commitEdit}
+                className="rounded border border-blue-400 bg-blue-500 px-1 text-white hover:bg-blue-600"
+              >
+                OK
+              </button>
+              <button
+                onClick={() => setEditingId(null)}
+                className="rounded border px-1 hover:bg-slate-100"
+              >
+                ×
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => startEdit(e)}
+                className="font-mono text-slate-700 hover:text-blue-600"
+                title="編集"
+              >
+                SP{(e.sp + spOffset).toFixed(2)} / {e.elevation.toFixed(3)}m
+              </button>
+              {e.note && <span className="text-slate-400 truncate max-w-[6rem]">{e.note}</span>}
+              <button
+                onClick={() => onRemove(e.id)}
+                className="ml-0.5 rounded border text-red-500 hover:bg-red-50 px-1"
+                title="削除"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </>
+          )}
+        </span>
+      ))}
+      <span className="mx-1 text-slate-300">|</span>
+      <span className="text-slate-500">追加</span>
+      <input
+        type="number"
+        step="0.01"
+        value={addSp}
+        onChange={(e) => setAddSp(e.target.value)}
+        className="w-16 rounded border px-1 text-right tabular-nums"
+        placeholder="SP"
+      />
+      <input
+        type="number"
+        step="0.001"
+        value={addEl}
+        onChange={(e) => setAddEl(e.target.value)}
+        className="w-20 rounded border px-1 text-right tabular-nums"
+        placeholder="標高"
+      />
+      <input
+        type="text"
+        value={addNote}
+        onChange={(e) => setAddNote(e.target.value)}
+        className="w-20 rounded border px-1"
+        placeholder="メモ"
+      />
+      <button
+        onClick={commitAdd}
+        disabled={!Number.isFinite(parseFloat(addSp)) || !Number.isFinite(parseFloat(addEl))}
+        className="rounded border border-emerald-400 bg-emerald-500 px-2 py-0.5 text-white hover:bg-emerald-600 disabled:opacity-40"
+      >
+        <Plus className="h-3 w-3 inline" /> 追加
+      </button>
     </div>
   )
 }

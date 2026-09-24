@@ -103,6 +103,9 @@ export function DxfCrossSectionViewer({
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null)
 
   const containerRef = useRef<HTMLDivElement | null>(null)
+  // SVG 自身 の 参照。 wheel イベント は 枠 (container) の border 分 の ズレ を
+  // 避ける ため、SVG から rect を 取る。 マウス系 ハンドラ と 同じ 基準 で 揃える。
+  const svgRef = useRef<SVGSVGElement | null>(null)
   /**
    * 枠 が 後から 現れる ことが ある (解析前 は 別 の 表示 を 返す ため)。
    * ref だけ だと 監視 を 張り直せず、
@@ -161,6 +164,8 @@ export function DxfCrossSectionViewer({
    * ホイール だけ では 目的 の 場所 まで 寄れない。 左上 → 右下 を 囲って 一気に 寄せる。
    */
   const [layerPanelOpen, setLayerPanelOpen] = useState(false)
+  // 文字 拡大率。 SFC / P21 で 文字高 が 図面 に 対して 小さい ときに 手動 で 効かせる
+  const [textScale, setTextScale] = useState<number>(1)
   const [rectMode, setRectMode] = useState(false)
   const [rectStart, setRectStart] = useState<{ x: number; y: number } | null>(null)
   const [rectNow, setRectNow] = useState<{ x: number; y: number } | null>(null)
@@ -273,26 +278,43 @@ export function DxfCrossSectionViewer({
     }
   }, [containerReady])
 
-  // ホイール ズーム (passive false 必要 なので 生 addEventListener)
+  // ホイール ズーム (passive false 必要 なので 生 addEventListener)。
+  //
+  // 重要: React 18 の StrictMode で は 関数 setter の updater が 純粋性
+  // チェック の ため 2 回 呼ばれる。 updater の 中 で 別 の setState を
+  // 呼ぶ と 副作用 が 2 回 起き、pan が 2 倍 動いて 拡大 する ほど ズレ が
+  // 累積 する バグ に なる。
+  // → updater を 使わず、viewRef (最新値) から 直接 読んで 両方 の
+  //   setState を トップレベル で 呼ぶ。
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
-      const rect = el.getBoundingClientRect()
-      const px = e.clientX - rect.left
-      const py = e.clientY - rect.top
+      const svg = svgRef.current
+      let px: number, py: number
+      if (svg) {
+        const rect = svg.getBoundingClientRect()
+        const attrW = svg.width?.baseVal?.value || rect.width || 1
+        const attrH = svg.height?.baseVal?.value || rect.height || 1
+        const sx = rect.width / attrW
+        const sy = rect.height / attrH
+        px = (e.clientX - rect.left) / (sx || 1)
+        py = (e.clientY - rect.top) / (sy || 1)
+      } else {
+        const rect = el.getBoundingClientRect()
+        px = e.clientX - rect.left
+        py = e.clientY - rect.top
+      }
       const factor = e.deltaY > 0 ? 0.9 : 1.1
-      setViewZoom((z) => {
-        // 上限 は 大きめ。 図面 の 外 に ゴミ が ある と 全体表示 の 縮尺 が
-        // 極端に 小さく なり、50 倍 では 足りない ことが ある
-        const nz = Math.max(0.02, Math.min(5000, z * factor))
-        const k = nz / z
-        setViewPan((p) => ({
-          x: px - (px - p.x) * k,
-          y: py - (py - p.y) * k,
-        }))
-        return nz
+      const oldZoom = viewRef.current.zoom
+      const oldPan = viewRef.current.pan
+      const nz = Math.max(0.02, Math.min(5000, oldZoom * factor))
+      const k = nz / oldZoom
+      setViewZoom(nz)
+      setViewPan({
+        x: px - (px - oldPan.x) * k,
+        y: py - (py - oldPan.y) * k,
       })
     }
     el.addEventListener('wheel', onWheel, { passive: false })
@@ -504,6 +526,34 @@ export function DxfCrossSectionViewer({
         </button>
         <span className="text-slate-400">{Math.round(viewZoom * 100)}%</span>
 
+        {/* 文字 の 大きさ 倍率。 P21 / SFC は 描画元 の 文字高 が 小さめ に 入って
+            いる ことが 多い ので、 手動 で 拡大 できる ように する。 */}
+        <span className="flex items-center gap-1 text-slate-500">
+          文字
+          <input
+            type="range"
+            min={5}
+            max={80}
+            step={1}
+            value={Math.round(textScale * 10)}
+            onChange={(e) => setTextScale(parseInt(e.target.value, 10) / 10)}
+            className="w-16"
+            title={`文字 拡大率 (${textScale.toFixed(1)}×)`}
+          />
+          <span className="w-8 text-right tabular-nums text-slate-600">
+            {textScale.toFixed(1)}×
+          </span>
+          {textScale !== 1 && (
+            <button
+              onClick={() => setTextScale(1)}
+              className="px-1 border rounded bg-white hover:bg-slate-50 text-slate-500"
+              title="等倍に戻す"
+            >
+              リセット
+            </button>
+          )}
+        </span>
+
         {layerPanelOpen && (
           <div className="absolute left-0 top-full mt-1 z-20 w-64 max-h-60 overflow-auto bg-white border rounded shadow-lg p-2">
             <div className="flex items-center gap-1 mb-1">
@@ -569,6 +619,7 @@ export function DxfCrossSectionViewer({
         style={{ touchAction: 'none' }}
       >
         <svg
+          ref={svgRef}
           width={size.w}
           height={size.h}
           onMouseDown={onMouseDown}
@@ -589,7 +640,7 @@ export function DxfCrossSectionViewer({
           <g transform={`translate(${viewPan.x} ${viewPan.y}) scale(${viewZoom})`}>
             {doc.shapes.map((s, i) => {
               if (hiddenLayers.has(s.layer)) return null
-              return renderShape(s, i, tx, ty, viewZoom)
+              return renderShape(s, i, tx, ty, viewZoom, textScale)
             })}
             {/* 校正済み DL 水平線 (紫 太 破線) */}
             {highlightDlY != null && (
@@ -780,6 +831,8 @@ function renderShape(
   ty: (y: number) => number,
   /** 画面 の 拡大率。 文字 を 出すか の 判定 に 使う */
   viewZoom = 1,
+  /** 文字 高 倍率 (SFC / P21 用 に 手動 で 効かせる) */
+  textScale = 1,
 ) {
   const commonProps = { 'data-shape-idx': i }
   if (s.kind === 'line') {
@@ -844,7 +897,9 @@ function renderShape(
     // 文字高 にも 同じ 倍率 を かけない と 図面 に 対して 極端に 小さく
     // (= 事実上 見えなく) なる
     const scale = Math.abs(tx(1) - tx(0))
-    const fontSize = s.height * scale
+    // textScale (ユーザー 調整) を さらに 効かせる。 SFC / P21 は 文字高 が
+    // 図面 に 対して 小さめ の こと が 多い ため。
+    const fontSize = s.height * scale * textScale
     // 出すか どうか は 「画面上 の 大きさ」 で 決める。
     // 全体表示 の 縮尺 だけ で 判定 すると、図面 が 広い ファイル で
     // 拡大 しても 文字 が 出て こない (以前 は これ で 消えて いた)。

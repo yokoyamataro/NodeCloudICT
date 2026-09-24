@@ -376,6 +376,17 @@ export interface OpenChannelRow {
   profilePoints: ProfilePoint[]
   /** 主縦断 と 別 に 管理 する 追加 の 縦断 (表示 のみ) */
   extraProfiles: ExtraProfile[]
+  /**
+   * 整地 の 縦線 (平行縦断) 上 の 中間点。 グリッド 交点 の 間 に、独自 の SP と
+   * 標高 で 差し込む。 縦断図 描画 のみ に 反映 し、グリッド 表 / 横断図 に は
+   * 出さ ない。 空 配列 が 既定。
+   */
+  gradingLineExtras: GradingLineExtra[]
+  /**
+   * 整地 の 縦線 の 縦断図 上 の トンボ / 丁張。 station.tombos と は 別系統 で、
+   * 縦線 (line_idx) 単位 で 保持 する。
+   */
+  gradingLineTombos: GradingLineTombo[]
   /** 中間点（測点）リスト */
   stations: StationRow[]
   /** 左右の基準方向 */
@@ -413,6 +424,8 @@ interface OpenChannelDb {
   alignment_points: AlignmentPoint[]
   profile_points: ProfilePoint[] | null
   extra_profiles: ExtraProfile[] | null
+  grading_line_extras?: unknown
+  grading_line_tombos?: unknown
   standard_sections: NamedStandardSection[] | null
   stations: StationRow[] | null
   side_orientation: SideOrientation | null
@@ -468,6 +481,94 @@ function normalizeExtraProfiles(raw: unknown): ExtraProfile[] {
   return out
 }
 
+/** 整地 縦線 上 の 中間点。 グリッド 交点 の 間 に 差し込む 追加 の 計画点 */
+export interface GradingLineExtra {
+  id: string
+  /** 中心線 から の 本数 (左 が 負)。 gridLineIndices と 対応 */
+  lineIdx: number
+  /** BP から の 追加距離 (SP は spOffset を 足して 表示 する) */
+  sp: number
+  /** 計画高 (m) */
+  elevation: number
+  note?: string
+}
+
+export function normalizeGradingLineExtras(raw: unknown): GradingLineExtra[] {
+  if (!Array.isArray(raw)) return []
+  const out: GradingLineExtra[] = []
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Partial<GradingLineExtra>
+    if (typeof o.id !== 'string' || o.id === '') continue
+    const idx = typeof o.lineIdx === 'number' && Number.isFinite(o.lineIdx) ? Math.trunc(o.lineIdx) : null
+    const sp = typeof o.sp === 'number' && Number.isFinite(o.sp) ? o.sp : null
+    const ele = typeof o.elevation === 'number' && Number.isFinite(o.elevation) ? o.elevation : null
+    if (idx == null || sp == null || ele == null) continue
+    out.push({
+      id: o.id,
+      lineIdx: idx,
+      sp,
+      elevation: ele,
+      note: typeof o.note === 'string' && o.note !== '' ? o.note : undefined,
+    })
+  }
+  return out
+}
+
+/** 整地 縦線 上 の トンボ / 丁張。 station.tombos と 同じ 概念 だ が 縦断 側。 */
+export interface GradingLineTombo {
+  id: string
+  lineIdx: number
+  /** 基準 の 種類。 'grid' = グリッド 交点、'extra' = 中間点、'free' = 座標 直入力 */
+  baseKind: 'grid' | 'extra' | 'free'
+  /** 基準 の SP (基準点 の 位置)。 baseKind='free' でも 参考値 として 使う */
+  baseSp: number
+  /** 基準 の 計画高。 baseKind='free' の 時 は 必須 */
+  baseElev?: number
+  /** SP 方向 の ずれ (m)。 正 = EP 側 */
+  dw: number
+  /** 高さ 方向 の ずれ (m)。 正 = 上 */
+  dh: number
+  /** 表示名 (省略 時 は 自動) */
+  name?: string
+  /** 「トンボ」 or 「丁張」 */
+  kind: 'tombo' | 'batter'
+  /** 座標管理 に 登録 済 なら その id */
+  coordId?: string
+}
+
+export function normalizeGradingLineTombos(raw: unknown): GradingLineTombo[] {
+  if (!Array.isArray(raw)) return []
+  const out: GradingLineTombo[] = []
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Partial<GradingLineTombo>
+    if (typeof o.id !== 'string' || o.id === '') continue
+    const idx = typeof o.lineIdx === 'number' && Number.isFinite(o.lineIdx) ? Math.trunc(o.lineIdx) : null
+    const sp = typeof o.baseSp === 'number' && Number.isFinite(o.baseSp) ? o.baseSp : null
+    const dw = typeof o.dw === 'number' && Number.isFinite(o.dw) ? o.dw : 0
+    const dh = typeof o.dh === 'number' && Number.isFinite(o.dh) ? o.dh : 0
+    const baseKind: GradingLineTombo['baseKind'] =
+      o.baseKind === 'extra' || o.baseKind === 'free' ? o.baseKind : 'grid'
+    const kind: GradingLineTombo['kind'] = o.kind === 'batter' ? 'batter' : 'tombo'
+    if (idx == null || sp == null) continue
+    out.push({
+      id: o.id,
+      lineIdx: idx,
+      baseKind,
+      baseSp: sp,
+      baseElev:
+        typeof o.baseElev === 'number' && Number.isFinite(o.baseElev) ? o.baseElev : undefined,
+      dw,
+      dh,
+      name: typeof o.name === 'string' && o.name !== '' ? o.name : undefined,
+      kind,
+      coordId: typeof o.coordId === 'string' ? o.coordId : undefined,
+    })
+  }
+  return out
+}
+
 function normalizeCrossSection(raw: unknown): StandardCrossSection {
   if (!raw || typeof raw !== 'object') return emptyStandardCrossSection()
   const r = raw as Partial<StandardCrossSection>
@@ -506,6 +607,8 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     alignmentPoints: Array.isArray(d.alignment_points) ? d.alignment_points : [],
     profilePoints: Array.isArray(d.profile_points) ? d.profile_points : [],
     extraProfiles: normalizeExtraProfiles(d.extra_profiles),
+    gradingLineExtras: normalizeGradingLineExtras(d.grading_line_extras),
+    gradingLineTombos: normalizeGradingLineTombos(d.grading_line_tombos),
     standardSections: normalizeStandardSections(d.standard_sections),
     stations: Array.isArray(d.stations) ? d.stations : [],
     sideOrientation: d.side_orientation === 'reverse' ? 'reverse' : 'forward',
@@ -603,6 +706,10 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       if (updates.alignmentPoints !== undefined) dbUpdates.alignment_points = updates.alignmentPoints
       if (updates.profilePoints !== undefined) dbUpdates.profile_points = updates.profilePoints
       if (updates.extraProfiles !== undefined) dbUpdates.extra_profiles = updates.extraProfiles
+      if (updates.gradingLineExtras !== undefined)
+        dbUpdates.grading_line_extras = updates.gradingLineExtras
+      if (updates.gradingLineTombos !== undefined)
+        dbUpdates.grading_line_tombos = updates.gradingLineTombos
       if (updates.stations !== undefined) dbUpdates.stations = updates.stations
       if (updates.sideOrientation !== undefined) dbUpdates.side_orientation = updates.sideOrientation
       if (updates.spOffset !== undefined) dbUpdates.sp_offset = updates.spOffset
