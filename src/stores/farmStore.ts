@@ -22,6 +22,26 @@ export interface Farm {
   parcel_map_bbox:
     | { minLng: number; minLat: number; maxLng: number; maxLat: number }
     | null
+  /**
+   * 地図 の 背景 に 敷く 平面図 CAD (複数 枚)。
+   * 図面 は ファイル管理 の もの を 使い、 ここ に は 位置合わせ だけ を 持つ。
+   * 工区 単位 な ので 全 工種 と スマホ で 共通。 未適用 の DB で は undefined。
+   */
+  plan_cads?: FarmPlanCad[] | null
+}
+
+/** 背景 に 敷く 平面図 CAD 1 枚 ぶん */
+export interface FarmPlanCad {
+  id: string
+  name: string
+  /** farm_files の storage_path */
+  storagePath: string
+  /** 図面 の 点 と 実 座標 (x = 北, y = 東) */
+  p1: { dx: number; dy: number; x: number; y: number }
+  p2: { dx: number; dy: number; x: number; y: number }
+  visible?: boolean
+  /** 0-1。 既定 0.7 */
+  opacity?: number
 }
 
 // 工区の先頭座標情報
@@ -113,6 +133,7 @@ interface FarmState {
         | 'started_at'
         | 'completed_at'
         | 'parcel_map_bbox'
+        | 'plan_cads'
       >
     >,
   ) => Promise<void>

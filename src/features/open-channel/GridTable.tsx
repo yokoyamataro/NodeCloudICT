@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { Pencil, ClipboardPaste, Copy } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Pencil, ClipboardPaste, Copy, RotateCcw, Trash2, MapPin } from 'lucide-react'
+import { defaultGridLines } from '@/stores/openChannelStore'
 import type { GridLinesConfig, MeasuredCrossPoint, StationRow } from '@/stores/openChannelStore'
 import {
   gridLineIndices,
@@ -102,6 +103,9 @@ export function GridTable({
   selectedLineIdx,
   onSelectLine,
   onPasteCells,
+  onResetAll,
+  typeOptions,
+  onRegisterPlan,
 }: {
   cfg: GridLinesConfig
   /** 距離 順 に 並んだ 測点 */
@@ -131,8 +135,22 @@ export function GridTable({
     cells: { stationId: string; idx: number; value: number | null }[],
     target: GridTarget,
   ) => void
+  /** 路線 ごと まっさら に する (線形点 と 高さ も 消える) */
+  onResetAll: () => void
+  /** 座標 の 点種 の 候補 */
+  typeOptions: { code: string; label: string }[]
+  /** 計画高 を まとめて 座標 に する */
+  onRegisterPlan: (
+    type: string,
+    opts: { grid: boolean; crossOff: boolean; extras: boolean },
+  ) => Promise<{ added: number; updated: number }>
 }) {
   const [view, setView] = useState<GridView>('current')
+  /** 選ばれた セル。 地図 から 選ばれた とき に 表 を そこ まで 動かす */
+  const selectedCellRef = useRef<HTMLTableCellElement | null>(null)
+  useEffect(() => {
+    selectedCellRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [selectedCell?.stationId, selectedCell?.idx])
   const [editingCfg, setEditingCfg] = useState(false)
   const indices = gridLineIndices(cfg)
   const viewDef = VIEWS.find((v) => v.key === view) ?? VIEWS[0]
@@ -147,6 +165,24 @@ export function GridTable({
           : (st.asbuiltSection ?? [])
     return pointNearOffset(src, offset, GRID_TOLERANCE_M)?.elevation ?? null
   }
+
+  /** 間隔 の 下書き。 1 文字 ごと に 保存 する と 書き込み が 走る ので 離れて から 確定 */
+  const [spacingDraft, setSpacingDraft] = useState<string | null>(null)
+  const commitSpacing = () => {
+    if (spacingDraft == null) return
+    const v = parseFloat(spacingDraft)
+    setSpacingDraft(null)
+    if (!Number.isFinite(v) || v <= 0) return
+    const r = Math.round(v * 1000) / 1000
+    if (r !== cfg.spacing) onChangeCfg({ ...cfg, spacing: r })
+  }
+
+  /** 計画高 の 座標登録 */
+  const [regOpen, setRegOpen] = useState(false)
+  const [regType, setRegType] = useState('')
+  const [regBusy, setRegBusy] = useState(false)
+  /** 何 を 登録 する か。 格子 以外 の 変化点 も 選べる */
+  const [regWhat, setRegWhat] = useState({ grid: true, crossOff: true, extras: true })
 
   /** 表計算 と の やり取り */
   const [pasteOpen, setPasteOpen] = useState(false)
@@ -308,17 +344,49 @@ export function GridTable({
           貼り付け
         </button>
         <button
+          onClick={() => {
+            setRegOpen((x) => !x)
+            setMsg('')
+          }}
+          className={
+            'flex items-center gap-1 px-2 py-0.5 text-xs border rounded ' +
+            (regOpen
+              ? 'bg-emerald-600 text-white border-emerald-600'
+              : 'bg-white hover:bg-slate-50 text-slate-600')
+          }
+          title="計画高 を まとめて 座標管理 に 登録 する"
+        >
+          <MapPin className="h-3 w-3" />
+          計画高を座標登録
+        </button>
+        <button
           onClick={() => setEditingCfg((x) => !x)}
           className="flex items-center gap-1 px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-50 text-slate-600"
-          title="中心 の 名前 / 本数"
+          title="間隔 / 本数 / 名前 / 向き"
         >
           <Pencil className="h-3 w-3" />
-          格子 の 設定
+          グリッド設定
         </button>
       </div>
 
       {editingCfg && (
         <div className="flex items-center gap-3 flex-wrap border rounded bg-slate-50 px-2 py-1.5">
+          <label className="flex items-center gap-1 text-xs text-slate-600">
+            <span>グリッド間隔 (m)</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={spacingDraft ?? String(cfg.spacing)}
+              onChange={(e) => setSpacingDraft(e.target.value)}
+              onBlur={commitSpacing}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                if (e.key === 'Escape') setSpacingDraft(null)
+              }}
+              className="w-16 px-1 py-0.5 border rounded text-right text-xs"
+              title="測点 の 間隔 と 平行縦断 の 間隔。 変えた 後 は グリッドを計算"
+            />
+          </label>
           <label className="flex items-center gap-1 text-xs text-slate-600">
             <span>中心 の 名前</span>
             <input
@@ -344,10 +412,98 @@ export function GridTable({
           </label>
           {numField('左 (本)', cfg.leftCount, 0, (v) => onChangeCfg({ ...cfg, leftCount: v }))}
           {numField('右 (本)', cfg.rightCount, 0, (v) => onChangeCfg({ ...cfg, rightCount: v }))}
+          <button
+            onClick={() => {
+              if (
+                !window.confirm(
+                  'グリッド設定 (間隔 / 本数 / 中心 の 名前 / 向き / 個別 の 列名) を 既定 に 戻します。\n入力 した 高さ と 測点 は 消えません。',
+                )
+              ) {
+                return
+              }
+              onChangeCfg(defaultGridLines())
+              setMsg('グリッド設定 を 既定 に 戻しました。 本数 を 合わせ直す に は グリッドを計算 を 押して ください。')
+            }}
+            className="flex items-center gap-1 px-2 py-0.5 text-xs border rounded bg-white border-red-300 text-red-700 hover:bg-red-50"
+            title="間隔 / 本数 / 名前 / 向き を 既定 に 戻す (高さ は そのまま)"
+          >
+            <RotateCcw className="h-3 w-3" />
+            グリッドの初期化
+          </button>
+          <button
+            onClick={onResetAll}
+            className="flex items-center gap-1 px-2 py-0.5 text-xs border rounded bg-red-600 text-white border-red-600 hover:bg-red-700"
+            title="線形点 (BP / EP) と 測点 と 高さ も 含めて まっさら に する"
+          >
+            <Trash2 className="h-3 w-3" />
+            全初期化
+          </button>
           <span className="text-[11px] text-slate-400">
             本数 は グリッドを計算 で 工事区域 から 決まります。 列 の 名前 は 見出し を
             ダブルクリック で 変えられます。
           </span>
+        </div>
+      )}
+
+      {regOpen && (
+        <div className="border rounded bg-emerald-50 px-2 py-1.5 flex items-center gap-2 flex-wrap text-xs">
+          {(
+            [
+              { key: 'grid' as const, label: 'グリッド交点' },
+              { key: 'crossOff' as const, label: '横断 の 変化点 (格子 以外)' },
+              { key: 'extras' as const, label: '縦断 の 中間点' },
+            ]
+          ).map((o) => (
+            <label key={o.key} className="flex items-center gap-1 cursor-pointer text-slate-600">
+              <input
+                type="checkbox"
+                checked={regWhat[o.key]}
+                onChange={(e) => setRegWhat((w) => ({ ...w, [o.key]: e.target.checked }))}
+              />
+              {o.label}
+            </label>
+          ))}
+          <label className="flex items-center gap-1 ml-auto">
+            <span className="text-slate-500">点種</span>
+            <select
+              value={regType}
+              onChange={(e) => setRegType(e.target.value)}
+              className="px-1 py-0.5 border rounded"
+            >
+              <option value="">選んで ください</option>
+              {typeOptions.map((o) => (
+                <option key={o.code} value={o.code}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            onClick={async () => {
+              if (regType === '') return
+              setRegBusy(true)
+              setMsg('')
+              try {
+                const r = await onRegisterPlan(regType, regWhat)
+                setMsg(
+                  r.added === 0 && r.updated === 0
+                    ? '登録 できる 計画高 が ありません でした'
+                    : `${r.added} 点 を 追加、 ${r.updated} 点 を 差し替え ました`,
+                )
+                if (r.added > 0 || r.updated > 0) setRegOpen(false)
+              } finally {
+                setRegBusy(false)
+              }
+            }}
+            disabled={
+              regBusy ||
+              regType === '' ||
+              (!regWhat.grid && !regWhat.crossOff && !regWhat.extras)
+            }
+            className="px-3 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40"
+          >
+            登録
+          </button>
         </div>
       )}
 
@@ -477,8 +633,14 @@ export function GridTable({
                       </td>
                     )
                   }
+                  const isSel =
+                    selectedCell?.stationId === st.id && selectedCell.idx === i
                   return (
-                    <td key={i} className="px-1 py-1 border-b">
+                    <td
+                      key={i}
+                      ref={isSel ? selectedCellRef : undefined}
+                      className="px-1 py-1 border-b"
+                    >
                       <HeightCell
                         value={heightAt(st, view, offset)}
                         onCommit={(v) => onSetHeight(st.id, view, offset, v)}

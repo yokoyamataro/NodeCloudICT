@@ -59,7 +59,10 @@ export function DxfCrossSectionViewer({
    * 出発点。 通常は 「直前 に 拾った 点」の DXF 位置 を 渡す。 pickCursorHint='trace' で
    * かつ cursorPos が ある 時のみ 描画。
    */
-  traceRubberBandFrom?: { x: number; y: number } | null
+  traceRubberBandFrom?:
+    | { x: number; y: number }
+    | { x: number; y: number }[]
+    | null
   /**
    * true の 間、カーソル 位置 に 近い 端点/交点 に 吸着する。 マーカーで 表示し、
    * クリック時に snap 位置が worldPt に 渡る。
@@ -771,16 +774,24 @@ export function DxfCrossSectionViewer({
                 吸着位置) まで 破線で 引く。 次の 1 点を どこに 打つか の 見当を つけやすく */}
             {pickCursorHint === 'trace' && traceRubberBandFrom && cursorPos && (() => {
               const wp = snap ? { x: snap.x, y: snap.y } : cursorPos
+              // 割り込み の とき は 前後 の 2 点 から 引く ので 配列 も 受ける
+              const anchors = Array.isArray(traceRubberBandFrom)
+                ? traceRubberBandFrom
+                : [traceRubberBandFrom]
               return (
-                <line
-                  x1={tx(traceRubberBandFrom.x)} y1={ty(traceRubberBandFrom.y)}
-                  x2={tx(wp.x)} y2={ty(wp.y)}
-                  stroke="#94a3b8"
-                  strokeWidth={0.8}
-                  strokeDasharray="2,1.5"
-                  vectorEffect="non-scaling-stroke"
-                  pointerEvents="none"
-                />
+                <g pointerEvents="none">
+                  {anchors.map((a, i) => (
+                    <line
+                      key={i}
+                      x1={tx(a.x)} y1={ty(a.y)}
+                      x2={tx(wp.x)} y2={ty(wp.y)}
+                      stroke="#64748b"
+                      strokeWidth={2}
+                      strokeDasharray="4,2.5"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  ))}
+                </g>
               )
             })()}
             {/* 吸着 候補 マーカー — 小さな 十字 (+)。 端点/頂点=青、交点=橙 */}

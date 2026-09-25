@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef, type ReactNode } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import {
   Cable,
   Plus,
@@ -2397,7 +2397,9 @@ export function PipeWiringPage() {
                                     {(row.rowType === 'absorption_end' || row.rowType === 'absorption_merge') ? (
                                       row.absorptionPipes.flatMap((id) => {
                                         const p = pipes.find((pp) => pp.id === id)
-                                        if (!p) return [] as ReactNode[]
+                                        // ReactNode[] と 注釈 する と 要素 の 配列 と 型 が 割れる。
+                                        // 空 の まま 返して 推論 に 任せる
+                                        if (!p) return []
                                         const n = p.vertices.length
                                         return p.vertices.map((_, vIdx) => {
                                           const name = generatePointName(p.number, vIdx, n)
