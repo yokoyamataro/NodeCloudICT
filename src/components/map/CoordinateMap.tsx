@@ -9,6 +9,10 @@ import 'leaflet/dist/leaflet.css'
 // rotateControl={false} を 明示して 右上の 回転コントロール UI を 抑制する。
 import 'leaflet-rotate'
 import { useCoordinateStore, type CoordinateRow, type RoutePoint } from '@/stores/coordinateStore'
+import { useFarmStore } from '@/stores/farmStore'
+import { useProjectListStore } from '@/stores/projectListStore'
+import { PlanCadLayers } from './PlanCadLayers'
+import { FarmPlanCadModal } from './FarmPlanCadModal'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { useOrthophotoStore } from '@/stores/orthophotoStore'
 
@@ -515,7 +519,7 @@ function HighDensityList<T>({
 
 // 背景地図の種類
 /** 背景地図の種類。'none' は背景なし (作図だけを見たいとき) */
-export type BaseLayerType = 'osm' | 'gsi-photo' | 'gsi-std' | 'none'
+export type BaseLayerType = 'osm' | 'gsi-photo' | 'gsi-std' | 'none' | 'cad'
 
 // 外部から渡す区域ポリゴン
 export interface ExternalPolygon {
@@ -701,6 +705,14 @@ export function CoordinateMap({
   children,
 }: CoordinateMapProps) {
   const { coordinates } = useCoordinateStore()
+  // 工区 に 登録 した 平面図 CAD。 種類 で 「CAD」 を 選んで いる 間 は 全部 出す
+  const farms = useFarmStore((s) => s.farms)
+  const currentFarm = useFarmStore((s) => s.currentFarm)
+  const projects = useProjectListStore((s) => s.projects)
+  const planCadFarm = farmId ? (farms.find((f) => f.id === farmId) ?? currentFarm) : currentFarm
+  const [planCadModalOpen, setPlanCadModalOpen] = useState(false)
+  const planCadZone =
+    projects.find((p) => p.id === planCadFarm?.project_id)?.coordinate_zone ?? 13
   // 背景地図の選択は全ページ共有 (座標管理 / 地番管理 / 全体図 で一貫)。
   // 地図右下 HUD の <select> でここを書き換える。
   const baseLayer = useMapViewStore((s) => s.baseLayer)
@@ -771,8 +783,27 @@ export function CoordinateMap({
           <option value="gsi-photo">航空写真</option>
           <option value="gsi-std">地理院地図</option>
           <option value="none">背景なし</option>
+          <option value="cad">CAD (平面図)</option>
         </select>
+        {farmId && (
+          <button
+            type="button"
+            onClick={() => setPlanCadModalOpen(true)}
+            className="h-[26px] px-2 text-xs border border-slate-300 rounded bg-white shadow hover:bg-slate-50"
+            title="背景 に 敷く 平面図 CAD を 決める (工区 共通)"
+          >
+            背景CAD
+            {(planCadFarm?.plan_cads ?? []).length > 0 && (
+              <span className="ml-1 text-slate-400">
+                {(planCadFarm?.plan_cads ?? []).length}
+              </span>
+            )}
+          </button>
+        )}
       </div>
+      {planCadModalOpen && farmId && (
+        <FarmPlanCadModal farmId={farmId} onClose={() => setPlanCadModalOpen(false)} />
+      )}
       <MapContainer
       center={initialCenter}
       zoom={15}
@@ -1174,6 +1205,13 @@ export function CoordinateMap({
           activeIdx={activeMidpointIdx ?? null}
         />
       )}
+
+      {/* 工区 の 平面図 CAD。 他 の 層 より 先 に 描いて 下敷き に する */}
+      <PlanCadLayers
+        cads={planCadFarm?.plan_cads}
+        zone={planCadZone}
+        forceAll={baseLayer === 'cad'}
+      />
 
       {/* 外部から差し込む追加レイヤ（オルソ画像ページの作図・計測など） */}
       {children}

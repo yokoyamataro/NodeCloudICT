@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
+import type { PlanCadConfig } from '@/lib/openChannel/planCad'
 
 export type AlignmentPointKind = 'bp' | 'ip' | 'ep'
 
@@ -126,6 +127,12 @@ export interface GridLinesConfig {
   reverseNames?: boolean
   /** 自動 の 名前 を 個別 に 上書き。 キー は 中心 から の 本数 (左 が 負) */
   names?: Record<string, string>
+  /**
+   * 縦断 を CAD から なぞる とき の 校正。 キー は 中心 から の 本数。
+   * 横断 の 校正 が 測点 ごと な の と 同じ で、 線 ごと に 1 つ 持つ。
+   * dxfId は その 線 で 使う 図面 (channel.dxfCrossSections の id)。
+   */
+  lineCalibs?: Record<string, { calib: DxfCalibration; dxfId: string | null }>
 }
 
 export const defaultGridLines = (): GridLinesConfig => ({
@@ -158,6 +165,9 @@ export function normalizeGridLines(raw: unknown): GridLinesConfig {
         : d.centerName,
     reverseNames: o.reverseNames === true,
     names: Object.keys(names).length > 0 ? names : undefined,
+    // 校正 は 形 が 崩れて いたら 落とす だけ。 値 の 妥当性 は 使う 側 で 見る
+    lineCalibs:
+      o.lineCalibs && typeof o.lineCalibs === 'object' ? o.lineCalibs : undefined,
   }
 }
 
@@ -230,6 +240,12 @@ export interface ChohariPoint {
   /** 対象 法面 の もう 一方 の 端 (法肩 など) */
   crestPointId: string
   crestOffset: number
+  /**
+   * 基準点 を 人 が 選んだ か。 法面 を 選んだ 直後 は false で、
+   * この 間 は 図 に 丁張 を 描か ない (どちら の 端 から 測る か が 未定 の ため)。
+   * 昔 の データ に は 無い ので、 未設定 は 決定済み と 見なす。
+   */
+  baseChosen?: boolean
   /** 基準点 から の オフセット幅 [m]。 中心 から 遠ざかる 向き が 正 */
   w: number
   /** 点名。 空 なら 測点名 と 基準点 から 自動 */
@@ -267,6 +283,11 @@ export interface DxfCalibration {
   dlElevation: number
   hScale: number
   vScale: number
+  /**
+   * 図面 で 選んだ 中心線 が 断面 の どの 離れ に あたる か [m]。 既定 0。
+   * 図面 の 中心線 が 実際 の 中心 から ずれて 描かれて いる とき に 使う。
+   */
+  centerShift?: number
 }
 
 /**
@@ -387,6 +408,10 @@ export interface OpenChannelRow {
    * 縦線 (line_idx) 単位 で 保持 する。
    */
   gradingLineTombos: GradingLineTombo[]
+  /** 地図 の 背景 に 敷く 平面図 CAD の 位置合わせ (整地 用)。 未設定 は null */
+  planCad: PlanCadConfig | null
+  /** 任意測点 (地図 から 拾った 点) */
+  freePoints: FreePoint[]
   /** 中間点（測点）リスト */
   stations: StationRow[]
   /** 左右の基準方向 */
@@ -426,6 +451,8 @@ interface OpenChannelDb {
   extra_profiles: ExtraProfile[] | null
   grading_line_extras?: unknown
   grading_line_tombos?: unknown
+  plan_cad?: unknown
+  free_points?: unknown
   standard_sections: NamedStandardSection[] | null
   stations: StationRow[] | null
   side_orientation: SideOrientation | null
@@ -516,6 +543,34 @@ export function normalizeGradingLineExtras(raw: unknown): GradingLineExtra[] {
 }
 
 /** 整地 縦線 上 の トンボ / 丁張。 station.tombos と 同じ 概念 だ が 縦断 側。 */
+/**
+ * 任意測点。 地図 を 押して 拾った だけ の 点。
+ * 平面図 CAD の 位置合わせ の 基準 など に 使う。 高さ は 今 は 持た ない。
+ */
+export interface FreePoint {
+  id: string
+  name: string
+  /** 北 */
+  x: number
+  /** 東 */
+  y: number
+}
+
+/** free_points の 正規化。 数値 で ない もの は 落とす */
+export function normalizeFreePoints(raw: unknown): FreePoint[] {
+  if (!Array.isArray(raw)) return []
+  const out: FreePoint[] = []
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Partial<FreePoint>
+    if (typeof o.id !== 'string' || o.id === '') continue
+    if (typeof o.x !== 'number' || !Number.isFinite(o.x)) continue
+    if (typeof o.y !== 'number' || !Number.isFinite(o.y)) continue
+    out.push({ id: o.id, name: typeof o.name === 'string' ? o.name : '', x: o.x, y: o.y })
+  }
+  return out
+}
+
 export interface GradingLineTombo {
   id: string
   lineIdx: number
@@ -609,6 +664,14 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     extraProfiles: normalizeExtraProfiles(d.extra_profiles),
     gradingLineExtras: normalizeGradingLineExtras(d.grading_line_extras),
     gradingLineTombos: normalizeGradingLineTombos(d.grading_line_tombos),
+    freePoints: normalizeFreePoints(d.free_points),
+    // 形 が 壊れて いたら 使わ ない。 位置合わせ は 2 点 が 揃って 初めて 意味 を 持つ
+    planCad: (() => {
+      const o = d.plan_cad as PlanCadConfig | null | undefined
+      if (!o || typeof o !== 'object' || typeof o.dxfId !== 'string') return null
+      if (!o.p1 || !o.p2) return null
+      return o
+    })(),
     standardSections: normalizeStandardSections(d.standard_sections),
     stations: Array.isArray(d.stations) ? d.stations : [],
     sideOrientation: d.side_orientation === 'reverse' ? 'reverse' : 'forward',
@@ -636,6 +699,25 @@ interface OpenChannelState {
   deleteChannel: (id: string) => Promise<void>
 }
 
+/**
+ * 失敗 の 中身 を 文字 に する。
+ * Supabase (PostgREST) の エラー は Error インスタンス で は なく
+ * { message, details, hint, code } の 素 の オブジェクト な ので、
+ * そのまま だ と 既定 文 に 落ちて 原因 が 分から なく なる。
+ */
+function errText(e: unknown, fallback: string): string {
+  if (e instanceof Error && e.message) return e.message
+  if (e && typeof e === 'object') {
+    const o = e as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown }
+    const parts = [o.message, o.details, o.hint].filter(
+      (x): x is string => typeof x === 'string' && x !== '',
+    )
+    const code = typeof o.code === 'string' && o.code !== '' ? ` [${o.code}]` : ''
+    if (parts.length > 0) return parts.join(' / ') + code
+  }
+  return fallback
+}
+
 export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
   channels: [],
   loading: false,
@@ -655,7 +737,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         loading: false,
       })
     } catch (e) {
-      set({ loading: false, error: e instanceof Error ? e.message : '線形物の取得に失敗' })
+      set({ loading: false, error: errText(e, '線形物の取得に失敗') })
     }
   },
 
@@ -690,7 +772,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       set((s) => ({ channels: [...s.channels, row] }))
       return row
     } catch (e) {
-      set({ error: e instanceof Error ? e.message : '線形物の追加に失敗' })
+      set({ error: errText(e, '線形物の追加に失敗') })
       return null
     }
   },
@@ -710,6 +792,8 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         dbUpdates.grading_line_extras = updates.gradingLineExtras
       if (updates.gradingLineTombos !== undefined)
         dbUpdates.grading_line_tombos = updates.gradingLineTombos
+      if (updates.planCad !== undefined) dbUpdates.plan_cad = updates.planCad
+      if (updates.freePoints !== undefined) dbUpdates.free_points = updates.freePoints
       if (updates.stations !== undefined) dbUpdates.stations = updates.stations
       if (updates.sideOrientation !== undefined) dbUpdates.side_orientation = updates.sideOrientation
       if (updates.spOffset !== undefined) dbUpdates.sp_offset = updates.spOffset
@@ -733,7 +817,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         .eq('id', id)
       if (error) throw error
     } catch (e) {
-      set({ error: e instanceof Error ? e.message : '線形物の更新に失敗' })
+      set({ error: errText(e, '線形物の更新に失敗') })
     }
   },
 
@@ -743,7 +827,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       const { error } = await supabase.from('open_channels').delete().eq('id', id)
       if (error) throw error
     } catch (e) {
-      set({ error: e instanceof Error ? e.message : '線形物の削除に失敗' })
+      set({ error: errText(e, '線形物の削除に失敗') })
     }
   },
 }))

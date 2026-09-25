@@ -189,6 +189,10 @@ interface CoordinateState {
     rows: {
       id: string
       pointNumber?: string
+      /** 位置 も 直す とき に 渡す (省略 したら 元 の まま) */
+      x?: number
+      y?: number
+      z?: number | null
       type?: CoordinateType
       stakeType?: string | null
       notes?: string | null
@@ -418,6 +422,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         return {
           ...c,
           pointNumber: r.pointNumber ?? c.pointNumber,
+          x: r.x ?? c.x,
+          y: r.y ?? c.y,
+          z: r.z !== undefined ? r.z : c.z,
           type: (r.type ?? c.type) as CoordinateType,
           stakeType: r.stakeType !== undefined ? r.stakeType : c.stakeType,
           notes: r.notes !== undefined ? r.notes : c.notes,
@@ -432,6 +439,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         rows.map(async (r) => {
           const patch: Record<string, unknown> = { updated_by: uid }
           if (r.pointNumber !== undefined) patch.point_number = r.pointNumber
+          if (r.x !== undefined) patch.x = r.x
+          if (r.y !== undefined) patch.y = r.y
+          if (r.z !== undefined) patch.z = r.z
           if (r.type !== undefined) patch.coordinate_type = r.type
           if (r.stakeType !== undefined) patch.stake_type = r.stakeType
           if (r.notes !== undefined) patch.notes = r.notes

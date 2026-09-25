@@ -43,6 +43,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
+import { PlanCadLayers } from '@/components/map/PlanCadLayers'
 import { useFarmMemoStore, EMPTY_FARM_MEMOS } from '@/stores/farmMemoStore'
 import { createMemoIcon, PhotoMarker } from '@/components/map/CoordinateMap'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -731,6 +732,7 @@ export function MobileStakingPage() {
   const farmId = params.get('farmId')
 
   const {
+    currentFarm,
     setCurrentFarm,
     workAreaPolygons,
     fetchWorkAreaPolygons,
@@ -1384,7 +1386,7 @@ export function MobileStakingPage() {
   const MAX_LABELS_IN_VIEW = 50
   // ターゲット動的ズーム（ターゲットを中心にして、現在地も視野に収まるよう自動拡大縮小）
   // 地図ベースレイヤ（地理院の各種タイル / 背景なし）
-  type BaseLayerKey = 'photo' | 'std' | 'pale' | 'blank' | 'none'
+  type BaseLayerKey = 'photo' | 'std' | 'pale' | 'blank' | 'none' | 'cad'
   const BASE_LAYERS: Record<BaseLayerKey, { label: string; url: string; maxNative?: number }> = {
     photo: {
       label: '航空写真',
@@ -1405,6 +1407,12 @@ export function MobileStakingPage() {
       label: '白地図',
       url: 'https://cyberjapandata.gsi.go.jp/xyz/blank/{z}/{x}/{y}.png',
       maxNative: 14,
+    },
+    cad: {
+      // 背景 タイル は 出さ ず、 工区 の 平面図 CAD だけ を 見る
+      label: 'CAD (平面図)',
+      url:
+        'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
     },
     none: {
       label: '背景なし',
@@ -6003,6 +6011,13 @@ export function MobileStakingPage() {
             maxZoom={24}
             maxNativeZoom={currentBase.maxNative ?? 18}
           />
+          {/* 工区 の 平面図 CAD。 種類 で CAD を 選んで いる 間 は 全部 出す */}
+          <PlanCadLayers
+            cads={currentFarm?.plan_cads}
+            zone={zone}
+            forceAll={baseLayer === 'cad'}
+          />
+
           {/* オルソ画像（複数登録時は全て重ねる） */}
           {showOrtho && farmOrthos.map((ortho) => (
             <TileLayer

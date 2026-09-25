@@ -74,6 +74,9 @@ function ratioText(f: number | null): string {
  */
 export function StakeoutModal({
   stationLabel,
+  prevStation,
+  nextStation,
+  onSwitchStation,
   planPoints,
   tombos,
   chohari,
@@ -99,6 +102,10 @@ export function StakeoutModal({
   onRegisterChohari: (
     items: { cho: ChohariPoint; resolved: ResolvedChohari }[],
   ) => Promise<void>
+  /** 前 / 次 の 測点 (端 なら null)。 続けて 計算 できる ように する */
+  prevStation: { id: string; label: string } | null
+  nextStation: { id: string; label: string } | null
+  onSwitchStation: (stationId: string) => void
   picking: PickTarget | null
   onPick: (t: PickTarget | null) => void
   onClose: () => void
@@ -282,6 +289,33 @@ export function StakeoutModal({
             トンボ・丁張計算
             <span className="ml-2 font-mono text-slate-500">{stationLabel}</span>
           </span>
+          {/* 測点 送り。 閉じ ず に 隣 の 断面 を 続けて 計算 できる */}
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => {
+                if (!prevStation) return
+                onPick(null)
+                onSwitchStation(prevStation.id)
+              }}
+              disabled={!prevStation}
+              className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50 disabled:opacity-30"
+              title="前 の 断面"
+            >
+              ◀ {prevStation?.label ?? '—'}
+            </button>
+            <button
+              onClick={() => {
+                if (!nextStation) return
+                onPick(null)
+                onSwitchStation(nextStation.id)
+              }}
+              disabled={!nextStation}
+              className="px-1.5 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50 disabled:opacity-30"
+              title="次 の 断面"
+            >
+              {nextStation?.label ?? '—'} ▶
+            </button>
+          </div>
           <div className="flex gap-1 ml-2">
             <button onClick={() => setTab('tombo')} className={tabCls(tab === 'tombo')}>
               トンボ {tombos.length > 0 && <span className="opacity-70">{tombos.length}</span>}
@@ -470,7 +504,12 @@ export function StakeoutModal({
                       <th className="px-1 py-1 text-left w-44">③ 杭 の 位置 W (m)</th>
                       <th className="px-1 py-1 text-right w-24">杭 の 離れ</th>
                       <th className="px-1 py-1 text-right w-24">丁張高 (m)</th>
-                      <th className="px-1 py-1 text-right w-24">法長 (m)</th>
+                      <th
+                        className="px-1 py-1 text-right w-24"
+                        title="基準点 から 杭 の 位置 まで の 斜長。 W=0 なら 0"
+                      >
+                        法長 (m)
+                      </th>
                       <th className="px-1 py-1 text-right w-24">法勾配</th>
                       <th className="px-1 py-1 w-24" />
                     </tr>
