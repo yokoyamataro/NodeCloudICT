@@ -18,8 +18,14 @@ export interface SurveyRecordSet {
   /** 測量日 (YYYY-MM-DD) */
   measuredOn: string | null
   operator: string | null
-  /** 使用 した 基準局 */
+  /** 使用 した 基準局 (名前 / 種別) */
   baseStation: string | null
+  /** 基準局 の 位置情報 (座標 / 緯度経度 / 点番号 など 自由記入) */
+  baseStationPosition: string | null
+  /** 移動局 の アンテナ 名 / 型番 */
+  antennaName: string | null
+  /** 移動局 の 受信機 名 / 型番 */
+  receiverName: string | null
   settingsNote: string | null
   /** スライド量 */
   slide: SurveySlide
@@ -40,6 +46,9 @@ export type SurveySetPatch = Partial<
     | 'measuredOn'
     | 'operator'
     | 'baseStation'
+    | 'baseStationPosition'
+    | 'antennaName'
+    | 'receiverName'
     | 'settingsNote'
     | 'slide'
     | 'sortOrder'
@@ -60,6 +69,9 @@ function toSet(r: Record<string, unknown>): SurveyRecordSet {
     measuredOn: (r.measured_on as string) ?? null,
     operator: (r.operator as string) ?? null,
     baseStation: (r.base_station as string) ?? null,
+    baseStationPosition: (r.base_station_position as string) ?? null,
+    antennaName: (r.antenna_name as string) ?? null,
+    receiverName: (r.receiver_name as string) ?? null,
     settingsNote: (r.settings_note as string) ?? null,
     slide: { dx: num(r.dx_offset), dy: num(r.dy_offset), dz: num(r.dz_offset) },
     isDefault: r.is_default === true,
@@ -202,6 +214,9 @@ export const useSurveySetStore = create<State>((set, get) => ({
         measured_on: init?.measuredOn ?? null,
         operator: init?.operator ?? null,
         base_station: init?.baseStation ?? null,
+        base_station_position: init?.baseStationPosition ?? null,
+        antenna_name: init?.antennaName ?? null,
+        receiver_name: init?.receiverName ?? null,
         settings_note: init?.settingsNote ?? null,
         dx_offset: init?.slide?.dx ?? 0,
         dy_offset: init?.slide?.dy ?? 0,
@@ -232,6 +247,10 @@ export const useSurveySetStore = create<State>((set, get) => ({
     if (patch.measuredOn !== undefined) body.measured_on = patch.measuredOn
     if (patch.operator !== undefined) body.operator = patch.operator
     if (patch.baseStation !== undefined) body.base_station = patch.baseStation
+    if (patch.baseStationPosition !== undefined)
+      body.base_station_position = patch.baseStationPosition
+    if (patch.antennaName !== undefined) body.antenna_name = patch.antennaName
+    if (patch.receiverName !== undefined) body.receiver_name = patch.receiverName
     if (patch.settingsNote !== undefined) body.settings_note = patch.settingsNote
     if (patch.sortOrder !== undefined) body.sort_order = patch.sortOrder
     if (patch.startedAt !== undefined) body.started_at = patch.startedAt

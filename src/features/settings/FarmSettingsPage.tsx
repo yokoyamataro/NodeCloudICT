@@ -26,6 +26,9 @@ import {
   dateInputToIso,
   isoToDateInput,
 } from '@/features/farms/FarmEditModal'
+import { ACCURACY_LABEL, type AccuracyClass } from '@/lib/landReportKoosa'
+
+const ACCURACY_OPTIONS: AccuracyClass[] = ['a1', 'a2', 'a3', 'b1', 'b2', 'b3']
 
 interface StorageUsage {
   photos_bytes: number
@@ -289,6 +292,27 @@ export function FarmSettingsPage() {
               placeholder="任意"
               className="w-full px-2 py-1.5 border rounded text-sm h-16"
             />
+          </div>
+          <div>
+            <label className="block text-[11px] text-slate-500 mb-1">
+              地図精度区分
+              <span className="ml-1 text-slate-400">(地籍測量: 公差計算に使用)</span>
+            </label>
+            <select
+              value={currentFarm.map_accuracy ?? ''}
+              onChange={(e) => {
+                const v = e.target.value === '' ? null : (e.target.value as AccuracyClass)
+                void updateFarm(currentFarm.id, { map_accuracy: v })
+              }}
+              className="w-full px-2 py-1.5 border rounded text-sm bg-white"
+            >
+              <option value="">(未設定)</option>
+              {ACCURACY_OPTIONS.map((a) => (
+                <option key={a} value={a}>
+                  {ACCURACY_LABEL[a]}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="block text-[11px] text-slate-500 mb-1">着手日 / 完成日</label>

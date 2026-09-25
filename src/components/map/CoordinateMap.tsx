@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { BoundaryKind } from '@/lib/boundaryKind'
 import { MapContainer, TileLayer, Marker, Pane, Polygon, Polyline, useMap, useMapEvents, Tooltip, Popup } from 'react-leaflet'
 import L from 'leaflet'
@@ -538,6 +538,78 @@ export interface ExternalPolygon {
   boundaryKind?: BoundaryKind
 }
 
+// 隣接 筆 で 共有 する 辺 を 1 本 に 束ねる ための 辺 表現。
+// 同じ 2 端点 (pointId ペア、または 座標 の 丸め) を 持つ 辺 は 1 つ に まとめ、
+// owners に 元 の ポリゴン を 全部 記録 する。
+// 使い方: fill は Polygon (stroke なし) で 各筆 に 出す、外形線 は これ で
+// Polyline に 出す。 → 隣接 辺 の 二重描画 が 消える。
+interface DedupedParcelEdge {
+  key: string
+  positions: [[number, number], [number, number]]
+  owners: ExternalPolygon[]
+}
+
+function extractDedupedEdges(polygons: ExternalPolygon[]): DedupedParcelEdge[] {
+  const m = new Map<string, DedupedParcelEdge>()
+  const round = (v: number) => v.toFixed(8)
+  for (const p of polygons) {
+    const n = p.positions.length
+    if (n < 2) continue
+    const usePid = p.pointIds != null && p.pointIds.length === n
+    for (let i = 0; i < n; i++) {
+      const a = p.positions[i]
+      const b = p.positions[(i + 1) % n]
+      let k1: string
+      let k2: string
+      if (usePid) {
+        k1 = p.pointIds![i]
+        k2 = p.pointIds![(i + 1) % n]
+      } else {
+        k1 = `${round(a[0])},${round(a[1])}`
+        k2 = `${round(b[0])},${round(b[1])}`
+      }
+      const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`
+      const hit = m.get(key)
+      if (hit) hit.owners.push(p)
+      else m.set(key, { key, positions: [a, b], owners: [p] })
+    }
+  }
+  return [...m.values()]
+}
+
+// 共有 辺 の スタイル は 「所有者 の どれ か が 強調 中 か」 で 決める。
+// 優先度: editing > checked > selected > 通常。 通常 の 線 の 実線 / 破線 は
+// 「所有者 に 確定境界 が 1 つ でも あれば 実線」 (安全側)。
+function computeEdgeStyle(
+  edge: DedupedParcelEdge,
+  ctx: {
+    editingId?: string | null
+    selectedId?: string | null
+    checkedIds?: Set<string> | null
+  },
+): { color: string; weight: number; dashArray?: string } {
+  let editing = false
+  let checked = false
+  let selected = false
+  let hasFinal = false
+  let firstAttrColor: string | undefined
+  for (const o of edge.owners) {
+    if (ctx.editingId && o.id === ctx.editingId) editing = true
+    if (ctx.checkedIds?.has(o.id)) checked = true
+    if (ctx.selectedId && o.id === ctx.selectedId) selected = true
+    if (o.boundaryKind !== 'provisional') hasFinal = true
+    if (!firstAttrColor && o.attributeColor) firstAttrColor = o.attributeColor
+  }
+  if (editing) return { color: '#16a34a', weight: 3, dashArray: '5, 5' }
+  if (checked) return { color: '#ea580c', weight: 3 }
+  if (selected) return { color: '#f97316', weight: 3 }
+  return {
+    color: firstAttrColor ?? '#22c55e',
+    weight: 2,
+    dashArray: hasFinal ? undefined : '4, 4',
+  }
+}
+
 interface CoordinateMapProps {
   selectedPointId?: string | null
   onPointSelect?: (id: string) => void
@@ -734,6 +806,13 @@ export function CoordinateMap({
       c.lat !== null && c.lng !== null
   )
 
+  // 地番 (外部ポリゴン) の 辺 を dedupe。 隣接筆 で 共有 する 辺 は 1 本 に
+  // まとめて 描いて 二重描画 を 消す。 O(N) で 済むし useMemo で キャッシュ される。
+  const dedupedParcelEdges = useMemo(
+    () => extractDedupedEdges(externalPolygons.filter((p) => p.positions.length >= 3)),
+    [externalPolygons],
+  )
+
   // 表示対象の座標をフィルタリング（点種 + 設置状態）
   const displayCoordinates = validCoordinates.filter((c) => {
     if (visibleTypes && !visibleTypes.has(c.type)) return false
@@ -870,7 +949,9 @@ export function CoordinateMap({
       {/* 外部から渡されたポリゴン（workAreaStore など）。地番ポリゴンは
           4000+ になるので、500 件超なら zoom 16 以上 + 画面内のみ描画する。
           地番名は 引いた 図では 潰れて 読めない ので、件数に かかわらず
-          zoom 19 以上 でのみ 出す。 */}
+          zoom 19 以上 でのみ 出す。
+          外形線 は 隣接筆 の 二重描画 を 避ける ため、
+          fill (Polygon, stroke なし) と 辺 (dedupe 後 Polyline) の 2 段構成 で 描く。 */}
       <InPane name="cm-parcels" zIndex={elementPanes?.parcels}>
       <HighDensityList
         items={externalPolygons.filter((p) => p.positions.length >= 3)}
@@ -889,8 +970,7 @@ export function CoordinateMap({
           const isChecked = checkedExternalPolygonIds?.has(polygon.id) ?? false
           const isSelected =
             !isEditing && polygon.id === selectedExternalPolygonId
-          // 優先度: editing (緑破線) > checked (オレンジ濃) > selected (オレンジ薄) >
-          //         属性色 (指定されていれば) > デフォルト (緑)
+          // 優先度: editing > checked > selected > 属性色 > デフォルト (緑)
           const baseColor = polygon.attributeColor ?? '#22c55e'
           const color = isEditing
             ? '#16a34a'
@@ -908,23 +988,16 @@ export function CoordinateMap({
             : polygon.attributeColor
             ? 0.4
             : 0.2
-          const weight = isEditing ? 3 : isChecked ? 3 : isSelected ? 3 : 2
           return (
             <Polygon
               key={polygon.id}
               positions={polygon.positions}
               pathOptions={{
-                color,
+                // 外形線 は 別 レイヤ (dedupe 済み Polyline) で 描く ので、
+                // ここ は fill だけ に して stroke を 消す。
+                stroke: false,
                 fillColor: color,
                 fillOpacity,
-                weight,
-                // 編集中 は 緑の 破線。 それ以外 で 仮境界 なら 細かい 破線 に して
-                // 確定境界 (実線) と 一目で 見分けられる ように する
-                dashArray: isEditing
-                  ? '5, 5'
-                  : polygon.boundaryKind === 'provisional'
-                    ? '4, 4'
-                    : undefined,
               }}
               eventHandlers={
                 onPolygonSelect
@@ -950,6 +1023,43 @@ export function CoordinateMap({
                 </Tooltip>
               )}
             </Polygon>
+          )
+        }}
+      />
+      {/* 外形 の 辺。 隣接 筆 で 共有 する 辺 は 1 本 に まとめて 描く。
+          描画 数 は 大まかに 半分 に なり、仮境界 の ダッシュ の 位相 ずれ や
+          Z ファイティング も 起きない。 */}
+      <HighDensityList
+        items={dedupedParcelEdges}
+        threshold={500}
+        zoomMin={16}
+        keep={(e) =>
+          e.owners.some(
+            (o) =>
+              o.id === editingExternalPolygonId ||
+              o.id === selectedExternalPolygonId ||
+              (checkedExternalPolygonIds?.has(o.id) ?? false),
+          )
+        }
+        getPolygonPositions={(e) => e.positions}
+        render={(edge) => {
+          const st = computeEdgeStyle(edge, {
+            editingId: editingExternalPolygonId,
+            selectedId: selectedExternalPolygonId,
+            checkedIds: checkedExternalPolygonIds ?? null,
+          })
+          return (
+            <Polyline
+              key={edge.key}
+              positions={edge.positions}
+              // クリック は 下 の fill (Polygon) に 通したい ので 辺 は 非対話
+              interactive={false}
+              pathOptions={{
+                color: st.color,
+                weight: st.weight,
+                dashArray: st.dashArray,
+              }}
+            />
           )
         }}
       />

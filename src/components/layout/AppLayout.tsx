@@ -43,6 +43,7 @@ import {
   Building2,
   LayoutTemplate,
   CalendarClock,
+  ClipboardCheck,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -178,8 +179,16 @@ function NavNode({
 const navigation: NavGroup[] = [
   // 「工区選択に戻る」は サイドバー 上部 の 小型ボタン に 移動 済み (navigation には 入れない)
   { name: '全体図', href: '/orthophoto', icon: ImageIcon },
-  { name: '座標管理', href: '/coordinates', icon: Map },
-  { name: '実測記録', href: '/staking-records', icon: FileSearch },
+  {
+    name: '座標管理',
+    href: '/coordinates',
+    icon: Map,
+    children: [
+      { name: '座標一覧', href: '/coordinates', icon: Map },
+      { name: '実測記録', href: '/staking-records', icon: FileSearch },
+      { name: '座標比較表', href: '/staking-records/accuracy', icon: ClipboardCheck },
+    ],
+  },
   // 地籍測量: 「地番管理」と「地権者管理」をフラットに並べる
   { name: '地番管理', href: '/boundary-survey/work-area', icon: Compass },
   { name: '地権者管理', href: '/boundary-survey/landowners', icon: Users },

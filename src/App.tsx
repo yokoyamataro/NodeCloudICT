@@ -34,6 +34,7 @@ import { PipeWiringPage } from '@/features/underdrain/PipeWiringPage'
 import { DepthCalcPage } from '@/features/underdrain/DepthCalcPage'
 import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
 import { StakingRecordsPage } from '@/features/underdrain/StakingRecordsPage'
+import { SurveyAccuracyPage } from '@/features/underdrain/SurveyAccuracyPage'
 import { FarmMemosPage } from '@/features/memo/FarmMemosPage'
 // 境界測量
 import { BoundarySurveyWorkAreaPage } from '@/features/boundary-survey/BoundarySurveyWorkAreaPage'
@@ -332,6 +333,7 @@ function AppRoutes() {
         <Route path="coordinates" element={<CoordinatesPage />} />
         {/* スマホで記録した測設記録の一覧（工区横断のトップレベル経路） */}
         <Route path="staking-records" element={<StakingRecordsPage />} />
+        <Route path="staking-records/accuracy" element={<SurveyAccuracyPage />} />
         {/* 工区メモ */}
         <Route path="memos" element={<FarmMemosPage />} />
         {/* 境界測量 */}

@@ -28,6 +28,12 @@ export interface Farm {
    * 工区 単位 な ので 全 工種 と スマホ で 共通。 未適用 の DB で は undefined。
    */
   plan_cads?: FarmPlanCad[] | null
+  /**
+   * 地籍測量 の 地図精度区分 (甲一〜乙三)。
+   * 09 甲差検証 の 公差計算 で 使う。 未設定 は null。
+   * 値: 'a1' | 'a2' | 'a3' | 'b1' | 'b2' | 'b3'
+   */
+  map_accuracy?: 'a1' | 'a2' | 'a3' | 'b1' | 'b2' | 'b3' | null
 }
 
 /** 背景 に 敷く 平面図 CAD 1 枚 ぶん */
@@ -134,6 +140,7 @@ interface FarmState {
         | 'completed_at'
         | 'parcel_map_bbox'
         | 'plan_cads'
+        | 'map_accuracy'
       >
     >,
   ) => Promise<void>

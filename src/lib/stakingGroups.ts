@@ -87,7 +87,29 @@ export function deriveRow(
 
 
 /**
- * 記録 を 行 に 束ねる。
+ * 記録 を 手簿・記簿 用 に フラット (1 記録 = 1 行) で 並べる。
+ *  観測 データ を 素直 に 一覧 する ため の 関数。
+ *  差分 / 平均 の 計算 は 「座標精度管理表」 の 方 で 別途 行う。
+ */
+export function flattenStakingRecords(records: StakingRecord[]): StakingGroup[] {
+  const sorted = [...records].sort((a, b) =>
+    b.recordedAt.localeCompare(a.recordedAt),
+  )
+  return sorted.map<StakingGroup>((r) => ({
+    key: r.id,
+    designName: r.targetName ?? '',
+    designX: r.targetX,
+    designY: r.targetY,
+    designZ: r.targetZ,
+    surveyCategory: r.surveyCategory,
+    targetType: r.targetType,
+    m1: r,
+    m2: null,
+  }))
+}
+
+/**
+ * 記録 を 行 に 束ねる。 (旧 実測1/実測2 ペア表示 用、精度管理 で 使用)
  *  (1) 当初 の 座標 に リンク 済み … targetRefId ごと。 3 件 以上 は 2 件 ずつ 追加行。
  *  (2) free 記録 … pairedWithId が 相互 参照 に なって いる 2 件 を ペア に。
  * 並び は 実測1 の 記録日時 の 新しい 順。

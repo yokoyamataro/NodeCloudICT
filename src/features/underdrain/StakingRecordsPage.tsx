@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X, ChevronsLeft, ChevronsRight, Settings2 } from 'lucide-react'
+import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X, Settings2 } from 'lucide-react'
 import { Marker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useFarmStore } from '@/stores/farmStore'
@@ -10,7 +10,12 @@ import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { CoordinateConverter, COORDINATE_TYPE_NAMES, type CoordinateType } from '@/lib/coordinates'
 import { supabase } from '@/lib/supabase'
 import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
-import { deriveRow, groupStakingRecords, type StakingGroup } from '@/lib/stakingGroups'
+import {
+  deriveRow,
+  flattenStakingRecords,
+  groupStakingRecords,
+  type StakingGroup,
+} from '@/lib/stakingGroups'
 
 // SurveyRecordSetsPanel は 全 セッション 一覧 用 だった が、詳細モーダル は
 // 現在 セッション 1 件 のみ を 直接 表示 する 方針 に 変更したため 使わない。
@@ -61,22 +66,9 @@ const TABLE_SECTIONS: Array<{
   cols: Array<{ label: string; align: 'left' | 'right'; isZ?: boolean; hasHorizontal?: boolean }>
 }> = [
   {
-    key: 'design',
-    label: '当初',
-    headerTitle: '当初 の 設計座標 (座標管理 と リンク 済み の 場合 の み)',
-    bgHeader: 'bg-slate-50',
-    bgSub: '',
-    cols: [
-      { label: '点名', align: 'left' },
-      { label: 'X', align: 'right' },
-      { label: 'Y', align: 'right' },
-      { label: 'Z', align: 'right', isZ: true },
-    ],
-  },
-  {
     key: 'm1',
-    label: '実測1',
-    headerTitle: '1 回目 の 実測',
+    label: '実測',
+    headerTitle: '観測値 (点名 / X / Y / Z)',
     bgHeader: 'bg-orange-50',
     bgSub: 'bg-orange-50',
     cols: [
@@ -86,81 +78,8 @@ const TABLE_SECTIONS: Array<{
       { label: 'Z', align: 'right', isZ: true },
     ],
   },
-  {
-    key: 'm2',
-    label: '実測2',
-    headerTitle: '2 回目 の 実測。 別 の 実測点 を リンク で 割り付け 可能。',
-    bgHeader: 'bg-orange-50',
-    bgSub: 'bg-orange-50',
-    cols: [
-      { label: '点名', align: 'left' },
-      { label: 'X', align: 'right' },
-      { label: 'Y', align: 'right' },
-      { label: 'Z', align: 'right', isZ: true },
-    ],
-  },
-  {
-    key: 'diff',
-    label: '実測差',
-    headerTitle: '実測1 と 実測2 の 差 (実測2 - 実測1)',
-    bgHeader: 'bg-rose-50',
-    bgSub: 'bg-rose-50',
-    cols: [
-      { label: 'dX', align: 'right' },
-      { label: 'dY', align: 'right' },
-      { label: 'dZ', align: 'right', isZ: true },
-    ],
-  },
-  {
-    key: 'avg',
-    label: '実測平均',
-    headerTitle: '実測1 と 実測2 の 平均 (実測2 が 無ければ 実測1)。 生値。',
-    bgHeader: 'bg-emerald-50',
-    bgSub: 'bg-emerald-50',
-    cols: [
-      { label: 'X', align: 'right' },
-      { label: 'Y', align: 'right' },
-      { label: 'Z', align: 'right', isZ: true },
-    ],
-  },
-  {
-    key: 'dvs',
-    label: '実測平均 - 当初',
-    headerTitle:
-      '生 の 差 (実測平均 - 当初)。 水平 = √(dX²+dY²)。 この 値 を スライド量 に 入れると 中央値 が 揃う。',
-    bgHeader: 'bg-blue-50',
-    bgSub: 'bg-blue-50',
-    cols: [
-      { label: 'dX', align: 'right' },
-      { label: 'dY', align: 'right' },
-      { label: 'dZ', align: 'right', isZ: true },
-      { label: '水平', align: 'right', hasHorizontal: true },
-    ],
-  },
-  {
-    key: 'slidedD',
-    label: 'スライド値',
-    headerTitle: '当初 を 実測 に 近づける: 当初 + スライド量',
-    bgHeader: 'bg-fuchsia-50',
-    bgSub: 'bg-fuchsia-50',
-    cols: [
-      { label: 'X', align: 'right' },
-      { label: 'Y', align: 'right' },
-      { label: 'Z', align: 'right', isZ: true },
-    ],
-  },
-  {
-    key: 'revSlideM',
-    label: '補正実測値',
-    headerTitle: '実測平均 を 当初 に 近づける: 実測平均 - スライド量。 出力 の 既定。',
-    bgHeader: 'bg-cyan-50',
-    bgSub: 'bg-cyan-50',
-    cols: [
-      { label: 'X', align: 'right' },
-      { label: 'Y', align: 'right' },
-      { label: 'Z', align: 'right', isZ: true },
-    ],
-  },
+  // 当初 (design) / 実測2 / 差 / 平均 / スライド 系 は 座標精度管理表 側 で 扱う。
+  // 実測記録 は 素直 な 観測ログ (手簿 / 記簿) の みで 表示 する。
 ]
 
 // 座標管理 の 点種 色 (CoordinateMap の MARKER_COLORS と 合わせる)。
@@ -249,20 +168,19 @@ export function StakingRecordsPage() {
   const [visibleTypesState, setVisibleTypesState] = useState<Set<string> | null>(null)
 
   // 表 の 列 表示 制御。 セクション 単位 で 折りたたみ + Z 列 全体 を まとめて 非表示。
-  const [hiddenSections, setHiddenSections] = useState<Set<string>>(new Set())
+  const [hiddenSections] = useState<Set<string>>(new Set())
   const [showZ, setShowZ] = useState<boolean>(true)
 
   // 座標管理 に 登録 する 行 の 選択 (グループ.key 単位)
   const [selectedGroupKeys, setSelectedGroupKeys] = useState<Set<string>>(new Set())
-  const isHidden = (key: string) => hiddenSections.has(key)
-  const toggleSection = (key: string) => {
-    setHiddenSections((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
+  // TABLE_SECTIONS に 存在 しない キー (m2 / diff / avg / dvs / slidedD /
+  // revSlideM) は 常に 非表示 扱い。 これら の 表示 は 座標精度管理表 側 で 行う。
+  const VALID_SECTION_KEYS = useMemo(
+    () => new Set(TABLE_SECTIONS.map((s) => s.key as string)),
+    [],
+  )
+  const isHidden = (key: string) =>
+    !VALID_SECTION_KEYS.has(key) || hiddenSections.has(key)
 
   useEffect(() => {
     if (currentFarm) {
@@ -582,12 +500,36 @@ export function StakingRecordsPage() {
 
   const [setTab, setSetTab] = useState<string>('all')
   const setTabFarmRef = useRef<string | null>(null)
+  // 工区 の 記録 の 中 で 「直近 の 記録」 が 属する セット を 選ぶ ため の ヘルパ。
+  // 記録 が まだ 無い / 未振り分け しか 無い ときは null。
+  const pickMostRecentSetId = (): string | null => {
+    const farmId = currentFarm?.id ?? null
+    if (!farmId) return null
+    let bestSet: string | null = null
+    let bestAt = ''
+    for (const r of records) {
+      if (r.farmId !== farmId) continue
+      if (!r.recordSetId) continue
+      if (r.recordedAt > bestAt) {
+        bestAt = r.recordedAt
+        bestSet = r.recordSetId
+      }
+    }
+    return bestSet
+  }
   useEffect(() => {
     const farmId = currentFarm?.id ?? null
     const farmChanged = setTabFarmRef.current !== farmId
     setTabFarmRef.current = farmId
     if (farmChanged) {
-      // 工区 を 変えた とき / 初回 は 既定 セット へ 寄せる
+      // 工区 を 変えた とき / 初回:
+      //   1) 直近 の 記録 が 属する セット を 優先 (ユーザー が 直前 に 使って いた 場)
+      //   2) 既定 セット、 3) 先頭 の セット、 4) 未振り分け 'none'
+      const recent = pickMostRecentSetId()
+      if (recent) {
+        setSetTab(recent)
+        return
+      }
       const def = sets.find((x) => x.isDefault) ?? sets[0]
       setSetTab(def ? def.id : 'none')
       return
@@ -595,10 +537,32 @@ export function StakingRecordsPage() {
     // セット が 消えた ときだけ 寄せ 直す (選択中 の タブ は 保つ)
     setSetTab((prev) => {
       if (prev === 'none' || sets.some((x) => x.id === prev)) return prev
+      const recent = pickMostRecentSetId()
+      if (recent) return recent
       const def = sets.find((x) => x.isDefault) ?? sets[0]
       return def ? def.id : 'none'
     })
+    // 記録 の 到着 は 別 の 依存 で 走る の で ここ で は 無視 (records)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentFarm?.id, sets])
+
+  // records が 後 から 届いた 場合、初回 の 「直近 セット」 選択 を もう 1 回 試す
+  const initialRecentPickedRef = useRef(false)
+  useEffect(() => {
+    if (initialRecentPickedRef.current) return
+    if (!currentFarm?.id) return
+    const recent = pickMostRecentSetId()
+    if (recent) {
+      setSetTab(recent)
+      initialRecentPickedRef.current = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentFarm?.id, records, sets])
+
+  // 工区 が 変わった タイミング で 初回選択 フラグ を リセット
+  useEffect(() => {
+    initialRecentPickedRef.current = false
+  }, [currentFarm?.id])
 
   /**
    * スライド量 の 保存先。 いま 見て いる タブ に 合わせる:
@@ -672,7 +636,11 @@ export function StakingRecordsPage() {
     return m
   }, [records, currentFarm?.id])
 
-  const grouped = useMemo<StakingGroup[]>(() => groupStakingRecords(filtered), [filtered])
+  // 実測記録 は 素直 な 手簿 / 記簿 形式 (1 記録 = 1 行) で 表示。
+  // 差分 / 平均 の 表示 は サブメニュー の 「座標精度管理表」 で 行う。
+  const grouped = useMemo<StakingGroup[]>(() => flattenStakingRecords(filtered), [filtered])
+  // groupStakingRecords は 今後 精度管理表 で 使う 予定 (import の 保持 の ため 参照)
+  void groupStakingRecords
 
   // 平均誤差・件数 の 簡易サマリ。 平均 dX / dY は 実測平均 と 設計 の 生 の 差
   // (実測 - 設計) を グループ 全体 で 平均。 スライド量 を どう 設定 すれば 良い か
@@ -819,8 +787,11 @@ export function StakingRecordsPage() {
       ]
       const push = (sec: SectionKey, vals: (string | number | null)[]) => {
         if (isHidden(sec)) return
-        const defs = TABLE_SECTIONS.find((s) => s.key === sec)!.cols
-        defs.forEach((c, i) => {
+        // 実測記録 は 素直な観測ログ に する ため design / m1 以外 は TABLE_SECTIONS
+        // から 除外 済み。 find で 見つから ない セクション は 静か に スキップ。
+        const found = TABLE_SECTIONS.find((s) => s.key === sec)
+        if (!found) return
+        found.cols.forEach((c, i) => {
           if (c.isZ && !showZ) return
           values.push(vals[i] ?? null)
         })
@@ -1052,86 +1023,7 @@ export function StakingRecordsPage() {
         </div>
       )}
 
-      {/* 上半分: 地図 (座標管理 と 同じ CoordinateMap)。設計座標 を クリック
-          で 事後リンク 可能。実測点 は オレンジ 十字マーカー で 表示。
-          overflow-hidden + isolate で 地図 内 の z-[1000] HUD が 下 の テーブル
-          に 被らない ように 独立 スタッキング コンテキスト を 作る。 */}
-      <div className="flex-1 min-h-0 border-b-2 border-slate-300 relative overflow-hidden isolate">
-        <CoordinateMap
-          farmId={currentFarm.id}
-          showLabels
-          visibleTypes={effectiveVisibleTypes}
-          // 実測記録 と リンク 済み の 設計座標 は 実測点マーカー が 主役 に
-          // なる ので dim (小さく + 半透明 + ラベル 非表示 + zIndex 後退) する。
-          dimmedCoordIds={linkedCoordIds}
-          onPointSelect={handleCoordSelectOnMap}
-        >
-          {/* 行 選択時 の 地図 pan/zoom */}
-          <RecordZoomController target={zoomTarget} />
-          {/* 誤差ベクトル (設計座標 と リンク 済み 実測点 を つなぐ 破線)。
-              単なる 描画 レイヤー なので デフォルト overlayPane で OK。 */}
-          {measuredPointsForMap.map((m) => {
-            const linkedCoord =
-              m.record.targetType === 'coordinate' && m.record.targetRefId
-                ? coordinates.find((c) => c.id === m.record.targetRefId)
-                : null
-            if (!linkedCoord) return null
-            const linkedLL = converter.toLatLng(linkedCoord.x, linkedCoord.y)
-            return (
-              <Polyline
-                key={`line-${m.id}`}
-                positions={[
-                  [linkedLL.lat, linkedLL.lng],
-                  [m.lat, m.lng],
-                ]}
-                pathOptions={{
-                  color: '#f97316',
-                  weight: 1.5,
-                  opacity: 0.7,
-                  dashArray: '3,3',
-                }}
-              />
-            )
-          })}
-          {/* 実測点マーカー は Marker (HTML divIcon) で 描画。 CircleMarker (SVG) は
-              custom pane に 入れて も 一部 環境 で クリック が 通らない ケース が
-              あった ため、確実 に クリック を 受け取れる Marker + divIcon に 変更。
-              zIndexOffset=1000 で 設計座標 マーカー (offset 0) より 上に。 */}
-          {measuredPointsForMap.map((m) => {
-            const isSelected = selectedRecordId === m.id
-            const isPending = pendingLinkM2ForM1Id === m.id
-            const fill = m.record.surveyCategory === 'asbuilt' ? '#10b981' : '#f97316'
-            return (
-              <Marker
-                key={`meas-${m.id}`}
-                position={[m.lat, m.lng]}
-                icon={createMeasuredIcon({ fill, isSelected, isPending })}
-                zIndexOffset={isPending ? 2000 : 1000}
-                eventHandlers={{
-                  click: () => handleMeasuredMarkerClick(m.id),
-                }}
-              >
-                <Tooltip
-                  permanent
-                  direction="right"
-                  offset={[10, 0]}
-                  className="point-label-tooltip"
-                >
-                  <span
-                    style={{
-                      color: fill,
-                      textShadow:
-                        '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
-                    }}
-                  >
-                    {m.record.targetName ?? '(実測)'}
-                  </span>
-                </Tooltip>
-              </Marker>
-            )
-          })}
-        </CoordinateMap>
-      </div>
+      {/* 地図 は 左右 分割 の 右側 に 移動 (下 の 左右 スプリット 内) */}
 
       {/* 記録セット の タブ。 セット を 分けた 以上、1 つ ずつ 見る 方 が 分かり やすい。
           右端 の 「+ セット」 が セット を 作る 唯一 の 入口。 */}
@@ -1260,7 +1152,7 @@ export function StakingRecordsPage() {
         </span>
       </div>
 
-      {/* 列 表示 切替: Z 列 の 一括 非表示 のみ (各セクション の 折りたたみ は 見出し 内 の アイコン) */}
+      {/* 列 表示 切替: Z 列 の 一括 非表示 のみ */}
       <div className="px-3 py-1 border-b bg-slate-50 flex items-center gap-2 text-[11px] text-slate-500">
         <label className="flex items-center gap-1">
           <input
@@ -1270,14 +1162,12 @@ export function StakingRecordsPage() {
           />
           Z 列 を 表示
         </label>
-        <span className="ml-2 text-slate-400">
-          各 列 の 見出し ≪ / ≫ で 折りたたみ / 展開
-        </span>
       </div>
 
-      {/* 下半分: テーブル (isolate で テーブル 内 の sticky thead の z-index が
-          地図側 と 干渉 しない ように 独立 スタッキング コンテキスト を 作る) */}
-      <div className="flex-1 min-h-0 min-w-0 overflow-auto bg-white isolate">
+      {/* 左右 分割: 左 = テーブル、右 = 地図。
+          isolate で テーブル 内 sticky thead の z-index が 地図側 と 干渉 しない。 */}
+      <div className="flex-1 min-h-0 flex overflow-hidden">
+      <div className="flex-1 min-h-0 min-w-0 overflow-auto bg-white isolate border-r-2 border-slate-300">
         {loading ? (
           <div className="h-full flex items-center justify-center text-slate-500">
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
@@ -1316,24 +1206,7 @@ export function StakingRecordsPage() {
                   種別
                 </th>
                 {TABLE_SECTIONS.map((sec) => {
-                  if (isHidden(sec.key)) {
-                    return (
-                      <th
-                        key={sec.key}
-                        rowSpan={2}
-                        onClick={() => toggleSection(sec.key)}
-                        className="border-b border-r bg-slate-200 text-slate-500 hover:bg-slate-300 cursor-pointer w-6 text-center"
-                        title={`${sec.label} を 展開`}
-                      >
-                        <span className="inline-flex flex-col items-center gap-0.5 py-1">
-                          <ChevronsRight className="h-3 w-3" />
-                          <span className="[writing-mode:vertical-rl] text-[10px] tracking-tighter">
-                            {sec.label}
-                          </span>
-                        </span>
-                      </th>
-                    )
-                  }
+                  if (isHidden(sec.key)) return null
                   const cs = sec.cols.filter((c) => showZ || !c.isZ).length
                   return (
                     <th
@@ -1342,17 +1215,7 @@ export function StakingRecordsPage() {
                       colSpan={cs}
                       title={sec.headerTitle}
                     >
-                      <span className="inline-flex items-center gap-1 justify-center">
-                        <span>{sec.label}</span>
-                        <button
-                          type="button"
-                          onClick={() => toggleSection(sec.key)}
-                          className="p-0.5 rounded hover:bg-white/70 text-slate-500 hover:text-slate-700"
-                          title={`${sec.label} を 折りたたむ`}
-                        >
-                          <ChevronsLeft className="h-3 w-3" />
-                        </button>
-                      </span>
+                      {sec.label}
                     </th>
                   )
                 })}
@@ -1795,6 +1658,80 @@ export function StakingRecordsPage() {
         )}
       </div>
 
+      {/* 右側: 地図 (座標管理 と 同じ CoordinateMap)。設計座標 を クリック
+          で 事後リンク 可能。 実測点 は オレンジ 十字マーカー で 表示。
+          isolate で 地図 内 の z-[1000] HUD が 隣 の テーブル に 被らない よう
+          独立 スタッキング コンテキスト を 作る。 */}
+      <div className="flex-1 min-h-0 min-w-0 relative overflow-hidden isolate">
+        <CoordinateMap
+          farmId={currentFarm.id}
+          showLabels
+          visibleTypes={effectiveVisibleTypes}
+          dimmedCoordIds={linkedCoordIds}
+          onPointSelect={handleCoordSelectOnMap}
+        >
+          <RecordZoomController target={zoomTarget} />
+          {measuredPointsForMap.map((m) => {
+            const linkedCoord =
+              m.record.targetType === 'coordinate' && m.record.targetRefId
+                ? coordinates.find((c) => c.id === m.record.targetRefId)
+                : null
+            if (!linkedCoord) return null
+            const linkedLL = converter.toLatLng(linkedCoord.x, linkedCoord.y)
+            return (
+              <Polyline
+                key={`line-${m.id}`}
+                positions={[
+                  [linkedLL.lat, linkedLL.lng],
+                  [m.lat, m.lng],
+                ]}
+                pathOptions={{
+                  color: '#f97316',
+                  weight: 1.5,
+                  opacity: 0.7,
+                  dashArray: '3,3',
+                }}
+              />
+            )
+          })}
+          {measuredPointsForMap.map((m) => {
+            const isSelected = selectedRecordId === m.id
+            const isPending = pendingLinkM2ForM1Id === m.id
+            const fill = m.record.surveyCategory === 'asbuilt' ? '#10b981' : '#f97316'
+            return (
+              <Marker
+                key={`meas-${m.id}`}
+                position={[m.lat, m.lng]}
+                icon={createMeasuredIcon({ fill, isSelected, isPending })}
+                zIndexOffset={isPending ? 2000 : 1000}
+                eventHandlers={{
+                  click: () => handleMeasuredMarkerClick(m.id),
+                }}
+              >
+                <Tooltip
+                  permanent
+                  direction="right"
+                  offset={[10, 0]}
+                  className="point-label-tooltip"
+                >
+                  <span
+                    style={{
+                      color: fill,
+                      textShadow:
+                        '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                    }}
+                  >
+                    {m.record.targetName ?? '(実測)'}
+                  </span>
+                </Tooltip>
+              </Marker>
+            )
+          })}
+        </CoordinateMap>
+      </div>
+      </div>
+      {/* /左右 分割 */}
+
       {/* 実測2 選択 モーダル: 5cm 以内 の 候補 リスト から 選ぶ。
           地図上 で は 実測1 と ほぼ 重なる ため マーカー クリック では
           選び分け が 難しい ので、この 方式 に した。 */}
@@ -2078,6 +2015,45 @@ export function StakingRecordsPage() {
                       })
                     }
                     placeholder="例: ネットワーク型RTK / 自営局"
+                  />
+                </label>
+                <label className="block col-span-2">
+                  <span className="text-[11px] text-slate-500">基準局 位置情報</span>
+                  <input
+                    className="w-full px-2 py-1 border rounded font-mono"
+                    value={slideTargetSet.baseStationPosition ?? ''}
+                    onChange={(e) =>
+                      void updateSet(slideTargetSet.id, {
+                        baseStationPosition: e.target.value || null,
+                      })
+                    }
+                    placeholder="例: TS7788 / X=-3826589.785 Y=3449477.552 Z=3748335.634"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] text-slate-500">アンテナ名</span>
+                  <input
+                    className="w-full px-2 py-1 border rounded"
+                    value={slideTargetSet.antennaName ?? ''}
+                    onChange={(e) =>
+                      void updateSet(slideTargetSet.id, {
+                        antennaName: e.target.value || null,
+                      })
+                    }
+                    placeholder="例: DG-PRO1RWS_HA / 1232"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] text-slate-500">受信機</span>
+                  <input
+                    className="w-full px-2 py-1 border rounded"
+                    value={slideTargetSet.receiverName ?? ''}
+                    onChange={(e) =>
+                      void updateSet(slideTargetSet.id, {
+                        receiverName: e.target.value || null,
+                      })
+                    }
+                    placeholder="例: DG-PRO1RWS_HA / 1231"
                   />
                 </label>
               </div>

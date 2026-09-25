@@ -726,6 +726,23 @@ function createHeadingIcon(heading: number): L.DivIcon {
   })
 }
 
+/**
+ * 同名 の 座標 と 衝突 しない よう 「name」「name-2」「name-3」…と
+ * 空き 番号 を 探す。 GNSS 観測 を 1 観測 = 1 座標 で 全部 登録 する ため に 使う。
+ * 大文字小文字 は 完全一致 で 比較 (受信機 の point number は 通常 半角英数)。
+ */
+function nextUniqueCoordName(base: string, existing: readonly string[]): string {
+  const trimmed = base.trim() || '点'
+  const set = new Set(existing)
+  if (!set.has(trimmed)) return trimmed
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${trimmed}-${i}`
+    if (!set.has(candidate)) return candidate
+  }
+  // 999 件 まで 埋まる こと は 現実 的 に ない が 保険 と して タイムスタンプ 付与
+  return `${trimmed}-${Date.now()}`
+}
+
 export function MobileStakingPage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -3964,29 +3981,30 @@ export function MobileStakingPage() {
         return
       }
       {
-        // 座標管理にも自動登録（新点と同じ扱い）。
-        // 点種は「実測点 = measured」、出所が分かるよう notes に
-        // 'mobile_measurement' を入れる。同名が既に居る場合はスキップ。
-        const existsName = coordinates.some((c) => c.pointNumber === stakeRecordName)
-        if (!existsName) {
-          const inserted = await importCoordinates([
-            {
-              pointNumber: stakeRecordName,
-              x,
-              y,
-              z: avgAlt,
-              type: 'measured' as unknown as CoordinateRow['type'],
-              notes: measureNote,
-            },
-          ])
-          if (inserted.length > 0) {
-            setShareToast(`${stakeRecordName} を座標管理にも登録`)
-            window.setTimeout(() => setShareToast(null), 2500)
-          } else {
-            const errMsg = useCoordinateStore.getState().error ?? '不明なエラー'
-            setShareToast(`${stakeRecordName} の座標管理登録に失敗: ${errMsg}`)
-            window.setTimeout(() => setShareToast(null), 4500)
-          }
+        // 座標管理にも自動登録。 1 GNSS 観測 = 1 座標 の 方針 に した ので、
+        // 同名 が 既に あれば 「name-2」「name-3」…と 空き 番号 を 付与 して
+        // 必ず 登録 する。 手簿 / 記簿 で 全 観測 を 別行 で 扱える ように する。
+        const uniqueName = nextUniqueCoordName(
+          stakeRecordName,
+          coordinates.map((c) => c.pointNumber),
+        )
+        const inserted = await importCoordinates([
+          {
+            pointNumber: uniqueName,
+            x,
+            y,
+            z: avgAlt,
+            type: 'measured' as unknown as CoordinateRow['type'],
+            notes: measureNote,
+          },
+        ])
+        if (inserted.length > 0) {
+          setShareToast(`${uniqueName} を座標管理にも登録`)
+          window.setTimeout(() => setShareToast(null), 2500)
+        } else {
+          const errMsg = useCoordinateStore.getState().error ?? '不明なエラー'
+          setShareToast(`${uniqueName} の座標管理登録に失敗: ${errMsg}`)
+          window.setTimeout(() => setShareToast(null), 4500)
         }
         const msg =
           `${stakeRecordName} を測設しました（ターゲット: ${selectedTarget.name}）\n` +
@@ -4071,37 +4089,31 @@ export function MobileStakingPage() {
       window.setTimeout(() => setShareToast(null), 3000)
       return
     }
-    // 座標管理にも自動登録（重複点番号があればスキップ）。
-    // 出所が分かるよう notes に 'mobile_measurement' を入れておく。
-    // 失敗時はサイレントに握りつぶさず、トーストで知らせる（マーカーが
-    // 出ない原因を画面で追えるようにする）。
-    const exists = coordinates.some((c) => c.pointNumber === name)
+    // 座標管理にも自動登録。 1 観測 = 1 座標 の 方針 に した ので、
+    // 同名 が 既に あれば 「name-2」「name-3」…と 空き 番号 を 付与。
+    const uniqueName = nextUniqueCoordName(
+      name,
+      coordinates.map((c) => c.pointNumber),
+    )
     let createdId: string | null = null
-    if (!exists) {
-      const inserted = await importCoordinates([
-        {
-          pointNumber: name,
-          x: d.x,
-          y: d.y,
-          z: d.z,
-          type: type as unknown as CoordinateRow['type'],
-          notes: d.measureNote,
-        },
-      ])
-      if (inserted.length > 0) {
-        createdId = inserted[0].id
-        setShareToast(`新点 ${name} を座標管理に登録`)
-        window.setTimeout(() => setShareToast(null), 2500)
-      } else {
-        const errMsg = useCoordinateStore.getState().error ?? '不明なエラー'
-        setShareToast(`新点 ${name} の座標管理登録に失敗: ${errMsg}`)
-        window.setTimeout(() => setShareToast(null), 4500)
-      }
-    } else {
-      const hit = coordinates.find((c) => c.pointNumber === name)
-      createdId = hit?.id ?? null
-      setShareToast(`座標管理に同名の点があるためスキップ: ${name}`)
+    const inserted = await importCoordinates([
+      {
+        pointNumber: uniqueName,
+        x: d.x,
+        y: d.y,
+        z: d.z,
+        type: type as unknown as CoordinateRow['type'],
+        notes: d.measureNote,
+      },
+    ])
+    if (inserted.length > 0) {
+      createdId = inserted[0].id
+      setShareToast(`新点 ${uniqueName} を座標管理に登録`)
       window.setTimeout(() => setShareToast(null), 2500)
+    } else {
+      const errMsg = useCoordinateStore.getState().error ?? '不明なエラー'
+      setShareToast(`新点 ${uniqueName} の座標管理登録に失敗: ${errMsg}`)
+      window.setTimeout(() => setShareToast(null), 4500)
     }
     if (openPhoto && createdId && farm?.project_id) {
       // 写真モーダルを開くために、StakingTarget 形式に変換
