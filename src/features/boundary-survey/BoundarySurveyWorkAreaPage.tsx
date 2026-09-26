@@ -47,7 +47,16 @@ import { ParcelBatchImportBar } from '@/features/parcel-maps/ParcelBatchImportBa
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { BOUNDARY_KIND_LABEL, type BoundaryKind } from '@/lib/boundaryKind'
 
-export function BoundarySurveyWorkAreaPage() {
+export function BoundarySurveyWorkAreaPage({
+  lockedPanel,
+  hidePointPanel = false,
+}: {
+  /** 表 か 地図 に 固定表示。 サブメニュー 「地番一覧表」 は 'table'、
+   *  「地番管理」 は 'map' を 渡す (トグル UI も 消える)。 */
+  lockedPanel?: 'table' | 'map'
+  /** 右側 の 構成点編集 パネル を 出さ ない。 「地番一覧表」 で true。 */
+  hidePointPanel?: boolean
+} = {}) {
   const fileRef = useRef<HTMLInputElement>(null)
   const xmlFileRef = useRef<HTMLInputElement>(null)
   const registryCsvRef = useRef<HTMLInputElement>(null)
@@ -791,6 +800,8 @@ export function BoundarySurveyWorkAreaPage() {
       <GenericWorkAreaPage
         workType="boundary_survey"
         readOnly={readOnly}
+        lockedPanel={lockedPanel}
+        hidePointPanel={hidePointPanel}
         headerActions={
           <div className="flex items-center gap-2">
             {/* 座標数 / 地番数 の使用量表示は設定画面 (FarmSettingsPage) に集約。

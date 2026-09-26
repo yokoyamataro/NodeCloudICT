@@ -90,23 +90,38 @@ interface GenericWorkAreaPageProps {
   areaListActions?: React.ReactNode
   /** 閲覧のみモード: 全ての編集/追加/削除操作を無効化する */
   readOnly?: boolean
+  /**
+   * この 値 を 指定 する と 表 か 地図 の どちらか に 固定 表示 し、
+   * 「一覧全画面」/「地図全画面」 の トグル も 消す。
+   * サブメニュー 「地番管理」 は 'map'、 「地番一覧表」 は 'table' を 渡す。
+   * URL の ?panel=xxx が あれば そちら が 優先。
+   */
+  lockedPanel?: 'table' | 'map'
+  /**
+   * 右側 の 構成点編集 パネル (aside) を 出さ ない。
+   * 「地番一覧表」 の ように 表 だけ 見たい ページ で true。
+   */
+  hidePointPanel?: boolean
 }
 
-export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions, readOnly = false }: GenericWorkAreaPageProps) {
+export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions, readOnly = false, lockedPanel, hidePointPanel = false }: GenericWorkAreaPageProps) {
   // URL ?panel=table|map で 「1 パネルのみ全画面」表示に切替 (別ウィンドウ 用)。
   // 通常表示 で は 「地図を隠す」 ボタン で 一覧を全画面 に できる ように 状態 に する。
+  // lockedPanel は サブメニュー 側 で 固定 する 用途 (トグル 不可)。
   const initialFullscreen = useMemo<'table' | 'map' | null>(() => {
-    if (typeof window === 'undefined') return null
+    if (typeof window === 'undefined') return lockedPanel ?? null
     const q = new URLSearchParams(window.location.search).get('panel')
     if (q === 'table' || q === 'map') return q
-    return null
-  }, [])
+    return lockedPanel ?? null
+  }, [lockedPanel])
   const [fullscreenPanel, setFullscreenPanel] = useState<'table' | 'map' | null>(
     initialFullscreen,
   )
   const isPopupWindow =
     typeof window !== 'undefined' &&
     !!new URLSearchParams(window.location.search).get('panel')
+  // lockedPanel or 別ウィンドウ の どちら か なら パネル 切替 UI を 隠す
+  const panelLocked = lockedPanel != null || isPopupWindow
 
   // 表示モード決定:
   //   ?panel=map   → 地図のみ
@@ -939,8 +954,9 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                 </span>
               )}
             </button>
-            {/* 一覧 を 全画面 (地図隠す) に する トグル。 別ウィンドウ 表示 (?panel=xxx) 時 は 非表示 */}
-            {!isPopupWindow && (
+            {/* 一覧 を 全画面 (地図隠す) に する トグル。 別ウィンドウ 表示 (?panel=xxx) 時
+                や lockedPanel 指定 の サブメニュー ページ で は 非表示 */}
+            {!panelLocked && (
               <button
                 type="button"
                 onClick={() =>
@@ -1411,7 +1427,9 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
 
       {/* 構成点の パネル。 常設 (地番を 選ぶ 度に 出し入れ しない)。
           地番の 下に 展開 する と 一覧が 縦に 伸びて 追えなく なる ので 右に 置く。
-          畳んで いても 地番を 選べば 自動で 開く。 */}
+          畳んで いても 地番を 選べば 自動で 開く。
+          「地番一覧表」 ページ の ように 表 だけ を 見たい 時 は hidePointPanel で 消す。 */}
+      {!hidePointPanel && (
       <aside
         className={`shrink-0 border-l bg-white flex flex-col overflow-hidden ${
           pointPanelCollapsed ? 'w-8' : 'w-80'
@@ -1636,6 +1654,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
           </>
         )}
       </aside>
+      )}
 
       </div>
 

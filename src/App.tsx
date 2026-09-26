@@ -338,7 +338,14 @@ function AppRoutes() {
         <Route path="memos" element={<FarmMemosPage />} />
         {/* 境界測量 */}
         <Route path="boundary-survey">
-          <Route path="work-area" element={<BoundarySurveyWorkAreaPage />} />
+          <Route
+            path="work-area"
+            element={<BoundarySurveyWorkAreaPage lockedPanel="map" />}
+          />
+          <Route
+            path="parcel-list"
+            element={<BoundarySurveyWorkAreaPage lockedPanel="table" hidePointPanel />}
+          />
           <Route path="landowners" element={<LandownersPage />} />
           <Route path="land-report" element={<LandReportPage />} />
           <Route path="land-survey-drawing" element={<LandSurveyDrawingPage />} />

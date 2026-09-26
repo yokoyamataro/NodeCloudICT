@@ -190,7 +190,15 @@ const navigation: NavGroup[] = [
     ],
   },
   // 地籍測量: 「地番管理」と「地権者管理」をフラットに並べる
-  { name: '地番管理', href: '/boundary-survey/work-area', icon: Compass },
+  {
+    name: '地番管理',
+    href: '/boundary-survey/work-area',
+    icon: Compass,
+    children: [
+      { name: '地番管理', href: '/boundary-survey/work-area', icon: Compass },
+      { name: '地番一覧表', href: '/boundary-survey/parcel-list', icon: Rows3 },
+    ],
+  },
   { name: '地権者管理', href: '/boundary-survey/landowners', icon: Users },
   // 地籍測量: 成果物 は 登記 の 種別 ごと に まとめる
   {
