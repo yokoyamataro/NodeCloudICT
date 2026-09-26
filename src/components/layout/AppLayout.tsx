@@ -189,7 +189,7 @@ const navigation: NavGroup[] = [
       { name: '座標比較表', href: '/staking-records/accuracy', icon: ClipboardCheck },
     ],
   },
-  // 地籍測量: 「地番管理」と「地権者管理」をフラットに並べる
+  // 地籍測量: 地番管理 の submenu に 地権者管理 を まとめる
   {
     name: '地番管理',
     href: '/boundary-survey/work-area',
@@ -197,9 +197,9 @@ const navigation: NavGroup[] = [
     children: [
       { name: '地番管理', href: '/boundary-survey/work-area', icon: Compass },
       { name: '地番一覧表', href: '/boundary-survey/parcel-list', icon: Rows3 },
+      { name: '地権者管理', href: '/boundary-survey/landowners', icon: Users },
     ],
   },
-  { name: '地権者管理', href: '/boundary-survey/landowners', icon: Users },
   // 地籍測量: 成果物 は 登記 の 種別 ごと に まとめる
   {
     name: '土地登記',
