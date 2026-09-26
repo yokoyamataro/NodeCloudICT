@@ -40,20 +40,51 @@ export interface WorkAreaRow {
   confirmedAreaSqm: number | null
   confirmedAreaHa: number | null
   confirmedPerimeterM: number | null
+  /** 地番のみ: 分筆筆界 の 構成点 (筆 を 分ける 予定線)。 面積系 は client 側計算。 */
+  subdivisionPointIds: string[]
+  subdivisionPoints: WorkAreaPoint[]
+  subdivisionAreaSqm: number | null
+  subdivisionAreaHa: number | null
+  subdivisionPerimeterM: number | null
+  /** 地番のみ: 合筆筆界 の 構成点 (隣接筆と合わせる予定線)。 面積系 は client 側計算。 */
+  consolidationPointIds: string[]
+  consolidationPoints: WorkAreaPoint[]
+  consolidationAreaSqm: number | null
+  consolidationAreaHa: number | null
+  consolidationPerimeterM: number | null
 }
 
 // 工種別の工事区域データ
 type WorkAreasRecord = Partial<Record<WorkType, WorkAreaRow[]>>
 
 /**
- * 仮 / 確定 で 触る フィールド を 差し替える ため の 小道具。
- * 地番 は 1 行 の まま 構成点 だけ 2 本 持つ (point_ids / confirmed_point_ids)。
+ * 4 種 (仮 / 確定 / 分筆 / 合筆) で 触る フィールド を 差し替える ため の 小道具。
+ * 地番 は 1 行 の まま 構成点 だけ 4 本 持つ (point_ids / confirmed_point_ids /
+ * subdivision_point_ids / consolidation_point_ids)。
  */
 function pointsOfKind(a: WorkAreaRow, kind: BoundaryKind): WorkAreaPoint[] {
-  return kind === 'confirmed' ? a.confirmedPoints : a.points
+  switch (kind) {
+    case 'confirmed':
+      return a.confirmedPoints
+    case 'subdivision':
+      return a.subdivisionPoints
+    case 'consolidation':
+      return a.consolidationPoints
+    default:
+      return a.points
+  }
 }
 function idsOfKind(a: WorkAreaRow, kind: BoundaryKind): string[] {
-  return kind === 'confirmed' ? a.confirmedPointIds : a.pointIds
+  switch (kind) {
+    case 'confirmed':
+      return a.confirmedPointIds
+    case 'subdivision':
+      return a.subdivisionPointIds
+    case 'consolidation':
+      return a.consolidationPointIds
+    default:
+      return a.pointIds
+  }
 }
 /** kind 側 の 構成点 / 面積 を 差し替えた 新しい 行 を 返す */
 function withKind(
@@ -67,23 +98,43 @@ function withKind(
     perimeterM?: number | null
   },
 ): WorkAreaRow {
-  if (kind === 'confirmed') {
-    return {
-      ...a,
-      ...(patch.ids !== undefined ? { confirmedPointIds: patch.ids } : {}),
-      ...(patch.points !== undefined ? { confirmedPoints: patch.points } : {}),
-      ...(patch.areaSqm !== undefined ? { confirmedAreaSqm: patch.areaSqm } : {}),
-      ...(patch.areaHa !== undefined ? { confirmedAreaHa: patch.areaHa } : {}),
-      ...(patch.perimeterM !== undefined ? { confirmedPerimeterM: patch.perimeterM } : {}),
-    }
-  }
-  return {
-    ...a,
-    ...(patch.ids !== undefined ? { pointIds: patch.ids } : {}),
-    ...(patch.points !== undefined ? { points: patch.points } : {}),
-    ...(patch.areaSqm !== undefined ? { areaSqm: patch.areaSqm } : {}),
-    ...(patch.areaHa !== undefined ? { areaHa: patch.areaHa } : {}),
-    ...(patch.perimeterM !== undefined ? { perimeterM: patch.perimeterM } : {}),
+  switch (kind) {
+    case 'confirmed':
+      return {
+        ...a,
+        ...(patch.ids !== undefined ? { confirmedPointIds: patch.ids } : {}),
+        ...(patch.points !== undefined ? { confirmedPoints: patch.points } : {}),
+        ...(patch.areaSqm !== undefined ? { confirmedAreaSqm: patch.areaSqm } : {}),
+        ...(patch.areaHa !== undefined ? { confirmedAreaHa: patch.areaHa } : {}),
+        ...(patch.perimeterM !== undefined ? { confirmedPerimeterM: patch.perimeterM } : {}),
+      }
+    case 'subdivision':
+      return {
+        ...a,
+        ...(patch.ids !== undefined ? { subdivisionPointIds: patch.ids } : {}),
+        ...(patch.points !== undefined ? { subdivisionPoints: patch.points } : {}),
+        ...(patch.areaSqm !== undefined ? { subdivisionAreaSqm: patch.areaSqm } : {}),
+        ...(patch.areaHa !== undefined ? { subdivisionAreaHa: patch.areaHa } : {}),
+        ...(patch.perimeterM !== undefined ? { subdivisionPerimeterM: patch.perimeterM } : {}),
+      }
+    case 'consolidation':
+      return {
+        ...a,
+        ...(patch.ids !== undefined ? { consolidationPointIds: patch.ids } : {}),
+        ...(patch.points !== undefined ? { consolidationPoints: patch.points } : {}),
+        ...(patch.areaSqm !== undefined ? { consolidationAreaSqm: patch.areaSqm } : {}),
+        ...(patch.areaHa !== undefined ? { consolidationAreaHa: patch.areaHa } : {}),
+        ...(patch.perimeterM !== undefined ? { consolidationPerimeterM: patch.perimeterM } : {}),
+      }
+    default:
+      return {
+        ...a,
+        ...(patch.ids !== undefined ? { pointIds: patch.ids } : {}),
+        ...(patch.points !== undefined ? { points: patch.points } : {}),
+        ...(patch.areaSqm !== undefined ? { areaSqm: patch.areaSqm } : {}),
+        ...(patch.areaHa !== undefined ? { areaHa: patch.areaHa } : {}),
+        ...(patch.perimeterM !== undefined ? { perimeterM: patch.perimeterM } : {}),
+      }
   }
 }
 /** 対象 の 行 だけ 差し替える (workAreas は 工種 → 配列 の 入れ子) */
@@ -215,6 +266,11 @@ export function buildWorkAreasRecord(
   for (const area of areas) {
     const pointIds = area.point_ids || []
     const confirmedPointIds = area.confirmed_point_ids || []
+    // migration 未適用 DB でも 動く よう に、未定義 は 空配列 に フォールバック
+    const subdivisionPointIds = (area as { subdivision_point_ids?: string[] })
+      .subdivision_point_ids || []
+    const consolidationPointIds = (area as { consolidation_point_ids?: string[] })
+      .consolidation_point_ids || []
     const areaPoints = expand(pointIds)
 
     const workAreaRow: WorkAreaRow = {
@@ -233,6 +289,17 @@ export function buildWorkAreasRecord(
       confirmedAreaSqm: area.confirmed_area_sqm ?? null,
       confirmedAreaHa: area.confirmed_area_ha ?? null,
       confirmedPerimeterM: area.confirmed_perimeter_m ?? null,
+      subdivisionPointIds,
+      subdivisionPoints: expand(subdivisionPointIds),
+      // 面積系 は client 側 計算 (DB に列 は 持たない) — 初期 は null
+      subdivisionAreaSqm: null,
+      subdivisionAreaHa: null,
+      subdivisionPerimeterM: null,
+      consolidationPointIds,
+      consolidationPoints: expand(consolidationPointIds),
+      consolidationAreaSqm: null,
+      consolidationAreaHa: null,
+      consolidationPerimeterM: null,
     }
     if (!workAreasRecord[area.work_type]) workAreasRecord[area.work_type] = []
     workAreasRecord[area.work_type]!.push(workAreaRow)
@@ -392,6 +459,16 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         confirmedAreaSqm: null,
         confirmedAreaHa: null,
         confirmedPerimeterM: null,
+        subdivisionPointIds: [],
+        subdivisionPoints: [],
+        subdivisionAreaSqm: null,
+        subdivisionAreaHa: null,
+        subdivisionPerimeterM: null,
+        consolidationPointIds: [],
+        consolidationPoints: [],
+        consolidationAreaSqm: null,
+        consolidationAreaHa: null,
+        consolidationPerimeterM: null,
       }
 
       set((state) => {
@@ -615,6 +692,9 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           confirmed_area_sqm: area.confirmedAreaSqm,
           confirmed_area_ha: area.confirmedAreaHa,
           confirmed_perimeter_m: area.confirmedPerimeterM,
+          // 分筆 / 合筆 の 予定線 の 構成点 (地番のみ)。 面積 は 保持しない。
+          subdivision_point_ids: area.subdivisionPointIds,
+          consolidation_point_ids: area.consolidationPointIds,
           notes: area.notes,
         } as never)
         .eq('id', id)

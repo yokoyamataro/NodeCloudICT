@@ -30,7 +30,11 @@ import {
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useParcelStore } from '@/stores/parcelStore'
-import { BOUNDARY_KIND_LABEL, type BoundaryKind } from '@/lib/boundaryKind'
+import {
+  BOUNDARY_KIND_LABEL,
+  BOUNDARY_KIND_ORDER,
+  type BoundaryKind,
+} from '@/lib/boundaryKind'
 import {
   useParcelAttributeTypesStore,
   EMPTY_ATTRIBUTES,
@@ -47,6 +51,7 @@ import {
   type CadastralColumnKey,
 } from '@/features/boundary-survey/CadastralRowFields'
 import { CadastralHeader } from '@/features/boundary-survey/CadastralHeader'
+import { ParcelDetailsSection } from '@/features/boundary-survey/ParcelDetailsSection'
 import {
   CadastralColumnPicker,
   useCadastralVisibleColumns,
@@ -276,17 +281,40 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     localStorage.setItem('boundarySurvey:boundaryView', boundaryView)
   }, [boundaryView])
 
-  // 地番 は 1 行 の まま。 boundaryView は 「どちらの 構成点 を 出すか」 だけ を 決める
+  // 地番 は 1 行 の まま。 boundaryView は 4 種 (仮/確定/分筆/合筆) の
+  // どちら を 出すか だけ を 決める。 地番 以外 の 工種 は 仮 (= a.points) 固定。
   const areas = allAreas
   /** 今 見て いる 側 の 構成点 */
   const pointsOf = useCallback(
-    (a: WorkAreaRow): WorkAreaPoint[] =>
-      isBoundarySurvey && boundaryView === 'confirmed' ? a.confirmedPoints : a.points,
+    (a: WorkAreaRow): WorkAreaPoint[] => {
+      if (!isBoundarySurvey) return a.points
+      switch (boundaryView) {
+        case 'confirmed':
+          return a.confirmedPoints
+        case 'subdivision':
+          return a.subdivisionPoints
+        case 'consolidation':
+          return a.consolidationPoints
+        default:
+          return a.points
+      }
+    },
     [isBoundarySurvey, boundaryView],
   )
   const pointIdsOf = useCallback(
-    (a: WorkAreaRow): string[] =>
-      isBoundarySurvey && boundaryView === 'confirmed' ? a.confirmedPointIds : a.pointIds,
+    (a: WorkAreaRow): string[] => {
+      if (!isBoundarySurvey) return a.pointIds
+      switch (boundaryView) {
+        case 'confirmed':
+          return a.confirmedPointIds
+        case 'subdivision':
+          return a.subdivisionPointIds
+        case 'consolidation':
+          return a.consolidationPointIds
+        default:
+          return a.pointIds
+      }
+    },
     [isBoundarySurvey, boundaryView],
   )
   /** 構成点 を 触る ときに 渡す 種別 (地番以外 は 常に 仮=従来の列) */
@@ -651,7 +679,16 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
 
   // 編集中の 区域 と その 構成点 (右の 縦長パネル が 使う)
   const editArea = editingAreaId ? areas.find((a) => a.id === editingAreaId) ?? null : null
-  const editAreaPoints = editArea ? getAreaPoints(editArea.id) : []
+  // editAreaPoints は かつて aside の 表示 に 使って いた が、いま は
+  // currentAreaPoints で 統一。 useCallback の 依存 と 型 チェック を 維持 する
+  // ため に 内部 では 参照 して いる (削除 の 代わり に void 化)
+  void (editArea ? getAreaPoints(editArea.id) : [])
+  // 「今 aside に 出す 筆」。 編集中 が あれば それ、無ければ 選択中 の 筆。
+  // 選択 だけ の 状態 では 詳細 と 構成点 は 見え るが 編集 は 出来 ない。
+  const currentArea =
+    editArea ?? (selectedAreaId ? areas.find((a) => a.id === selectedAreaId) ?? null : null)
+  const currentAreaPoints = currentArea ? getAreaPoints(currentArea.id) : []
+  const isEditingCurrent = currentArea != null && editArea?.id === currentArea.id
 
   // 一覧 と 構成点パネル の 折りたたみ。 端末ごとの 見え方 なので localStorage。
   const [listCollapsed, setListCollapsed] = useState<boolean>(
@@ -669,13 +706,14 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
 
   /**
    * 地番 を 選ぶ (一覧の 行 / 地図の ポリゴン)。
-   * 選んだ 時点で 構成点の パネル も 開く —— 選んで から もう一度
-   * 鉛筆 を 押す 手間 を 省く。
+   * 選択 だけ で 編集 モード に は 入ら ない。 aside に 地番詳細 と
+   * 構成点 (読取専用) を 出す。 編集 は aside の 「構成点編集」 ボタン で。
+   * 別 の 筆 を 選ぶ と、前 の 編集 は 抜ける (setEditingAreaId(null))。
    */
   const [zoomTick, setZoomTick] = useState(0)
   const selectArea = useCallback((id: string | null) => {
     setSelectedAreaId(id)
-    setEditingAreaId(id)
+    setEditingAreaId(null)
     if (id) setZoomTick((n) => n + 1)
     setSelectedConstituentPointId(null)
     setPendingInsertIdx(null)
@@ -979,16 +1017,32 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                 {fullscreenPanel === 'table' ? '分割表示' : '一覧全画面'}
               </button>
             )}
-            {/* 仮境界 / 確定境界 の 切替。 地番 は 1 行 の まま で、
-                出す 構成点 (と 面積) を 入れ替える。 件数 は 「その 形 が
-                登録済み の 地番 数」 */}
+            {/* 筆界 種別 の 切替。 地番 は 1 行 の まま で、出す 構成点 (と 面積)
+                を 入れ替える。 件数 は 「その 形 が 登録済み の 地番 数」。
+                aside の タブ と 同じ 状態 (boundaryView) を 使うので 同期 する。 */}
             {isBoundarySurvey && (
               <div className="flex items-center rounded overflow-hidden border border-slate-300">
-                {(['provisional', 'confirmed'] as BoundaryKind[]).map((k) => {
-                  const n = allAreas.filter(
-                    (a) =>
-                      (k === 'confirmed' ? a.confirmedPointIds : a.pointIds).length >= 3,
-                  ).length
+                {BOUNDARY_KIND_ORDER.map((k) => {
+                  const n = allAreas.filter((a) => {
+                    switch (k) {
+                      case 'confirmed':
+                        return a.confirmedPointIds.length >= 3
+                      case 'subdivision':
+                        return a.subdivisionPointIds.length >= 3
+                      case 'consolidation':
+                        return a.consolidationPointIds.length >= 3
+                      default:
+                        return a.pointIds.length >= 3
+                    }
+                  }).length
+                  const desc =
+                    k === 'provisional'
+                      ? '地図XML 等 から 起こした 暫定 の 形'
+                      : k === 'confirmed'
+                        ? '立会・確定測量 の 結果'
+                        : k === 'subdivision'
+                          ? '筆 を 分ける 予定 の 内側 の 境界'
+                          : '隣接筆 と 合わせる 予定 の 境界'
                   return (
                     <button
                       key={k}
@@ -999,11 +1053,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                           ? 'bg-blue-600 text-white'
                           : 'bg-white text-slate-600 hover:bg-slate-50'
                       }`}
-                      title={
-                        k === 'provisional'
-                          ? '地図XML 等 から 起こした 暫定の 形'
-                          : '立会・確定測量 の 結果'
-                      }
+                      title={desc}
                     >
                       {BOUNDARY_KIND_LABEL[k]}
                       <span className="ml-1 opacity-70">{n}</span>
@@ -1461,14 +1511,14 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
               </button>
               <Pencil className="h-4 w-4 shrink-0 text-blue-600" />
               <span className="text-sm font-semibold truncate">
-                {editArea
-                  ? parcelByWorkAreaId.get(editArea.id)?.parcel_number ||
-                    editArea.zoneNumber ||
-                    editArea.name ||
-                    '構成点'
-                  : '構成点'}
+                {currentArea
+                  ? parcelByWorkAreaId.get(currentArea.id)?.parcel_number ||
+                    currentArea.zoneNumber ||
+                    currentArea.name ||
+                    '地番'
+                  : '地番'}
               </span>
-              {editArea && (
+              {isEditingCurrent && (
                 <button
                   type="button"
                   onClick={finishEditingArea}
@@ -1480,28 +1530,74 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
               )}
             </div>
 
-            {/* 今 どちらの 構成点 を 編集 して いるか。 切替 は 一覧 の 上 */}
-            {editArea && isBoundarySurvey && (
-              <div className="px-3 py-1.5 border-b bg-slate-50 text-[11px] text-slate-600 shrink-0">
-                {BOUNDARY_KIND_LABEL[editKind]}の構成点
-                <span className="ml-1 text-slate-400">
-                  ({editKind === 'confirmed' ? '立会・確定測量の成果' : '当初'})
-                </span>
-              </div>
-            )}
-
-            {!editArea ? (
+            {/* 地番 が 選ばれて いない = 案内 */}
+            {!currentArea ? (
               <div className="flex-1 flex items-center justify-center px-4 text-center text-xs text-slate-400">
-                地番を選ぶと構成点が出ます
+                地番を選ぶと詳細と構成点が出ます
               </div>
             ) : (
               <>
+              {/* 地番詳細 (主要属性) — 選択 だけ で 見え る / 編集 でき る */}
+              {isBoundarySurvey && (
+                <ParcelDetailsSection
+                  workAreaId={currentArea.id}
+                  parcel={parcelByWorkAreaId.get(currentArea.id) ?? null}
+                  onPatch={(patch) => void upsertParcel(currentArea.id, patch)}
+                  readOnly={readOnly}
+                />
+              )}
+
+              {/* 4 種 の 筆界 タブ (boundaryView と 同期) */}
+              {isBoundarySurvey && (
+                <div className="flex border-b bg-white shrink-0 overflow-x-auto">
+                  {BOUNDARY_KIND_ORDER.map((k) => {
+                    const on = boundaryView === k
+                    const n =
+                      k === 'confirmed'
+                        ? currentArea.confirmedPointIds.length
+                        : k === 'subdivision'
+                          ? currentArea.subdivisionPointIds.length
+                          : k === 'consolidation'
+                            ? currentArea.consolidationPointIds.length
+                            : currentArea.pointIds.length
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setBoundaryView(k)}
+                        className={`px-2 py-1.5 -mb-px border-b-2 text-[11px] whitespace-nowrap shrink-0 ${
+                          on
+                            ? 'border-blue-600 text-blue-700 font-medium'
+                            : 'border-transparent text-slate-600 hover:text-slate-800'
+                        }`}
+                      >
+                        {BOUNDARY_KIND_LABEL[k]}
+                        <span className="ml-1 text-slate-400">{n}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* 今 選択中 の タブ の 説明 */}
+              {isBoundarySurvey && (
+                <div className="px-3 py-1.5 border-b bg-slate-50 text-[11px] text-slate-600 shrink-0 flex items-center gap-2">
+                  <span>{BOUNDARY_KIND_LABEL[boundaryView]}の構成点</span>
+                  {!isEditingCurrent && !readOnly && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingAreaId(currentArea.id)}
+                      className="ml-auto px-2 py-0.5 text-[11px] rounded bg-emerald-600 text-white hover:bg-emerald-700"
+                      title="この筆界の構成点を編集する"
+                    >
+                      構成点編集
+                    </button>
+                  )}
+                </div>
+              )}
 
           <div className="flex-1 min-h-0 overflow-auto px-3 py-2 bg-slate-50">
-            <div className="text-xs text-muted-foreground mb-2 flex items-center gap-2">
-              <span>構成点（地図上の点をクリックして追加、ドラッグで順序変更）</span>
-            </div>
-            {isBoundarySurvey && (
+            {isEditingCurrent && isBoundarySurvey && (
               <div className="mb-2 px-2 py-1.5 text-[11px] rounded border bg-white">
                 {pendingInsertIdx != null ? (
                   <span className="text-emerald-700">
@@ -1530,9 +1626,11 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                 )}
               </div>
             )}
-            {editAreaPoints.length === 0 ? (
+            {currentAreaPoints.length === 0 ? (
               <div className="py-4 text-center text-sm text-muted-foreground border border-dashed rounded">
-                点を選択してください
+                {isEditingCurrent
+                  ? '構成点を追加してください (地図の点をクリック / 下の入力欄)'
+                  : 'この筆界には構成点がまだ登録されていません'}
               </div>
             ) : (
               <ul className="space-y-1">
@@ -1543,14 +1641,12 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                   <span className="flex-1 min-w-0">点名</span>
                   <span className="w-16 shrink-0 text-right">距離(m)</span>
                   <span className="w-20 shrink-0 text-right">方向角</span>
-                  <span className="w-4 shrink-0" />
+                  {isEditingCurrent && <span className="w-4 shrink-0" />}
                 </li>
-                {editAreaPoints.map((point, index) => {
-                  // 次の 点 まで の 辺長 と 方向角。 最後の 点 は 閉合辺
-                  // (最終点 → 始点) を 見る。 面積計算書 と 同じ 計算・表記。
-                  const next = editAreaPoints[(index + 1) % editAreaPoints.length]
+                {currentAreaPoints.map((point, index) => {
+                  const next = currentAreaPoints[(index + 1) % currentAreaPoints.length]
                   const hasEdge =
-                    editAreaPoints.length >= 2 &&
+                    currentAreaPoints.length >= 2 &&
                     next != null &&
                     Number.isFinite(point.x) &&
                     Number.isFinite(point.y) &&
@@ -1565,13 +1661,29 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                   return (
                     <li
                       key={point.id}
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, point.id)}
-                      onDragOver={handleDragOver}
-                      onDrop={(e) => handleDrop(e, editArea.id, index)}
-                      className="flex items-center gap-1.5 px-2 py-1.5 text-sm bg-white border rounded cursor-move hover:bg-slate-50"
+                      draggable={isEditingCurrent}
+                      onDragStart={
+                        isEditingCurrent
+                          ? (e) => handleDragStart(e, point.id)
+                          : undefined
+                      }
+                      onDragOver={isEditingCurrent ? handleDragOver : undefined}
+                      onDrop={
+                        isEditingCurrent && editArea
+                          ? (e) => handleDrop(e, editArea.id, index)
+                          : undefined
+                      }
+                      className={`flex items-center gap-1.5 px-2 py-1.5 text-sm bg-white border rounded ${
+                        isEditingCurrent
+                          ? 'cursor-move hover:bg-slate-50'
+                          : ''
+                      }`}
                     >
-                      <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      {isEditingCurrent ? (
+                        <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <span className="w-3.5 shrink-0" />
+                      )}
                       <span className="w-5 shrink-0 text-xs text-muted-foreground">
                         {index + 1}.
                       </span>
@@ -1590,68 +1702,95 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                       >
                         {bearing ?? '-'}
                       </span>
-                      <button
-                        onClick={() => removePoint(editArea.id, point.id, editKind)}
-                        className="shrink-0 p-0.5 text-red-500 hover:bg-red-50 rounded"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
+                      {isEditingCurrent && editArea && (
+                        <button
+                          onClick={() => removePoint(editArea.id, point.id, editKind)}
+                          className="shrink-0 p-0.5 text-red-500 hover:bg-red-50 rounded"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
                     </li>
                   )
                 })}
               </ul>
             )}
 
-            {/* 点名入力フィールド */}
-            <div className="mt-2 flex gap-2">
-              <input
-                type="text"
-                value={pointNameInput}
-                onChange={(e) => setPointNameInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    handleAddPointByName(editArea.id)
-                  }
-                }}
-                placeholder="点名を入力 (例: K1)"
-                className="flex-1 px-2 py-1 text-sm border rounded"
-              />
-              <button
-                onClick={() => handleAddPointByName(editArea.id)}
-                disabled={!pointNameInput.trim()}
-                className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                追加
-              </button>
-            </div>
-
-            {/* 面積情報 */}
-            {editArea.areaSqm !== null && (
-              <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded text-xs">
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <span className="text-muted-foreground">面積:</span>{' '}
-                    <span className="font-medium">{editArea.areaSqm.toFixed(2)} m²</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">面積:</span>{' '}
-                    <span className="font-medium">{editArea.areaHa?.toFixed(4)} ha</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">周長:</span>{' '}
-                    <span className="font-medium">{editArea.perimeterM?.toFixed(2)} m</span>
-                  </div>
-                </div>
+            {/* 点名入力フィールド (編集モード のみ) */}
+            {isEditingCurrent && editArea && (
+              <div className="mt-2 flex gap-2">
+                <input
+                  type="text"
+                  value={pointNameInput}
+                  onChange={(e) => setPointNameInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleAddPointByName(editArea.id)
+                    }
+                  }}
+                  placeholder="点名を入力 (例: K1)"
+                  className="flex-1 px-2 py-1 text-sm border rounded"
+                />
+                <button
+                  onClick={() => handleAddPointByName(editArea.id)}
+                  disabled={!pointNameInput.trim()}
+                  className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  追加
+                </button>
               </div>
             )}
+
+            {/* 面積情報 — 表示中 の 筆界 の 面積 (仮/確定 は 保存済み、分筆/合筆 は 未保存) */}
+            {(() => {
+              const kSqm =
+                boundaryView === 'confirmed'
+                  ? currentArea.confirmedAreaSqm
+                  : boundaryView === 'provisional'
+                    ? currentArea.areaSqm
+                    : null
+              const kHa =
+                boundaryView === 'confirmed'
+                  ? currentArea.confirmedAreaHa
+                  : boundaryView === 'provisional'
+                    ? currentArea.areaHa
+                    : null
+              const kPerim =
+                boundaryView === 'confirmed'
+                  ? currentArea.confirmedPerimeterM
+                  : boundaryView === 'provisional'
+                    ? currentArea.perimeterM
+                    : null
+              if (kSqm == null) return null
+              return (
+                <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded text-xs">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <span className="text-muted-foreground">面積:</span>{' '}
+                      <span className="font-medium">{kSqm.toFixed(2)} m²</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">面積:</span>{' '}
+                      <span className="font-medium">{kHa?.toFixed(4)} ha</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">周長:</span>{' '}
+                      <span className="font-medium">{kPerim?.toFixed(2)} m</span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
           </div>
-          <div className="px-3 py-1.5 border-t bg-white text-[10px] text-slate-500 leading-snug shrink-0">
-            <kbd className="px-1 bg-slate-100 border rounded">Enter</kbd> 確定 ／{' '}
-            <kbd className="px-1 bg-slate-100 border rounded">Backspace</kbd> 前の点を削除 ／{' '}
-            <kbd className="px-1 bg-slate-100 border rounded">Del</kbd> 選択中の点を削除 ／{' '}
-            <kbd className="px-1 bg-slate-100 border rounded">Esc</kbd> 取消
-          </div>
+          {isEditingCurrent && (
+            <div className="px-3 py-1.5 border-t bg-white text-[10px] text-slate-500 leading-snug shrink-0">
+              <kbd className="px-1 bg-slate-100 border rounded">Enter</kbd> 確定 ／{' '}
+              <kbd className="px-1 bg-slate-100 border rounded">Backspace</kbd> 前の点を削除 ／{' '}
+              <kbd className="px-1 bg-slate-100 border rounded">Del</kbd> 選択中の点を削除 ／{' '}
+              <kbd className="px-1 bg-slate-100 border rounded">Esc</kbd> 取消
+            </div>
+          )}
               </>
             )}
           </>

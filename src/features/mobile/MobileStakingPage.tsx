@@ -108,8 +108,11 @@ import {
   MapDrawingToolbar,
 } from '@/components/map/MapDrawingToolbar'
 import { MobileStakingRecordsSheet } from './MobileStakingRecordsSheet'
-import { MobileSurveySetPicker } from './MobileSurveySetPicker'
-import { useSurveySetStore } from '@/stores/surveySetStore'
+import {
+  generateDefaultSessionName,
+  jstTodayIso,
+  useSurveySetStore,
+} from '@/stores/surveySetStore'
 import { fetchSurveySlide, NO_SLIDE, type SurveySlide } from '@/lib/surveyCalibration'
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
 import { useLayerOrder } from '@/features/orthophoto/OverviewLayerPanel'
@@ -896,14 +899,15 @@ export function MobileStakingPage() {
   const sessionSetId = useSurveySetStore((s) => s.activeSetId)
   const setSessionSetId = useSurveySetStore((s) => s.setActiveSetId)
   const surveySets = useSurveySetStore((s) => s.sets)
+  const createSurveySet = useSurveySetStore((s) => s.createSet)
   /** 工区 の 既定 スライド量。 セット に 属さ ない 記録 の 土俵 */
   const [farmSlide, setFarmSlide] = useState<SurveySlide>(NO_SLIDE)
   useEffect(() => {
     if (!farmId) return
     void fetchSurveySlide(farmId).then(setFarmSlide)
   }, [farmId])
-  /** セット を 決めた 後 に 続き で 走らせる 測定 */
-  const [pendingStart, setPendingStart] = useState<{ forceFreePoint?: boolean } | null>(null)
+  // 初回 測定 の セッション 自動判定 が 進行中 か。 二重 起動 を 防ぐ フラグ。
+  const ensureSessionRef = useRef(false)
   const touchSurveySet = useSurveySetStore((s) => s.touchSet)
   const fetchSurveySets = useSurveySetStore((s) => s.fetchByFarm)
   useEffect(() => {
@@ -3643,13 +3647,61 @@ export function MobileStakingPage() {
     return { measured, total: routeTargets.length }
   }, [orderedTargets, routeTargetIds, stakedTargetIds])
 
+  /**
+   * 記録セット を 決める (「直前 に 追記 or 新規」 の 自動判定)。
+   * 同一日 (JST) + 同一 基準局 + 同一 アカウント なら 直前 セッション に 追記。
+   * どれ か 違えば 新規 セッション を 作る。
+   *   - 基準局: いま は 端末 で 自動 取得 して いない ので、両方 未設定 なら 同一 と 見なす。
+   *   - アカウント: created_by === auth.uid()。 migration 前 の 旧 行 (createdBy=null) は 素通し。
+   */
+  const ensureSessionSetId = async (): Promise<string | null> => {
+    if (sessionSetId) return sessionSetId
+    if (!farmId) return null
+    if (ensureSessionRef.current) return null
+    ensureSessionRef.current = true
+    try {
+      const today = jstTodayIso()
+      const uid = user?.id ?? null
+      const currentBase: string | null = null // 端末 で 自動 取得 して いない
+      const matches = surveySets
+        .filter((s) => s.farmId === farmId)
+        .filter((s) => s.measuredOn === today)
+        .filter((s) => (s.baseStation ?? null) === currentBase)
+        .filter((s) => uid == null || s.createdBy == null || s.createdBy === uid)
+        .sort((a, b) => {
+          const at = a.endedAt ?? a.startedAt ?? a.createdAt
+          const bt = b.endedAt ?? b.startedAt ?? b.createdAt
+          return bt.localeCompare(at)
+        })
+      const hit = matches[0]
+      if (hit) {
+        setSessionSetId(hit.id)
+        void touchSurveySet(hit.id, { start: true })
+        return hit.id
+      }
+      // 新規 セッション を 作成
+      const row = await createSurveySet(farmId, {
+        measuredOn: today,
+        name: generateDefaultSessionName(surveySets),
+      })
+      if (!row) return null
+      setSessionSetId(row.id)
+      void touchSurveySet(row.id, { start: true })
+      return row.id
+    } finally {
+      ensureSessionRef.current = false
+    }
+  }
+
   // 記録開始
-  const startRecording = (opts: { forceFreePoint?: boolean } = {}) => {
+  const startRecording = async (opts: { forceFreePoint?: boolean } = {}) => {
     if (recording) return
-    // 起動後 の 1 回目 は どの 記録セット に 入れる か を 先 に 決める
+    // 起動後 の 1 回目 は どの 記録セット に 入れる か を 自動 で 決める。
+    // 手動 の 選択 UI (MobileSurveySetPicker) は 廃止。 変更 したい 場合 は
+    // 実測一覧 シート から セッション を 選び 直す。
     if (!sessionSetId) {
-      setPendingStart(opts)
-      return
+      const id = await ensureSessionSetId()
+      if (!id) return
     }
     startRecordingNow(opts)
   }
@@ -7413,21 +7465,8 @@ export function MobileStakingPage() {
         )}
 
 
-        {/* 起動後 の 1 回目 の 測定: どの 記録セット に 入れる か を 決める */}
-        {pendingStart && farmId && (
-          <MobileSurveySetPicker
-            farmId={farmId}
-            onCancel={() => setPendingStart(null)}
-            onDecided={(setId) => {
-              const opts = pendingStart
-              setSessionSetId(setId)
-              setPendingStart(null)
-              // 開始日時 は ここ で 打つ (未設定 の とき だけ)
-              void touchSurveySet(setId, { start: true })
-              if (opts) startRecordingNow(opts)
-            }}
-          />
-        )}
+        {/* 起動後 の 1 回目 の セッション は 自動判定 (ensureSessionSetId) に
+            変更 した ので、選択 モーダル は 出さ ない。 変更 は 実測一覧 シート から。 */}
 
         {/* 実測一覧 (記録セット の 切替 + スライド量) */}
         {showStakingRecords && farmId && (

@@ -37,6 +37,9 @@ export interface SurveyRecordSet {
   startedAt: string | null
   /** その セット に 最後 に 記録 が 入った 時刻 */
   endedAt: string | null
+  /** 作成 した アカウント (auth.uid())。 セッション 自動判定 で 比較 に 使う。
+   *  migration 前 の 古い 行 や anonymous 作成 は null */
+  createdBy: string | null
 }
 
 export type SurveySetPatch = Partial<
@@ -79,6 +82,7 @@ function toSet(r: Record<string, unknown>): SurveyRecordSet {
     createdAt: String(r.created_at ?? ''),
     startedAt: (r.started_at as string) ?? null,
     endedAt: (r.ended_at as string) ?? null,
+    createdBy: (r.created_by as string) ?? null,
   }
 }
 

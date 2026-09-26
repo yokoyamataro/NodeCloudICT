@@ -577,9 +577,28 @@ function extractDedupedEdges(polygons: ExternalPolygon[]): DedupedParcelEdge[] {
   return [...m.values()]
 }
 
+// BoundaryKind ごと の 線種 (dashArray)。
+//   仮筆界   … 小破線 '4, 4'   (地図XML から 起こした 暫定)
+//   確定筆界 … 実線 (undefined) (立会・確定測量 の 成果)
+//   分筆筆界 … 点線 '2, 4'      (筆 を 分ける 予定 の 内側)
+//   合筆筆界 … 長破線+点 '10, 4, 2, 4' (隣接筆 と 合わせる 予定)
+function dashForBoundaryKind(k: BoundaryKind | undefined): string | undefined {
+  switch (k) {
+    case 'provisional':
+      return '4, 4'
+    case 'subdivision':
+      return '2, 4'
+    case 'consolidation':
+      return '10, 4, 2, 4'
+    case 'confirmed':
+    default:
+      return undefined
+  }
+}
+
 // 共有 辺 の スタイル は 「所有者 の どれ か が 強調 中 か」 で 決める。
-// 優先度: editing > checked > selected > 通常。 通常 の 線 の 実線 / 破線 は
-// 「所有者 に 確定境界 が 1 つ でも あれば 実線」 (安全側)。
+// 優先度: editing > checked > selected > 通常。 通常時 は 所有者 の
+// boundaryKind (先頭 owner) から dashArray を 決める。
 function computeEdgeStyle(
   edge: DedupedParcelEdge,
   ctx: {
@@ -591,13 +610,13 @@ function computeEdgeStyle(
   let editing = false
   let checked = false
   let selected = false
-  let hasFinal = false
+  let firstKind: BoundaryKind | undefined
   let firstAttrColor: string | undefined
   for (const o of edge.owners) {
     if (ctx.editingId && o.id === ctx.editingId) editing = true
     if (ctx.checkedIds?.has(o.id)) checked = true
     if (ctx.selectedId && o.id === ctx.selectedId) selected = true
-    if (o.boundaryKind !== 'provisional') hasFinal = true
+    if (!firstKind && o.boundaryKind) firstKind = o.boundaryKind
     if (!firstAttrColor && o.attributeColor) firstAttrColor = o.attributeColor
   }
   if (editing) return { color: '#16a34a', weight: 3, dashArray: '5, 5' }
@@ -606,7 +625,7 @@ function computeEdgeStyle(
   return {
     color: firstAttrColor ?? '#22c55e',
     weight: 2,
-    dashArray: hasFinal ? undefined : '4, 4',
+    dashArray: dashForBoundaryKind(firstKind),
   }
 }
 
