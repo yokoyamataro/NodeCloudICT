@@ -108,18 +108,21 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
   // URL ?panel=table|map で 「1 パネルのみ全画面」表示に切替 (別ウィンドウ 用)。
   // 通常表示 で は 「地図を隠す」 ボタン で 一覧を全画面 に できる ように 状態 に する。
   // lockedPanel は サブメニュー 側 で 固定 する 用途 (トグル 不可)。
-  const initialFullscreen = useMemo<'table' | 'map' | null>(() => {
-    if (typeof window === 'undefined') return lockedPanel ?? null
-    const q = new URLSearchParams(window.location.search).get('panel')
-    if (q === 'table' || q === 'map') return q
-    return lockedPanel ?? null
-  }, [lockedPanel])
-  const [fullscreenPanel, setFullscreenPanel] = useState<'table' | 'map' | null>(
-    initialFullscreen,
-  )
+  // fullscreenPanel は state ではなく 派生値 に する。 route 切替 で
+  // BoundarySurveyWorkAreaPage の コンポーネント インスタンス が 再利用 されて も
+  // lockedPanel prop の 変化 が 即 反映 される (state に 前値が 残らない)。
   const isPopupWindow =
     typeof window !== 'undefined' &&
     !!new URLSearchParams(window.location.search).get('panel')
+  const urlPanel = useMemo<'table' | 'map' | null>(() => {
+    if (typeof window === 'undefined') return null
+    const q = new URLSearchParams(window.location.search).get('panel')
+    return q === 'table' || q === 'map' ? q : null
+  }, [])
+  // ユーザ が トグル ボタン で 切り替えた 値。 lockedPanel も URL 指定 も 無い とき だけ 使う。
+  const [toggledPanel, setToggledPanel] = useState<'table' | 'map' | null>(null)
+  const fullscreenPanel: 'table' | 'map' | null =
+    urlPanel ?? lockedPanel ?? toggledPanel
   // lockedPanel or 別ウィンドウ の どちら か なら パネル 切替 UI を 隠す
   const panelLocked = lockedPanel != null || isPopupWindow
 
@@ -960,7 +963,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
               <button
                 type="button"
                 onClick={() =>
-                  setFullscreenPanel((v) => (v === 'table' ? null : 'table'))
+                  setToggledPanel((v) => (v === 'table' ? null : 'table'))
                 }
                 title={
                   fullscreenPanel === 'table'
