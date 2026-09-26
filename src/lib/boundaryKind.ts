@@ -16,10 +16,10 @@ export type BoundaryKind =
   | 'consolidation'
 
 export const BOUNDARY_KIND_LABEL: Record<BoundaryKind, string> = {
-  provisional: '仮筆界',
-  confirmed: '確定筆界',
-  subdivision: '分筆筆界',
-  consolidation: '合筆筆界',
+  provisional: '仮',
+  confirmed: '確定',
+  subdivision: '分筆',
+  consolidation: '合筆',
 }
 
 /** タブ・トグル で 使う 表示順 */

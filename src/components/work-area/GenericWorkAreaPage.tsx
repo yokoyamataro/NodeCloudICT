@@ -272,14 +272,38 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
    * 同じ 地番 が 2 行 並ぶ と 紛らわしい。 表示を 切り替えて、
    * 一覧 も 地図 も 選んだ 側 だけ に する。
    */
-  const [boundaryView, setBoundaryView] = useState<BoundaryKind>(() =>
-    localStorage.getItem('boundarySurvey:boundaryView') === 'confirmed'
-      ? 'confirmed'
-      : 'provisional',
-  )
+  const [boundaryView, setBoundaryView] = useState<BoundaryKind>(() => {
+    const raw = localStorage.getItem('boundarySurvey:boundaryView')
+    switch (raw) {
+      case 'confirmed':
+      case 'subdivision':
+      case 'consolidation':
+        return raw
+      default:
+        return 'provisional'
+    }
+  })
   useEffect(() => {
     localStorage.setItem('boundarySurvey:boundaryView', boundaryView)
   }, [boundaryView])
+
+  // 右パネル の タブ。 'info' は 地番情報、その他 は BoundaryKind と 同じ。
+  // 筆 を 選ぶ たび に info に 戻して 「まず 詳細 を 見る」 状態 に する。
+  const [asideTab, setAsideTab] = useState<'info' | BoundaryKind>('info')
+  // boundaryView が 外部 (ヘッダ トグル) で 変わった とき、
+  // asideTab が 'info' 以外 なら 同期。 info タブ は 触らない (詳細 を 見て いる 途中 で
+  // 勝手 に 切り替わる と 邪魔)。
+  useEffect(() => {
+    setAsideTab((prev) => (prev === 'info' ? 'info' : boundaryView))
+  }, [boundaryView])
+  // 筆 を 切り替えた ら 地番情報 タブ に 戻す。
+  useEffect(() => {
+    if (selectedAreaId) setAsideTab('info')
+  }, [selectedAreaId])
+  const setAsideTabAndSync = (t: 'info' | BoundaryKind) => {
+    setAsideTab(t)
+    if (t !== 'info') setBoundaryView(t)
+  }
 
   // 地番 は 1 行 の まま。 boundaryView は 4 種 (仮/確定/分筆/合筆) の
   // どちら を 出すか だけ を 決める。 地番 以外 の 工種 は 仮 (= a.points) 固定。
@@ -1537,49 +1561,56 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
               </div>
             ) : (
               <>
-              {/* 地番詳細 (主要属性) — 選択 だけ で 見え る / 編集 でき る */}
+              {/* 5 タブ: 地番情報 + 4 種 の 構成点。 短縮 ラベル で 幅 320px に 収める */}
               {isBoundarySurvey && (
-                <ParcelDetailsSection
-                  workAreaId={currentArea.id}
-                  parcel={parcelByWorkAreaId.get(currentArea.id) ?? null}
-                  onPatch={(patch) => void upsertParcel(currentArea.id, patch)}
-                  readOnly={readOnly}
-                />
-              )}
-
-              {/* 4 種 の 筆界 タブ (boundaryView と 同期) */}
-              {isBoundarySurvey && (
-                <div className="flex border-b bg-white shrink-0 overflow-x-auto">
-                  {BOUNDARY_KIND_ORDER.map((k) => {
-                    const on = boundaryView === k
-                    const n =
-                      k === 'confirmed'
-                        ? currentArea.confirmedPointIds.length
-                        : k === 'subdivision'
-                          ? currentArea.subdivisionPointIds.length
-                          : k === 'consolidation'
-                            ? currentArea.consolidationPointIds.length
-                            : currentArea.pointIds.length
-                    return (
-                      <button
-                        key={k}
-                        type="button"
-                        onClick={() => setBoundaryView(k)}
-                        className={`px-2 py-1.5 -mb-px border-b-2 text-[11px] whitespace-nowrap shrink-0 ${
-                          on
-                            ? 'border-blue-600 text-blue-700 font-medium'
-                            : 'border-transparent text-slate-600 hover:text-slate-800'
-                        }`}
-                      >
-                        {BOUNDARY_KIND_LABEL[k]}
-                        <span className="ml-1 text-slate-400">{n}</span>
-                      </button>
-                    )
-                  })}
+                <div className="flex border-b bg-white shrink-0">
+                  {(() => {
+                    const tabs: Array<{ key: 'info' | BoundaryKind; label: string; n?: number }> = [
+                      { key: 'info', label: '地番情報' },
+                      { key: 'provisional', label: '仮', n: currentArea.pointIds.length },
+                      { key: 'confirmed', label: '確定', n: currentArea.confirmedPointIds.length },
+                      { key: 'subdivision', label: '分筆', n: currentArea.subdivisionPointIds.length },
+                      { key: 'consolidation', label: '合筆', n: currentArea.consolidationPointIds.length },
+                    ]
+                    return tabs.map((t) => {
+                      const on = asideTab === t.key
+                      return (
+                        <button
+                          key={t.key}
+                          type="button"
+                          onClick={() => setAsideTabAndSync(t.key)}
+                          className={`flex-1 min-w-0 px-1 py-1.5 -mb-px border-b-2 text-[11px] text-center ${
+                            on
+                              ? 'border-blue-600 text-blue-700 font-medium'
+                              : 'border-transparent text-slate-600 hover:text-slate-800'
+                          }`}
+                        >
+                          {t.label}
+                          {t.n != null && (
+                            <span className="ml-0.5 text-slate-400">{t.n}</span>
+                          )}
+                        </button>
+                      )
+                    })
+                  })()}
                 </div>
               )}
 
-              {/* 今 選択中 の タブ の 説明 */}
+              {/* 地番情報 タブ — 主要属性 の inline 編集 */}
+              {isBoundarySurvey && asideTab === 'info' && (
+                <div className="flex-1 min-h-0 overflow-auto">
+                  <ParcelDetailsSection
+                    workAreaId={currentArea.id}
+                    parcel={parcelByWorkAreaId.get(currentArea.id) ?? null}
+                    onPatch={(patch) => void upsertParcel(currentArea.id, patch)}
+                    readOnly={readOnly}
+                  />
+                </div>
+              )}
+
+              {/* 構成点 タブ — 選択中 の 境界種別 の 構成点 (地番以外 も ここ を 通る) */}
+              {(!isBoundarySurvey || asideTab !== 'info') && (
+                <>
               {isBoundarySurvey && (
                 <div className="px-3 py-1.5 border-b bg-slate-50 text-[11px] text-slate-600 shrink-0 flex items-center gap-2">
                   <span>{BOUNDARY_KIND_LABEL[boundaryView]}の構成点</span>
@@ -1791,6 +1822,8 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
               <kbd className="px-1 bg-slate-100 border rounded">Esc</kbd> 取消
             </div>
           )}
+                </>
+              )}
               </>
             )}
           </>
