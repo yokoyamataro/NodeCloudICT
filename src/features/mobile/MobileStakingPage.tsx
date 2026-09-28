@@ -113,7 +113,7 @@ import {
   jstTodayIso,
   useSurveySetStore,
 } from '@/stores/surveySetStore'
-import { fetchSurveySlide, NO_SLIDE, type SurveySlide } from '@/lib/surveyCalibration'
+// dx/dy/dz スライド 補正 は 廃止 のため surveyCalibration の 参照 は 削除。
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
 import { useLayerOrder } from '@/features/orthophoto/OverviewLayerPanel'
 import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
@@ -657,13 +657,30 @@ function CenterOnSelect({
   const targetRef = useRef(target)
   targetRef.current = target
   const targetId = target?.id ?? null
+  // 直近 で センタリング した target の id と レイアウト。
+  // 60 秒 毎 の 自動更新 で coordinates が 一瞬 空 に なる と、
+  // targetId が 「id → null → 同じ id」 と 振れて この effect が 再発火 し、
+  // ユーザ が 動かした 地図 が 選択点 に 戻される 事故 が 起きて いた。
+  // 「新しい 点 を 選んだ」 「別 パネル が 開閉」 「向き が 変わった」 とき だけ
+  // 寄せ直す ように、 前回 の 状態 を ref に 覚えて 比べる。
+  const lastCenteredRef = useRef<{ id: string | null; ratio: number; brg: number }>({
+    id: null,
+    ratio: 0,
+    brg: 0,
+  })
   useEffect(() => {
     if (!targetId) return
     const t = targetRef.current
     if (!t || t.id !== targetId) return
+    const prev = lastCenteredRef.current
+    const targetChanged = prev.id !== targetId
+    const layoutChanged =
+      prev.id === targetId && (prev.ratio !== bottomPanelRatio || prev.brg !== bearingDeg)
+    if (!targetChanged && !layoutChanged) return
     // アニメーションさせない。回転 (setBearing) と 移動が 同時に 走ると
     // 途中の 状態で 打ち消し合って、狙った 位置に 止まらない
     map.setView([t.lat, t.lng], Math.max(map.getZoom(), 18), { animate: false })
+    lastCenteredRef.current = { id: targetId, ratio: bottomPanelRatio, brg: bearingDeg }
     if (bottomPanelRatio > 0) {
       // 回転の 変形が 当たってから ずらす。panBy は 画面座標なので、
       // 先に 回っていないと ずれる 向きが 変わって しまう
@@ -774,6 +791,7 @@ export function MobileStakingPage() {
     setNotes,
     setPointNumber: updatePointNumberStore,
     setStakeType: updateStakeTypeStore,
+    toggleInspection,
   } = useCoordinateStore()
   // 設置状態フィルタ（PC と共有。localStorage 永続化）
   const visibleStakeStatuses = useMapViewStore((s) => s.visibleStakeStatuses)
@@ -900,12 +918,7 @@ export function MobileStakingPage() {
   const setSessionSetId = useSurveySetStore((s) => s.setActiveSetId)
   const surveySets = useSurveySetStore((s) => s.sets)
   const createSurveySet = useSurveySetStore((s) => s.createSet)
-  /** 工区 の 既定 スライド量。 セット に 属さ ない 記録 の 土俵 */
-  const [farmSlide, setFarmSlide] = useState<SurveySlide>(NO_SLIDE)
-  useEffect(() => {
-    if (!farmId) return
-    void fetchSurveySlide(farmId).then(setFarmSlide)
-  }, [farmId])
+  // dx/dy/dz スライド 補正 は 廃止 のため farmSlide の 読み書き は しない。
   // 初回 測定 の セッション 自動判定 が 進行中 か。 二重 起動 を 防ぐ フラグ。
   const ensureSessionRef = useRef(false)
   const touchSurveySet = useSurveySetStore((s) => s.touchSet)
@@ -1859,17 +1872,42 @@ export function MobileStakingPage() {
   }, [farmId, fetchAttachments])
 
   // ---------------- データ更新（共同作業向けの再取得） ----------------
-  // 手動: ヘッダの「更新」ボタン。自動: DEFAULT_ON かつ 60 秒間隔。
+  // 自動更新 は 2 段。 現場 で 頻繁 に 変わる もの は 短 周期、 ほとんど 変わら ない もの は
+  // 長 周期 で ネットワーク と バッテリー を 抑える。 手動 更新 ボタン は 全部 引き直す。
+  //   - 頻繁 (60 秒): records / memos / attachments (現場 の 記録・写真・メモ)
+  //   - 安定 (10 分): coordinates / workAreas / pipes / channels (PC 側 で しか
+  //     変わら ない 設計 データ。 変更 は 10 分 以内 に 拾える)
   // 座標 attachments は coordinates 変化を watch する既存 effect が拾うので明示は不要。
-  const REFRESH_INTERVAL_MS = 60_000
+  const REFRESH_FREQUENT_MS = 60_000
+  const REFRESH_STABLE_MS = 10 * 60_000
   const [refreshing, setRefreshing] = useState(false)
   const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null)
   const refreshingRef = useRef(false)
-  const refreshData = useCallback(async () => {
+  const frequentBusyRef = useRef(false)
+  const stableBusyRef = useRef(false)
+
+  const refreshFrequent = useCallback(async () => {
     if (!farmId) return
-    if (refreshingRef.current) return
-    refreshingRef.current = true
-    setRefreshing(true)
+    if (frequentBusyRef.current) return
+    frequentBusyRef.current = true
+    try {
+      await Promise.all([
+        fetchRecords(farmId),
+        fetchFarmMemos(farmId),
+        fetchAttachments('farm_photo', [farmId]),
+      ])
+      setLastRefreshAt(new Date())
+    } catch (err) {
+      console.warn('[mobile refresh:frequent] failed', err)
+    } finally {
+      frequentBusyRef.current = false
+    }
+  }, [farmId, fetchRecords, fetchFarmMemos, fetchAttachments])
+
+  const refreshStable = useCallback(async () => {
+    if (!farmId) return
+    if (stableBusyRef.current) return
+    stableBusyRef.current = true
     try {
       // キャッシュを持つストアは invalidate してから再取得
       useCoordinateStore.getState().invalidateCache()
@@ -1879,10 +1917,23 @@ export function MobileStakingPage() {
         fetchWorkAreas(farmId),
         fetchPipes(farmId),
         fetchChannels(farmId),
-        fetchRecords(farmId),
-        fetchFarmMemos(farmId),
-        fetchAttachments('farm_photo', [farmId]),
       ])
+    } catch (err) {
+      console.warn('[mobile refresh:stable] failed', err)
+    } finally {
+      stableBusyRef.current = false
+    }
+  }, [farmId, fetchCoordinates, fetchWorkAreas, fetchPipes, fetchChannels])
+
+  // 手動 の 「更新」 ボタン は 全部 引き直す。 現場 で 「今 すぐ PC の 直近 変更 も
+  // 反映 したい」 とき の 逃げ道 に なる。
+  const refreshData = useCallback(async () => {
+    if (!farmId) return
+    if (refreshingRef.current) return
+    refreshingRef.current = true
+    setRefreshing(true)
+    try {
+      await Promise.all([refreshFrequent(), refreshStable()])
       setLastRefreshAt(new Date())
     } catch (err) {
       console.warn('[mobile refresh] failed', err)
@@ -1890,22 +1941,22 @@ export function MobileStakingPage() {
       refreshingRef.current = false
       setRefreshing(false)
     }
-  }, [
-    farmId,
-    fetchChannels,
-    fetchCoordinates,
-    fetchWorkAreas,
-    fetchPipes,
-    fetchRecords,
-    fetchFarmMemos,
-    fetchAttachments,
-  ])
-  // 60 秒ごとの自動更新（既定 ON、ページ表示中のみ）
+  }, [farmId, refreshFrequent, refreshStable])
+
+  // 自動 更新 (ページ 表示中 のみ)。 頻繁 と 安定 を 別 interval で 動かす。
   useEffect(() => {
     if (!farmId) return
-    const id = window.setInterval(() => { void refreshData() }, REFRESH_INTERVAL_MS)
-    return () => window.clearInterval(id)
-  }, [farmId, refreshData])
+    const idFrequent = window.setInterval(() => {
+      void refreshFrequent()
+    }, REFRESH_FREQUENT_MS)
+    const idStable = window.setInterval(() => {
+      void refreshStable()
+    }, REFRESH_STABLE_MS)
+    return () => {
+      window.clearInterval(idFrequent)
+      window.clearInterval(idStable)
+    }
+  }, [farmId, refreshFrequent, refreshStable])
   const farmPhotos = useMemo(() => {
     if (!farmId) return [] as Array<{
       id: string
@@ -2504,31 +2555,13 @@ export function MobileStakingPage() {
   //   これ 1 本 で 比高 / TIN 差 / 断面図 の 自己位置 が すべて 設計 の 土俵 に 乗る。
   //   楕円体高 h = altitude + geoidalSep に 変換してから JPGEO2024 を引く。
   //   ブラウザ / Android GPS は geoidalSep が null (altitude が 既に 楕円体高 前提)。
-  /**
-   * その 記録 の 補正値。 セット に 属して いれば セット の 値、
-   * 属して いなければ 工区 の 既定 (実測記録 の slideOfRecord と 同じ 決め方)。
-   */
-  const slideOfRecord = (r: { recordSetId?: string | null }): SurveySlide =>
-    (r.recordSetId ? surveySets.find((x) => x.id === r.recordSetId)?.slide : undefined) ?? farmSlide
-
-  /**
-   * 作業中 の 記録セット の 補正値 (スライド量)。 実測 は この 分 だけ ずれて
-   * いる ので、設計 と 比べる とき は 引いて から 比べる。
-   */
-  const sessionSlide = useMemo<SurveySlide>(() => {
-    const hit = sessionSetId ? surveySets.find((x) => x.id === sessionSetId) : null
-    // セット を まだ 選んで いない (= 未振り分け に 入る) 間 は 工区 の 既定。
-    // 実測記録 の 画面 の slideOfRecord と 同じ 決め方 に 揃える。
-    return hit?.slide ?? farmSlide
-  }, [sessionSetId, surveySets, farmSlide])
-  const hasSlide =
-    sessionSlide.dx !== 0 || sessionSlide.dy !== 0 || sessionSlide.dz !== 0
+  // dx/dy/dz スライド 補正 は 廃止 のため 参照 削除。
 
   const selfElevation = useMemo<number | null>(() => {
     if (currentAlt === null || currentPos === null) return null
     // 統一ヘルパ: 内蔵GPS は 生 altitude、外部GPS + ジオイド ON は MSL(JPGEO2024)、
     // 外部GPS + ジオイド OFF は 楕円体高 (アンテナ高 引き)。 詳細は geolocation.ts。
-    const z = computeCorrectedElevation({
+    return computeCorrectedElevation({
       altitude: currentAlt,
       lat: currentPos[0],
       lng: currentPos[1],
@@ -2537,7 +2570,6 @@ export function MobileStakingPage() {
       useGeoidCorrection: effUseGeoid,
       geoidGrid,
     })
-    return z - sessionSlide.dz
   }, [
     currentAlt,
     currentGeoidalSep,
@@ -2545,7 +2577,6 @@ export function MobileStakingPage() {
     effUseGeoid,
     geoidGrid,
     effAntennaHeight,
-    sessionSlide.dz,
   ])
 
   const trenchDiff = trenchZ !== null && selfElevation !== null ? selfElevation - trenchZ : null
@@ -2704,12 +2735,10 @@ export function MobileStakingPage() {
     const recPts: { d: number; z: number; name: string }[] = []
     for (const r of records) {
       if (r.measuredZ == null) continue
-      // 断面図 は 設計 (TIN / 計画横断) と 並べて 見る 図 な ので、実測点 も
-      // その 記録 の セット の 補正値 を 引いて 設計 の 土俵 に 乗せて から 置く
-      const sl = slideOfRecord(r)
-      const rx = r.measuredX - sl.dx
-      const ry = r.measuredY - sl.dy
-      const rz = r.measuredZ - sl.dz
+      // dx/dy/dz スライド 補正 は 廃止 のため 実測 そのまま を 使う
+      const rx = r.measuredX
+      const ry = r.measuredY
+      const rz = r.measuredZ
       const t = ((rx - Ax) * dx + (ry - Ay) * dy) / L2
       if (t < 0 || t > 1) continue
       const fx = Ax + t * dx
@@ -2720,13 +2749,34 @@ export function MobileStakingPage() {
     }
     // 中間点から 作った 断面は、床掘 TIN も 実測記録も 無い ことが 多い。
     // 計画横断 (中心からの offset と 高さ) を 重ねないと 中身が 空に なり、
-    // どの 測点を 見ているのか 分からない
+    // どの 測点を 見ているのか 分からない。
+    //
+    // 整地 は 縦断 の 代わり に 「グリッド 線 × 測点 の 交点」 で 計画高 を
+    // 直接 入れる 方式 な ので、 plannedSectionRaw (絶対 標高 + offset) を
+    // そのまま 使う。 これ を 使わ ず に computeStationVertices の 出力 だけ
+    // 見せる と、 中心線 の 縦断 高 (未設定 な ので 0 or profile 補間) と の
+    // 差 が 全点 に 乗って 「一定 量 ずれ た 計画高」 に 見えて しまう。
+    // 水路 のような element ベース の 断面 は 従来 通り vertices を 描く。
     const planPts: { d: number; z: number; label: string }[] = []
     if (activeSection.station) {
-      for (const v of activeStationVertices) {
-        // 断面線は 中心を 真ん中に して 引いてある ので、
-        // 中心からの offset を 線上の 距離に 直す
-        planPts.push({ d: len / 2 + v.offset, z: v.z, label: v.label })
+      const meta = activeSection.station
+      const ch = openChannels.find((c) => c.id === meta.channelId)
+      const st = ch?.stations.find((x) => x.id === meta.stationId)
+      const raw = st?.plannedSectionRaw ?? []
+      if (raw.length > 0) {
+        for (const p of raw) {
+          planPts.push({
+            d: len / 2 + p.offset,
+            z: p.elevation,
+            label: p.note || '',
+          })
+        }
+      } else {
+        for (const v of activeStationVertices) {
+          // 断面線は 中心を 真ん中に して 引いてある ので、
+          // 中心からの offset を 線上の 距離に 直す
+          planPts.push({ d: len / 2 + v.offset, z: v.z, label: v.label })
+        }
       }
       planPts.sort((a, b) => a.d - b.d)
     }
@@ -2740,7 +2790,7 @@ export function MobileStakingPage() {
     records,
     sectionToleranceM,
     surveySets,
-    farmSlide,
+    openChannels,
   ])
 
   // 線形物 (中心線 / 幅杭 / 線形点 / 中間点)。全体図と 同じ 変換・同じ 見た目・
@@ -3033,21 +3083,10 @@ export function MobileStakingPage() {
 
 
   /**
-   * 補正後 の 自己位置 (実測 − スライド量)。 設計 の 土俵 に 乗せた 位置 で、
+   * 自己位置 (dx/dy/dz スライド 補正 は 廃止 のため 実測そのまま)。
    * 誘導 (方位 / 距離 / 近接) と 比高 は すべて これ を 使う。
-   * 補正値 が 0 の ときは 実測 そのもの。
    */
-  const correctedPos = useMemo<[number, number] | null>(() => {
-    if (!currentPos) return null
-    if (!hasSlide) return currentPos
-    try {
-      const xy = converter.toXY(currentPos[0], currentPos[1])
-      const ll = converter.toLatLng(xy.x - sessionSlide.dx, xy.y - sessionSlide.dy)
-      return [ll.lat, ll.lng]
-    } catch {
-      return currentPos
-    }
-  }, [currentPos, converter, hasSlide, sessionSlide.dx, sessionSlide.dy])
+  const correctedPos = currentPos
 
   const distanceToTarget = useMemo(() => {
     if (!correctedPos || !selectedTarget) return null
@@ -3087,17 +3126,17 @@ export function MobileStakingPage() {
     [heading],
   )
 
-  // 現在位置を平面直角座標 (X=北, Y=東) に変換。 補正値 が 入って いれば
-  // 引いた 後 の 値 (設計 の 土俵) を 返す。
+  // 現在位置を平面直角座標 (X=北, Y=東) に変換。
+  // dx/dy/dz スライド 補正 は 廃止 のため 実測 そのまま。
   const currentXY = useMemo(() => {
     if (!currentPos) return null
     try {
       const xy = converter.toXY(currentPos[0], currentPos[1])
-      return { x: xy.x - sessionSlide.dx, y: xy.y - sessionSlide.dy }
+      return { x: xy.x, y: xy.y }
     } catch {
       return null
     }
-  }, [currentPos, converter, sessionSlide.dx, sessionSlide.dy])
+  }, [currentPos, converter])
 
   // 近接モード: 自己位置→ターゲットの相対位置（測量座標 X=北/Y=東 ベースで高精度）
   const proximityRel = useMemo(() => {
@@ -8643,6 +8682,34 @@ export function MobileStakingPage() {
                     <div className="flex-1 min-w-0 px-2 py-1 border rounded bg-slate-50 text-slate-800">
                       {t.subTypeLabel}
                     </div>
+                  </div>
+                )}
+
+                {/* 点検 (coordinate のみ)。 チェック で 自分 の アカウント と 時刻 を 記録 */}
+                {isCoord && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="w-10 shrink-0 text-[11px] text-slate-500">点検</span>
+                    <label className="flex items-center gap-2 flex-1 min-w-0">
+                      <input
+                        type="checkbox"
+                        checked={liveCoord?.inspectedAt != null}
+                        onChange={(e) => {
+                          void toggleInspection(t.refId, e.target.checked)
+                        }}
+                        className="h-4 w-4"
+                      />
+                      <span className="text-[11px] text-slate-600 truncate">
+                        {liveCoord?.inspectedAt
+                          ? `点検済 ${new Date(liveCoord.inspectedAt).toLocaleString('ja-JP', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}`
+                          : '未点検'}
+                      </span>
+                    </label>
                   </div>
                 )}
 

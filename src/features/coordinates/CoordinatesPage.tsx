@@ -44,6 +44,7 @@ import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { Map as MapIcon } from 'lucide-react'
 import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
+import { parseKijuntenGeojson } from '@/lib/kijuntenGeojson'
 import type { CoordinateType, StakeStatus } from '@/types/database'
 import {
   STAKE_STATUS_OPTIONS,
@@ -588,6 +589,7 @@ export function CoordinatesPage() {
     fetchCoordinates,
     loadingProgress: coordLoadingProgress,
     updateCoordinate: _updateCoordinate,
+    toggleInspection: _toggleInspection,
     deleteCoordinate: _deleteCoordinate,
     deleteCoordinates: _deleteCoordinates,
     importCoordinates: _importCoordinates,
@@ -632,6 +634,11 @@ export function CoordinatesPage() {
         warnReadOnly()
       }) as typeof _updateCoordinate
     : _updateCoordinate
+  const toggleInspection = readOnly
+    ? ((async (..._args: Parameters<typeof _toggleInspection>) => {
+        warnReadOnly()
+      }) as typeof _toggleInspection)
+    : _toggleInspection
   const deleteCoordinate = readOnly
     ? ((async (..._args: Parameters<typeof _deleteCoordinate>) => {
         warnReadOnly()
@@ -1118,6 +1125,38 @@ export function CoordinatesPage() {
       importCoordinates(newCoords)
     }
     reader.readAsText(file)
+    event.target.value = ''
+  }
+
+  const handleImportKijuntenGeoJSON = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    if (projectZone == null) {
+      alert('プロジェクトの座標系が未設定のため取り込めません')
+      event.target.value = ''
+      return
+    }
+    try {
+      const text = await file.text()
+      const converter = new CoordinateConverter(projectZone)
+      const coords = parseKijuntenGeojson(text, converter)
+      if (coords.length === 0) {
+        alert('取り込める基準点が見つかりませんでした')
+        return
+      }
+      // 「取り込む点種」 で 上書き する と 基準点 の 意味 が 消えて しまう ので、
+      // GeoJSON 由来 は 常に 'control' 固定 (parseKijuntenGeojson が 決めた 値)。
+      importCoordinates(coords)
+    } catch (error) {
+      console.error('基準点GeoJSONの読み込みに失敗しました:', error)
+      alert(
+        `基準点GeoJSONの読み込みに失敗しました: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
     event.target.value = ''
   }
 
@@ -1966,6 +2005,21 @@ export function CoordinatesPage() {
                   CSV読込
                 </span>
               </label>
+              <label className="block">
+                <input
+                  type="file"
+                  accept=".geojson,.json,application/geo+json,application/json"
+                  onChange={(e) => { void handleImportKijuntenGeoJSON(e); setOpenMenu(null) }}
+                  className="hidden"
+                />
+                <span
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-slate-100 cursor-pointer"
+                  title="国土地理院 / 公共 基準点 の GeoJSON を 取り込む (全て 点種=基準点)"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  基準点GeoJSON読込
+                </span>
+              </label>
             </div>
           )}
         </div>
@@ -2441,6 +2495,17 @@ export function CoordinatesPage() {
                     楕円体高
                   </th>
                 )}
+                {showCol('inspection') && (
+                  <th
+                    className="px-0.5 py-2 text-center font-medium whitespace-nowrap"
+                    title="点検 チェック で 自分 の アカウント と 時刻 を 記録"
+                  >
+                    点検
+                  </th>
+                )}
+                {showCol('inspector') && (
+                  <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">点検者</th>
+                )}
                 {showCol('updatedBy') && (
                   <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
                 )}
@@ -2623,6 +2688,39 @@ export function CoordinatesPage() {
                   {showCol('ellipsoid') && (
                     <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono whitespace-nowrap">
                       {ellipsoidalHeightOf(coord)?.toFixed(3) ?? '-'}
+                    </td>
+                  )}
+                  {showCol('inspection') && (
+                    <td className="px-0.5 py-0.5 text-center">
+                      <input
+                        type="checkbox"
+                        checked={coord.inspectedAt != null}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          void toggleInspection(coord.id, e.target.checked)
+                        }}
+                        title={
+                          coord.inspectedAt
+                            ? `点検済 ${fmtDateTime(coord.inspectedAt)}`
+                            : '未点検'
+                        }
+                      />
+                    </td>
+                  )}
+                  {showCol('inspector') && (
+                    <td
+                      className="px-0.5 py-0.5 text-xs text-muted-foreground whitespace-nowrap max-w-[8rem] truncate"
+                      title={
+                        coord.inspectedBy
+                          ? `${memberNameById.get(coord.inspectedBy) ?? coord.inspectedBy}${
+                              coord.inspectedAt ? ` (${fmtDateTime(coord.inspectedAt)})` : ''
+                            }`
+                          : ''
+                      }
+                    >
+                      {coord.inspectedBy
+                        ? memberNameById.get(coord.inspectedBy) ?? '-'
+                        : '-'}
                     </td>
                   )}
                   {showCol('updatedBy') && (
@@ -2860,6 +2958,19 @@ export function CoordinatesPage() {
                           楕円体高
                         </th>
                       )}
+                      {showCol('inspection') && (
+                        <th
+                          className="px-0.5 py-2 text-center font-medium whitespace-nowrap"
+                          title="点検 チェック で 自分 の アカウント と 時刻 を 記録"
+                        >
+                          点検
+                        </th>
+                      )}
+                      {showCol('inspector') && (
+                        <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">
+                          点検者
+                        </th>
+                      )}
                       {showCol('updatedBy') && (
                   <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
                 )}
@@ -3042,6 +3153,41 @@ export function CoordinatesPage() {
                         {showCol('ellipsoid') && (
                           <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono whitespace-nowrap">
                             {ellipsoidalHeightOf(coord)?.toFixed(3) ?? '-'}
+                          </td>
+                        )}
+                        {showCol('inspection') && (
+                          <td className="px-0.5 py-0.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={coord.inspectedAt != null}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => {
+                                void toggleInspection(coord.id, e.target.checked)
+                              }}
+                              title={
+                                coord.inspectedAt
+                                  ? `点検済 ${fmtDateTime(coord.inspectedAt)}`
+                                  : '未点検'
+                              }
+                            />
+                          </td>
+                        )}
+                        {showCol('inspector') && (
+                          <td
+                            className="px-0.5 py-0.5 text-xs text-muted-foreground whitespace-nowrap max-w-[7rem] truncate"
+                            title={
+                              coord.inspectedBy
+                                ? `${memberNameById.get(coord.inspectedBy) ?? coord.inspectedBy}${
+                                    coord.inspectedAt
+                                      ? ` (${fmtDateTime(coord.inspectedAt)})`
+                                      : ''
+                                  }`
+                                : ''
+                            }
+                          >
+                            {coord.inspectedBy
+                              ? memberNameById.get(coord.inspectedBy) ?? '-'
+                              : '-'}
                           </td>
                         )}
                         {showCol('updatedBy') && (

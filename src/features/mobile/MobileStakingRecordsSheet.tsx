@@ -4,71 +4,23 @@
 // 違う のは 幅 の 使い方 だけ:
 //   ・出す 列 の かたまり を 選べる (既定 は 全部)
 //   ・1 行 は 折り返さ ず、はみ出す 分 は 横 スクロール
-//   ・記録セット を タブ で 切替、その セット の スライド量 を その場 で 直せる
+//   ・記録セット を タブ で 切替
 //
+// dx/dy/dz スライド 補正 は 廃止 (混乱 の 元 だった)。
 // 記録 の 付け替え や 削除、セット の 追加 は PC に 任せる。
 
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Plus, X } from 'lucide-react'
-import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
+import { Loader2, Plus, Trash2, X } from 'lucide-react'
+import { useStakingStore } from '@/stores/stakingStore'
 import { deriveRow, groupStakingRecords, type StakingGroup } from '@/lib/stakingGroups'
 import { setLabel, useSurveySetStore, generateDefaultSessionName, jstTodayIso } from '@/stores/surveySetStore'
-import {
-  fetchSurveySlide,
-  saveSurveySlide,
-  NO_SLIDE,
-  type SurveySlide,
-} from '@/lib/surveyCalibration'
 
 const f3 = (v: number | null | undefined): string => (v == null ? '—' : v.toFixed(3))
 
 /**
- * スライド量 の 1 軸 ぶん の 入力。 触って いない 間 は mm 単位 (小数 3 桁)、
- * フォーカス 中 だけ 生 の 文字列 を 持つ (末尾 の 0 が 邪魔 で 打てない の を 避ける)。
- */
-function SlideField({
-  label,
-  value,
-  onCommit,
-  disabled,
-}: {
-  label: string
-  value: number
-  onCommit: (v: number) => void
-  disabled?: boolean
-}) {
-  const [buf, setBuf] = useState<string | null>(null)
-  return (
-    <label className="flex items-center gap-1">
-      <span className="text-slate-500">{label}</span>
-      <input
-        type="text"
-        inputMode="decimal"
-        disabled={disabled}
-        value={buf ?? value.toFixed(3)}
-        onFocus={() => setBuf(String(value))}
-        onChange={(e) => setBuf(e.target.value)}
-        onBlur={() => {
-          const raw = buf
-          setBuf(null)
-          if (raw == null) return
-          const n = parseFloat(raw.trim())
-          if (!Number.isFinite(n)) return
-          const rounded = Math.round(n * 1000) / 1000
-          if (rounded !== value) onCommit(rounded)
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur()
-        }}
-        className="w-16 px-1 py-0.5 border rounded text-right tabular-nums bg-white disabled:bg-slate-100"
-      />
-    </label>
-  )
-}
-
-/**
  * 出せる 列 の かたまり。 PC の 実測記録 と 同じ 並び / 同じ 呼び方 に 揃える。
  * 既定 は 全部 出す (横 に スクロール すれば 読める)。 選択 は 端末 に 憶える。
+ * スライド値 / 補正実測値 は dx/dy/dz スライド 廃止 に 伴い 削除。
  */
 const GROUPS = [
   { key: 'design', label: '当初' },
@@ -77,8 +29,6 @@ const GROUPS = [
   { key: 'diff', label: '実測差' },
   { key: 'avg', label: '実測平均' },
   { key: 'dvs', label: '実測平均-当初' },
-  { key: 'slided', label: 'スライド値' },
-  { key: 'rev', label: '補正実測値' },
 ] as const
 type GroupKey = (typeof GROUPS)[number]['key']
 const DEFAULT_GROUPS: GroupKey[] = GROUPS.map((g) => g.key)
@@ -92,31 +42,23 @@ export function MobileStakingRecordsSheet({
   onClose: () => void
 }) {
   const records = useStakingStore((s) => s.records)
-  const updateSet = useSurveySetStore((s) => s.updateSet)
   const loading = useStakingStore((s) => s.loading)
   const fetchRecords = useStakingStore((s) => s.fetchRecords)
   const sets = useSurveySetStore((s) => s.sets)
   const activeSetId = useSurveySetStore((s) => s.activeSetId)
   const fetchSets = useSurveySetStore((s) => s.fetchByFarm)
-  /** 工区 単位 の スライド量。 セット に 属さない 記録 は これ で 見る */
-  const [farmSlide, setFarmSlide] = useState<SurveySlide>(NO_SLIDE)
-  // タブ は 必ず どれ か 1 つ の セット (または 未振り分け)。 混ざる と
-  // どの 補正値 で 見て いる か 分から なく なる ので 「すべて」 は 出さない。
+  // タブ は 必ず どれ か 1 つ の セット (または 未振り分け)。
   const [tab, setTab] = useState<string>('none')
 
   useEffect(() => {
     void fetchRecords(farmId)
     void fetchSets(farmId)
-    void fetchSurveySlide(farmId).then(setFarmSlide)
   }, [farmId, fetchRecords, fetchSets])
 
   const mine = useMemo(
     () => records.filter((r) => r.farmId === farmId),
     [records, farmId],
   )
-  /** その 記録 の 土俵。 セット に 属さない 記録 は 工区 の 既定 */
-  const slideOf = (r: StakingRecord | null): SurveySlide =>
-    (r?.recordSetId ? sets.find((s) => s.id === r.recordSetId)?.slide : undefined) ?? farmSlide
 
   const countBySet = useMemo(() => {
     const m = new Map<string | null, number>()
@@ -178,13 +120,11 @@ export function MobileStakingRecordsSheet({
   }
   const on = (k: GroupKey) => groups.has(k)
 
-  /** タブ で 選んで いる セット (すべて / 未振り分け は null = 工区 の 既定) */
-  const tabSet = tab === 'none' ? null : (sets.find((s) => s.id === tab) ?? null)
-  const tabSlide: SurveySlide = tabSet?.slide ?? farmSlide
-
   /** セッション の 追加。 作ったら その タブ に 移る。 名前 は 「NNN{A,B,C}」 の
    *  デフォルト を 与える (JST 年通算日 + 同日内 の 連番) */
   const createSet = useSurveySetStore((s) => s.createSet)
+  const deleteSet = useSurveySetStore((s) => s.deleteSet)
+  const setActiveSetId = useSurveySetStore((s) => s.setActiveSetId)
   const [creatingSet, setCreatingSet] = useState(false)
   const handleCreateSet = async () => {
     setCreatingSet(true)
@@ -198,25 +138,29 @@ export function MobileStakingRecordsSheet({
     }
   }
 
-  const [slideSaving, setSlideSaving] = useState(false)
-  const [slideError, setSlideError] = useState<string | null>(null)
-  /** スライド量 を 保存。 セット を 選んで いれば セット、それ 以外 は 工区 の 既定 */
-  const commitSlide = async (next: SurveySlide) => {
-    setSlideSaving(true)
-    setSlideError(null)
-    try {
-      if (tabSet) {
-        await updateSet(tabSet.id, { slide: next })
-      } else {
-        await saveSurveySlide(farmId, next)
-        setFarmSlide(next)
-      }
-    } catch (e) {
-      console.error('[mobile slide]', e)
-      setSlideError(e instanceof Error ? e.message : 'スライド量 の 保存 に 失敗')
-    } finally {
-      setSlideSaving(false)
-    }
+  /** 手簿 (セッション) を 削除。 記録 が ある 場合 は 警告 を 出す。
+   *  staking_records は ON DELETE SET NULL で 残る (未振り分け に 移る)。 */
+  const handleDeleteCurrentSet = async () => {
+    if (tab === 'none') return
+    const target = sets.find((s) => s.id === tab)
+    if (!target) return
+    const n = countBySet.get(target.id) ?? 0
+    const label = setLabel(target)
+    const msg =
+      n > 0
+        ? `「${label}」を 削除します。\nこの 手簿 に ぶら下がる 記録 ${n} 点 は 未振り分け に なります (記録 自体 は 残ります)。\n\n削除して よろしいですか？`
+        : `「${label}」を 削除します。 記録は ありません。\n\n削除して よろしいですか？`
+    if (!window.confirm(msg)) return
+    const deletedId = target.id
+    await deleteSet(deletedId)
+    // 作業中 セット が 消えた ら activeSetId も 解除 (次 の 測定 で 自動判定 に 戻る)
+    if (activeSetId === deletedId) setActiveSetId(null)
+    // タブ を フォールバック (未振り分け or 先頭 の セット)
+    setTab((prev) => {
+      if (prev !== deletedId) return prev
+      const next = sets.find((s) => s.id !== deletedId)
+      return next ? next.id : 'none'
+    })
   }
 
   return (
@@ -276,22 +220,8 @@ export function MobileStakingRecordsSheet({
             セッション
           </button>
         </div>
-        {/* スライド量。 セット を 選んで いれば その セット、それ 以外 は 工区 の 既定。
-            現場 で 基準局 を 立て 直した 直後 に 入れ たい ので ここ で 直せる ように する。 */}
-        {/* スライド量 は 1 行。 直す 先 は 選んで いる タブ (セット / 工区の既定) */}
-        <div className="py-1 flex items-center gap-2 text-[11px] whitespace-nowrap overflow-x-auto">
-          <span className="text-slate-500 shrink-0">スライド量</span>
-          {slideSaving && <Loader2 className="h-3 w-3 animate-spin text-slate-400 shrink-0" />}
-          {(['dx', 'dy', 'dz'] as const).map((axis) => (
-            <SlideField
-              key={axis}
-              label={axis === 'dx' ? 'dX' : axis === 'dy' ? 'dY' : 'dZ'}
-              value={tabSlide[axis]}
-              disabled={slideSaving}
-              onCommit={(v) => void commitSlide({ ...tabSlide, [axis]: v })}
-            />
-          ))}
-          {/* 出す 列 の かたまり。 dZ の 右 に 置く */}
+        {/* 表示 列 の 選択 + 現在 セッション の 削除 */}
+        <div className="py-1 flex items-center gap-2 text-[11px]">
           <button
             onClick={() => setPickerOpen((v) => !v)}
             className={`shrink-0 px-2 py-0.5 border rounded ${
@@ -299,6 +229,20 @@ export function MobileStakingRecordsSheet({
             }`}
           >
             表示列 {groups.size}/{GROUPS.length}
+          </button>
+          {/* 手簿 (セッション) 削除。 「未振り分け」 は 削除 対象 が ない ので 押せない */}
+          <button
+            onClick={() => void handleDeleteCurrentSet()}
+            disabled={tab === 'none'}
+            className="ml-auto shrink-0 inline-flex items-center gap-1 px-2 py-0.5 border rounded border-red-300 text-red-700 bg-white disabled:opacity-30 disabled:cursor-not-allowed"
+            title={
+              tab === 'none'
+                ? '手簿 を 選ぶ と 削除 できます (未振り分け は 削除 不可)'
+                : '選択中 の 手簿 を 削除 (記録 は 未振り分け に 残ります)'
+            }
+          >
+            <Trash2 className="h-3 w-3" />
+            手簿削除
           </button>
         </div>
         {pickerOpen && (
@@ -318,7 +262,6 @@ export function MobileStakingRecordsSheet({
             ))}
           </div>
         )}
-        {slideError && <div className="pb-1 text-[11px] text-red-600">{slideError}</div>}
       </div>
 
       {/* 1 行 = 1 点。 折り返す と 目 で 追えなく なる ので、はみ出す 分 は
@@ -367,8 +310,8 @@ export function MobileStakingRecordsSheet({
             </thead>
             <tbody>
               {shown.map((g) => {
-                const slide = slideOf(g.m1 ?? g.m2)
-                const d = deriveRow(g, slide.dx, slide.dy, slide.dz)
+                // dx/dy/dz スライド は 廃止 のため 常に 0
+                const d = deriveRow(g, 0, 0, 0)
                 /** 数値 3 桁 の セル */
                 const num = (v: number | null | undefined) => (
                   <td className="px-2 py-1 text-right font-mono whitespace-nowrap">{f3(v)}</td>
@@ -425,20 +368,6 @@ export function MobileStakingRecordsSheet({
                         {num(d.dvsX)}
                         {num(d.dvsY)}
                         {num(d.dvsZ)}
-                      </>
-                    )}
-                    {on('slided') && (
-                      <>
-                        {num(d.slidedDX)}
-                        {num(d.slidedDY)}
-                        {num(d.slidedDZ)}
-                      </>
-                    )}
-                    {on('rev') && (
-                      <>
-                        {num(d.revSlideMX)}
-                        {num(d.revSlideMY)}
-                        {num(d.revSlideMZ)}
                       </>
                     )}
                     <td className="px-2 py-1 text-slate-500 whitespace-nowrap border-l">

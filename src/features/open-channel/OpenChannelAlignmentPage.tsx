@@ -10,12 +10,13 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import { useNavigate, useParams } from 'react-router-dom'
 import type { AlignmentReportKind } from './alignmentReport'
 import { CrossSectionDxfModal } from './CrossSectionDxfModal'
-import { Polyline, CircleMarker, useMap, useMapEvent, Tooltip } from 'react-leaflet'
+import { Polyline, Polygon, CircleMarker, useMap, useMapEvent, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Check, X, Upload, Loader2, Calculator, FolderOpen } from 'lucide-react'
 import { listFarmFiles, downloadFarmFileBytes, type FarmFileRow } from '@/lib/farmFiles'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
+import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
 import { parseSxfFile } from '@/lib/sxf'
 import { worldToDxf } from '@/lib/openChannel/cadTrace'
@@ -30,6 +31,8 @@ import { GridTable, type GridCellRef } from './GridTable'
 import { ProfileTraceModal } from './ProfileTraceModal'
 import { GradingStakeBar, type ResolvedLineStake } from './GradingStakeBar'
 import { PlanCadModal } from './PlanCadModal'
+import { FarmPlanCadModal } from '@/components/map/FarmPlanCadModal'
+import { useFarmPlanCadLines } from '@/components/map/PlanCadLayers'
 import {
   solvePlanCadTransform,
   planCadToWorld,
@@ -411,11 +414,183 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
  * 座標 の マーカー で は なく 「何 も 無い 所」 を 押した とき の 緯度経度 を 返す。
  * 有効 な 間 だけ 置く (常時 置く と 通常 の 地図 操作 で 拾って しまう)。
  */
-function MapPointCatcher({ onPick }: { onPick: (lat: number, lng: number) => void }) {
+function MapPointCatcher({
+  onPick,
+  onHover,
+}: {
+  onPick: (lat: number, lng: number) => void
+  onHover?: (lat: number, lng: number) => void
+}) {
   useMapEvent('click', (e) => {
     onPick(e.latlng.lat, e.latlng.lng)
   })
+  useMapEvent('mousemove', (e) => {
+    onHover?.(e.latlng.lat, e.latlng.lng)
+  })
+  useMapEvent('mouseout', () => {
+    onHover?.(NaN, NaN)
+  })
   return null
+}
+
+// 背景CAD の 端点 / 交点 / 線上 に 寄せる ため の スナップ。
+//
+// planCadLines は 各 polyline が [lat, lng] の 列。
+// 距離 は 経度 を 緯度換算 (中央緯度 の cos) して 「近似平坦」 で 二乗距離。
+// 上限 (SNAP_DEG) を 超える 場合 は null (= クリック 位置 そのまま)。
+//
+// 優先 順位:
+//   1. 端点 (polyline の 先頭 / 末尾) — 一番 特徴 的 な 点
+//   2. 交点 (2 本 の polyline の 交わり) — 特徴 2 番目
+//   3. 中間 頂点 (折れ点) — 線上 だが 候補 として 残す
+//   4. 辺 上 (垂線) — 線 の 途中 の 点
+// 上位 tier に 候補 が あれば tier 内 の 最短 を 使う。 下位 tier は 見な い。
+export type SnapKind = 'endpoint' | 'intersection' | 'vertex' | 'edge'
+const SNAP_DEG = 0.0002 // ≈ 22m 相当。 地図を 引き過ぎて いる とき 誤爆 させ ない ため の 大まかな 上限
+function snapLatLngToCadLines(
+  lat: number,
+  lng: number,
+  polylines: { pts: [number, number][] }[],
+): { lat: number; lng: number; kind: SnapKind } | null {
+  const kx = Math.cos((lat * Math.PI) / 180) // 経度方向 の 縮尺
+  const tol = SNAP_DEG
+  const tol2 = tol * tol
+  type Cand = { lat: number; lng: number; d2: number }
+  const endpoints: Cand[] = []
+  const vertices: Cand[] = []
+  const edges: Cand[] = []
+  // 交点 計算 用: クリック 近傍 の 辺 だけ 集める
+  type Seg = { alat: number; alng: number; blat: number; blng: number }
+  const nearSegs: Seg[] = []
+
+  const d2Of = (plat: number, plng: number) => {
+    const dy = plat - lat
+    const dx = (plng - lng) * kx
+    return dx * dx + dy * dy
+  }
+
+  for (const line of polylines) {
+    const pts = line.pts
+    const n = pts.length
+    if (n < 1) continue
+    for (let i = 0; i < n; i++) {
+      const [alat, alng] = pts[i]
+      const d2 = d2Of(alat, alng)
+      if (d2 < tol2) {
+        const isEndpoint = i === 0 || i === n - 1
+        ;(isEndpoint ? endpoints : vertices).push({ lat: alat, lng: alng, d2 })
+      }
+      if (i + 1 >= n) continue
+      const [blat, blng] = pts[i + 1]
+      // 辺 の bbox が 近傍 か ざっくり 判定
+      const minLat = Math.min(alat, blat) - tol
+      const maxLat = Math.max(alat, blat) + tol
+      const minLng = Math.min(alng, blng) - tol / kx
+      const maxLng = Math.max(alng, blng) + tol / kx
+      if (lat < minLat || lat > maxLat || lng < minLng || lng > maxLng) continue
+      nearSegs.push({ alat, alng, blat, blng })
+      // 辺 上 の 最近接 点 (垂線 が 辺内 の とき)
+      const eyLat = blat - alat
+      const eyLng = (blng - alng) * kx
+      const den = eyLat * eyLat + eyLng * eyLng
+      if (den <= 0) continue
+      const dyLat = lat - alat
+      const dyLng = (lng - alng) * kx
+      const t = (dyLat * eyLat + dyLng * eyLng) / den
+      if (t <= 0 || t >= 1) continue
+      const plat = alat + t * (blat - alat)
+      const plng = alng + t * (blng - alng)
+      const dEdge2 = d2Of(plat, plng)
+      if (dEdge2 < tol2) edges.push({ lat: plat, lng: plng, d2: dEdge2 })
+    }
+  }
+
+  // 交点 (2 本 の 辺 の 交わり) を 近傍 の 辺 の 組合せ から 計算
+  const intersections: Cand[] = []
+  for (let i = 0; i < nearSegs.length; i++) {
+    const s1 = nearSegs[i]
+    for (let j = i + 1; j < nearSegs.length; j++) {
+      const s2 = nearSegs[j]
+      const p = segSegIntersect(s1, s2, kx)
+      if (!p) continue
+      const d2 = d2Of(p.lat, p.lng)
+      if (d2 < tol2) intersections.push({ lat: p.lat, lng: p.lng, d2 })
+    }
+  }
+
+  // 特徴 点 (端点 / 交点) は 同じ tier で 距離 比較。
+  // ユーザ が 端点 と 交点 の どちら に 近く 押した か で 素直 に 決まる。
+  const pickBestKind = (
+    arrs: { arr: Cand[]; kind: SnapKind }[],
+  ): { c: Cand; kind: SnapKind } | null => {
+    let best: { c: Cand; kind: SnapKind } | null = null
+    for (const { arr, kind } of arrs) {
+      for (const c of arr) {
+        if (!best || c.d2 < best.c.d2) best = { c, kind }
+      }
+    }
+    return best
+  }
+  const feature = pickBestKind([
+    { arr: endpoints, kind: 'endpoint' },
+    { arr: intersections, kind: 'intersection' },
+  ])
+  if (feature) return { lat: feature.c.lat, lng: feature.c.lng, kind: feature.kind }
+  const line = pickBestKind([
+    { arr: vertices, kind: 'vertex' },
+    { arr: edges, kind: 'edge' },
+  ])
+  if (line) return { lat: line.c.lat, lng: line.c.lng, kind: line.kind }
+  return null
+}
+
+// 3 点 (x, y, z) が 作る 面 に 座標 (x, y) を 投影 し z を 返す。
+// 面 が 垂直 (法線 の z が ほぼ 0) だ と 一意 に 決まら ない ので null。
+function planeZAt(
+  x: number,
+  y: number,
+  p1: { x: number; y: number; z: number },
+  p2: { x: number; y: number; z: number },
+  p3: { x: number; y: number; z: number },
+): number | null {
+  const e1x = p2.x - p1.x
+  const e1y = p2.y - p1.y
+  const e1z = p2.z - p1.z
+  const e2x = p3.x - p1.x
+  const e2y = p3.y - p1.y
+  const e2z = p3.z - p1.z
+  // 法線 = e1 × e2
+  const nx = e1y * e2z - e1z * e2y
+  const ny = e1z * e2x - e1x * e2z
+  const nz = e1x * e2y - e1y * e2x
+  if (!Number.isFinite(nz) || Math.abs(nz) < 1e-9) return null
+  // 平面方程式: nx*(x-p1.x) + ny*(y-p1.y) + nz*(z-p1.z) = 0
+  return p1.z - (nx * (x - p1.x) + ny * (y - p1.y)) / nz
+}
+
+// 2 辺 の 交点 (両方 の 辺内 で 交わる とき だけ 返す)。
+// kx は 経度→緯度 の 縮尺補正 (近似平坦)。
+function segSegIntersect(
+  s1: { alat: number; alng: number; blat: number; blng: number },
+  s2: { alat: number; alng: number; blat: number; blng: number },
+  kx: number,
+): { lat: number; lng: number } | null {
+  const x1 = s1.alng * kx
+  const y1 = s1.alat
+  const x2 = s1.blng * kx
+  const y2 = s1.blat
+  const x3 = s2.alng * kx
+  const y3 = s2.alat
+  const x4 = s2.blng * kx
+  const y4 = s2.blat
+  const den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+  if (Math.abs(den) < 1e-18) return null
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den
+  const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / den
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null
+  const plat = y1 + t * (y2 - y1)
+  const plng = (x1 + t * (x2 - x1)) / kx
+  return { lat: plat, lng: plng }
 }
 
 function StationFocus({
@@ -6537,11 +6712,38 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
   const [gridLineIdx, setGridLineIdx] = useState<number | null>(null)
   /** 任意測点 を 地図 から 拾って いる 最中 か */
   const [freePicking, setFreePicking] = useState(false)
+  // 任意測点 の 取得 時 に 背景CAD の 端点 / 交点 / 頂点 / 辺 に スナップ するか。
+  // 平面図 の 基準 点 を 拾いたい 場面 (整地 の 位置合わせ 用) を 想定。
+  // localStorage で 覚えて、次 に 開いた とき も 同じ 挙動 に する。
+  const [freePickSnapCad, setFreePickSnapCad] = useState<boolean>(
+    () => localStorage.getItem('oc:freePickSnapCad') !== '0',
+  )
+  useEffect(() => {
+    localStorage.setItem('oc:freePickSnapCad', freePickSnapCad ? '1' : '0')
+  }, [freePickSnapCad])
+  // マウス 移動 で 「今 押すと どこ に 寄る か」 を 見せる ため の 一時 マーカー。
+  // freePicking の 間 だけ 追跡 する。
+  const [snapPreview, setSnapPreview] = useState<
+    { lat: number; lng: number; kind: SnapKind } | null
+  >(null)
+  useEffect(() => {
+    if (!freePicking) setSnapPreview(null)
+  }, [freePicking])
 
   /** 平面図 CAD の 配置 ダイアログ */
   const [planCadOpen, setPlanCadOpen] = useState(false)
+  const [farmPlanCadOpen, setFarmPlanCadOpen] = useState(false)
+
+  /** 任意測点 の 計画高 算出 用 の 3 点 を 地図 上 で 選ぶ モード。
+   *  planePickingFor に 任意測点 の id を 入れる と 「今 その 点 用 の 面 を 選び中」。
+   *  planePicked は 今回 選んで いる 途中 の グリッド 点 (最大 3)。
+   *  lastPlanePointIds は 直前 に 確定 した 3 点。 次 の 計算 は 自動 で これ を 使う。 */
+  const [planePickingFor, setPlanePickingFor] = useState<string | null>(null)
+  const [planePicked, setPlanePicked] = useState<string[]>([])
+  const [lastPlanePointIds, setLastPlanePointIds] = useState<string[]>([])
+  /** 一覧 の 行 で 選んだ 任意測点。 地図 上 で ハイライト。 */
+  const [selectedFreePointId, setSelectedFreePointId] = useState<string | null>(null)
   /** 地図 に 敷く 図面 の 図形 (読み込み 済み) */
-  const [planCadDoc, setPlanCadDoc] = useState<import('@/lib/dxfRender').DxfDocument | null>(null)
 
   /** 縦断 を CAD から なぞる ダイアログ を 開いて いる 線 */
   const [profileTraceIdx, setProfileTraceIdx] = useState<number | null>(null)
@@ -6744,25 +6946,30 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
   }
 
   /**
-   * 地図 に 敷く 平面図 を 落として 読む。 図面 を 変えた とき だけ 走る。
-   * 形 に する の は 下 の memo。 ここ は 読み込み だけ。
+   * 地図 に 敷く 平面図。 まず 工区 単位 の farm.plan_cads を 見る (PC ・ スマホ 共通)。
+   * それ が 空 なら 旧 データ (selected.planCad の 工種 単位) を フォールバック で 描く。
+   * 移行 済み の 工区 は 上 だけ、旧 データ 残り の 工区 は 下 だけ 動く。
    */
-  const planCad = selected?.planCad ?? null
-  const planCadFile = planCad
-    ? (selected?.dxfCrossSections ?? []).find((f) => f.id === planCad.dxfId) ?? null
+  const farmPlanCadLines = useFarmPlanCadLines(currentFarm?.plan_cads, zone)
+
+  const [planCadDoc, setPlanCadDoc] = useState<import('@/lib/dxfRender').DxfDocument | null>(null)
+  const legacyPlanCad = selected?.planCad ?? null
+  const legacyPlanCadFile = legacyPlanCad
+    ? (selected?.dxfCrossSections ?? []).find((f) => f.id === legacyPlanCad.dxfId) ?? null
     : null
   useEffect(() => {
-    if (!planCadFile) {
+    // 工区 側 が 埋まって いる なら 旧 データ の 読込 は 不要
+    if ((currentFarm?.plan_cads ?? []).length > 0 || !legacyPlanCadFile) {
       setPlanCadDoc(null)
       return
     }
     let cancelled = false
     const ext =
-      (planCadFile.path.split('.').pop()?.toLowerCase() ?? '') ||
-      (planCadFile.name.split('.').pop()?.toLowerCase() ?? '')
+      (legacyPlanCadFile.path.split('.').pop()?.toLowerCase() ?? '') ||
+      (legacyPlanCadFile.name.split('.').pop()?.toLowerCase() ?? '')
     void supabase.storage
       .from('open-channel-dxf')
-      .download(planCadFile.path)
+      .download(legacyPlanCadFile.path)
       .then(async ({ data, error: dlErr }) => {
         if (cancelled) return
         if (dlErr || !data) throw dlErr ?? new Error('DL 失敗')
@@ -6771,24 +6978,20 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
         setPlanCadDoc(ext === 'sfc' || ext === 'p21' ? parseSxfFile(text) : parseDxf(text))
       })
       .catch((e) => {
-        console.error('[plan cad]', e)
+        console.error('[plan cad legacy]', e)
         if (!cancelled) setPlanCadDoc(null)
       })
     return () => {
       cancelled = true
     }
-  }, [planCadFile])
+  }, [currentFarm?.plan_cads, legacyPlanCadFile])
 
-  /**
-   * 平面図 を 地図 の 線 に 直す。
-   * 図面 の 座標 → 実 座標 (2 点 の 相似変換) → 緯度経度。
-   * 数 が 多い と 地図 が 重く なる ので 上限 を 決めて 打ち切る。
-   */
-  const planCadLines = useMemo(() => {
-    if (!planCad || !planCadDoc || planCad.visible === false) return []
-    const t = solvePlanCadTransform(planCad.p1, planCad.p2)
+  const legacyPlanCadLines = useMemo(() => {
+    if ((currentFarm?.plan_cads ?? []).length > 0) return []
+    if (!legacyPlanCad || !planCadDoc || legacyPlanCad.visible === false) return []
+    const t = solvePlanCadTransform(legacyPlanCad.p1, legacyPlanCad.p2)
     if (!t) return []
-    const hidden = new Set(planCad.hiddenLayers ?? [])
+    const hidden = new Set(legacyPlanCad.hiddenLayers ?? [])
     const out: { key: string; color: string; pts: [number, number][] }[] = []
     const MAX = 6000
     for (let i = 0; i < planCadDoc.shapes.length && out.length < MAX; i++) {
@@ -6806,7 +7009,9 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
       }
     }
     return out
-  }, [planCad, planCadDoc, converter])
+  }, [currentFarm?.plan_cads, legacyPlanCad, planCadDoc, converter])
+
+  const planCadLines = farmPlanCadLines.length > 0 ? farmPlanCadLines : legacyPlanCadLines
 
   /**
    * グリッド の 計画高 を まとめて 座標 に する。
@@ -6909,10 +7114,21 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
     return { added, updated }
   }
 
-  /** 地図 を 押した 所 を 任意測点 に する。 名前 は 連番 で 付ける */
+  /** 地図 を 押した 所 を 任意測点 に する。 名前 は 連番 で 付ける。
+   *  freePickSnapCad が true な とき は 背景CAD の 端点 / 交点 / 頂点 / 辺 の
+   *  順 で 最寄り の 特徴 点 に 寄せる。 */
   const addFreePoint = (lat: number, lng: number) => {
     if (!selected) return
-    const { x, y } = converter.toXY(lat, lng)
+    let px = lat
+    let py = lng
+    if (freePickSnapCad && snapPolylines.length > 0) {
+      const snap = snapLatLngToCadLines(lat, lng, snapPolylines)
+      if (snap) {
+        px = snap.lat
+        py = snap.lng
+      }
+    }
+    const { x, y } = converter.toXY(px, py)
     const cur = selected.freePoints ?? []
     const used = new Set(cur.map((p) => p.name))
     let n = cur.length + 1
@@ -6929,6 +7145,86 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
       ],
     })
   }
+
+  /**
+   * 任意測点 の 計画高 を、指定 の 3 点 (グリッド点) が 作る 面 に 投影 して 算出。
+   * 3 点 の 高さ が 1 つ でも 欠けて いれば null。 面 が 垂直 なら null。
+   */
+  const computeZForFreePoint = (freeId: string, planeIds: string[]) => {
+    if (!selected) return
+    if (planeIds.length !== 3) return
+    const fp = (selected.freePoints ?? []).find((p) => p.id === freeId)
+    if (!fp) return
+    const picks = planeIds
+      .map((id) => enumerableGridPoints.find((g) => g.id === id))
+      .filter((g): g is (typeof enumerableGridPoints)[number] => g != null)
+    if (picks.length !== 3) return
+    const z = planeZAt(fp.x, fp.y, picks[0], picks[1], picks[2])
+    if (z == null) {
+      alert('選んだ 3 点 が 一直線上 か 面 が 垂直 な ので 計画高 を 決められません。 別 の 3 点 を 選んで ください。')
+      return
+    }
+    const nextZ = Math.round(z * 1000) / 1000
+    void updateChannel(selected.id, {
+      freePoints: (selected.freePoints ?? []).map((p) =>
+        p.id === freeId ? { ...p, z: nextZ } : p,
+      ),
+    })
+  }
+
+  /**
+   * 任意測点 の 「計算」 ボタン を 押した とき の 処理。
+   * 直前 の 3 点 が 有効 なら 即 適用、 無ければ 地図 上 で 3 点 を 選ぶ モード に 入る。
+   * ピック モード 中 は 他 の 拾い モード (任意測点 取得 / 断面点 取り込み) を 抜ける。
+   */
+  const handleRequestPlaneCompute = (freeId: string) => {
+    if (
+      lastPlanePointIds.length === 3 &&
+      lastPlanePointIds.every((id) => enumerableGridPoints.some((g) => g.id === id))
+    ) {
+      computeZForFreePoint(freeId, lastPlanePointIds)
+      return
+    }
+    // 他 の 拾い モード を 全部 抜けて、グリッド 点 だけ を 押せる 状態 に する
+    setFreePicking(false)
+    setMapCaptureTarget(null)
+    setPlanePickingFor(freeId)
+    setPlanePicked([])
+  }
+
+  /** 地図 上 で グリッド点 を 押した とき (planePicking モード の 挙動) */
+  const handlePickGridPointForPlane = (gridPointId: string) => {
+    if (!planePickingFor) return
+    setPlanePicked((prev) => {
+      // 既に 選んで いれば 外す (トグル)
+      if (prev.includes(gridPointId)) return prev.filter((id) => id !== gridPointId)
+      const next = [...prev, gridPointId]
+      if (next.length === 3) {
+        // 3 点 揃った ら 即 計算
+        computeZForFreePoint(planePickingFor, next)
+        setLastPlanePointIds(next)
+        setPlanePickingFor(null)
+        return []
+      }
+      return next
+    })
+  }
+
+  /** 選び中 を キャンセル */
+  const cancelPlanePicking = () => {
+    setPlanePickingFor(null)
+    setPlanePicked([])
+  }
+  // Esc で キャンセル
+  useEffect(() => {
+    if (!planePickingFor) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelPlanePicking()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planePickingFor])
 
   /** 列 を 選ぶ: 下 の パネル を 縦断図 に 切り替えて 開く */
   const handleSelectGridLine = (idx: number) => {
@@ -6959,6 +7255,117 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
     }
     return out
   }, [gridMapRows])
+
+  /**
+   * 任意測点 の 計画高 算出 に 使う 「面 の 候補 点 一覧」。
+   * 3 点 を 選ぶ と、 その 面 に 投影 した 高さ を 任意測点 に 入れる。
+   * planned が 入って いる 点 だけ を 候補 に する。
+   *
+   * 出す 種類:
+   *   grid — 格子点 (gridMapRows。 中心 の 縦断 は 測点 と 同義)。
+   *   sect — 各 測点 の 縦横断 計画点 (plannedSectionRaw の 各点)。
+   *          offset を 中心線 の 直角方向 に 展開 して 実 座標 に する。
+   */
+  const enumerableGridPoints = useMemo(() => {
+    if (!isGrading || !selected) return []
+    const cfg = selected.gridLines
+    const sign = selected.sideOrientation === 'reverse' ? -1 : 1
+    const out: {
+      id: string
+      name: string
+      kind: 'grid' | 'sect'
+      x: number
+      y: number
+      z: number
+    }[] = []
+    // (1) 格子点
+    for (const row of gridMapRows) {
+      const lineNm = gridLineName(cfg, row.idx)
+      for (const p of row.pts) {
+        if (p.planned == null || !Number.isFinite(p.planned)) continue
+        const xy = converter.toXY(p.lat, p.lng)
+        out.push({
+          id: `grid-${row.idx}-${p.stationId}`,
+          name: gridPointName(lineNm, p.distance + spOffset),
+          kind: 'grid',
+          x: xy.x,
+          y: xy.y,
+          z: p.planned,
+        })
+      }
+    }
+    // (2) 縦横断 の 計画点 (plannedSectionRaw)。 offset を 直角方向 に 出す。
+    if (segments.length > 0) {
+      for (const st of stations) {
+        const c = pointAtDistance(segments, st.distance)
+        const t = tangentAtDistance(segments, st.distance)
+        if (!c || !t) continue
+        const perpX = -t.y * sign
+        const perpY = t.x * sign
+        for (const cp of st.plannedSectionRaw ?? []) {
+          if (cp.elevation == null || !Number.isFinite(cp.elevation)) continue
+          const px = c.x + cp.offset * perpX
+          const py = c.y + cp.offset * perpY
+          const sp = st.distance + spOffset
+          const sign2 = cp.offset >= 0 ? '+' : ''
+          out.push({
+            id: `sect-${st.id}-${cp.id}`,
+            name: `${st.label}${sign2}${cp.offset.toFixed(2)}`,
+            kind: 'sect',
+            x: px,
+            y: py,
+            z: cp.elevation,
+          })
+          void sp
+        }
+      }
+    }
+    return out
+  }, [isGrading, selected, gridMapRows, converter, spOffset, segments, stations])
+
+  /**
+   * 任意測点 の スナップ 対象 に する 線群。 CAD の 線 に 加えて、
+   * 整地 の 表示中 な 格子 も 混ぜる ので 「CAD と 格子 の 交点」 も
+   * 拾える。 格子 が 非表示 の とき は CAD だけ。
+   */
+  /**
+   * 計画高 の 面 の 3 点 (ピック 中 の 途中 集合、 または 直近 確定 の 3 点) を
+   * 地図 上 の 三角形 として 出す ため の lat/lng 配列。
+   * 2 点 なら 線 だけ、 3 点 なら 三角形 を 描画 する。
+   */
+  const activePlaneLatLngs = useMemo(() => {
+    const ids = planePickingFor ? planePicked : lastPlanePointIds
+    const out: [number, number][] = []
+    for (const id of ids) {
+      const g = enumerableGridPoints.find((eg) => eg.id === id)
+      if (!g) continue
+      const ll = converter.toLatLng(g.x, g.y)
+      out.push([ll.lat, ll.lng])
+    }
+    return out
+  }, [
+    planePickingFor,
+    planePicked,
+    lastPlanePointIds,
+    enumerableGridPoints,
+    converter,
+  ])
+
+  const snapPolylines = useMemo(() => {
+    const out: { pts: [number, number][] }[] = planCadLines.map((l) => ({
+      pts: l.pts,
+    }))
+    if (isGrading && showGridOnMap) {
+      for (const line of gridCrossLines) {
+        if (line.length >= 2) out.push({ pts: line })
+      }
+      for (const row of gridMapRows) {
+        const pts = row.pts.map((p) => [p.lat, p.lng] as [number, number])
+        if (pts.length >= 2) out.push({ pts })
+      }
+    }
+    return out
+  }, [planCadLines, isGrading, showGridOnMap, gridCrossLines, gridMapRows])
 
   /** グリッド間隔。 入力 は グリッド設定 (グリッド表 の 中) に 置いて ある */
   const gridSpacing = selected?.gridLines.spacing ?? 20
@@ -7892,9 +8299,16 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex-1 flex overflow-hidden">
-        {/* 左: 一覧 + 編集 */}
-        <div className="w-[624px] overflow-auto p-3 bg-slate-50 border-r space-y-3">
+      {/* 左右 の 幅 は ドラッグ で 変え られる。 storageKey で 工種 (整地 / 水路) を
+          分けて 覚え、 それぞれ の 好み を 別 に 記憶 する。 */}
+      <ResizableSplit
+        storageKey={isGrading ? 'grading-alignment' : 'open-channel-alignment'}
+        defaultLeft={624}
+        minLeft={320}
+        maxLeft={1400}
+        className="flex-1 overflow-hidden"
+        left={
+        <div className="h-full overflow-auto p-3 bg-slate-50 space-y-3">
             {channelStoreError && (
               <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 break-words">
                 保存 に 失敗 しました: {channelStoreError}
@@ -8172,22 +8586,32 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                       )}
                     </div>
 
-                    {/* 地図 の 下敷き に する 平面図 */}
+                    {/* 地図 の 下敷き に する 平面図。 工区 単位 (farm.plan_cads) の
+                        設定 を 使う ので、 他 の 工種 と スマホ でも 同じ 図面 が 出る。
+                        旧 データ (selected.planCad) が 残って いる 間 は それ を フォールバック 描画。 */}
                     <div className="flex items-center gap-2 text-xs">
                       <button
-                        onClick={() => setPlanCadOpen(true)}
+                        onClick={() => setFarmPlanCadOpen(true)}
                         className="px-2 py-0.5 border rounded bg-white hover:bg-slate-50 text-slate-700"
-                        title="平面図 CAD を 取り込み、 2 点 で 地図 に 合わせる"
+                        title="工区 の 平面図 CAD を 束ねて 管理 (取り込み・位置合わせ・表示切替)"
                       >
-                        平面図CADを配置
+                        背景CAD (工区共通)
                       </button>
                       <span className="text-slate-400 truncate">
-                        {selected.planCad
-                          ? ((selected.dxfCrossSections ?? []).find(
-                              (f) => f.id === selected.planCad?.dxfId,
-                            )?.name ?? '(図面 が 見つかりません)')
-                          : '未設定'}
+                        {(currentFarm?.plan_cads ?? []).length === 0
+                          ? legacyPlanCad
+                            ? '未設定 (旧 工種CAD を 表示中)'
+                            : '未設定'
+                          : `${(currentFarm!.plan_cads!).length} 枚`}
                       </span>
+                      {(currentFarm?.plan_cads ?? []).length === 0 && legacyPlanCad && (
+                        <span
+                          className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5"
+                          title="この 工種 に 付いて いる 旧 CAD を 表示中。 スマホ で も 見せたい 場合 は 工区共通 に 移して ください"
+                        >
+                          旧設定
+                        </span>
+                      )}
                     </div>
 
                     <label className="flex items-center gap-1 text-xs text-slate-600 cursor-pointer w-fit">
@@ -8471,86 +8895,6 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                 )}
               </CollapsibleSection>
 
-              {/* 任意測点。 地図 を 押して 拾う だけ の 点。
-                  平面図 CAD の 位置合わせ の 基準 に 使う。 */}
-              {isGrading && (
-                <CollapsibleSection title="任意測点" storageKey="oc:section:free-points">
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setFreePicking((v) => !v)}
-                      className={
-                        'px-2 py-1 text-xs border rounded ' +
-                        (freePicking
-                          ? 'bg-violet-600 text-white border-violet-600'
-                          : 'bg-white hover:bg-slate-50 text-slate-700')
-                      }
-                      title="地図 の 任意 の 位置 を 押して 座標 を 拾う"
-                    >
-                      {freePicking ? '取得中 (押して 終了)' : '地図から取得'}
-                    </button>
-                    <span className="text-[11px] text-slate-400">
-                      {(selected.freePoints ?? []).length} 点
-                    </span>
-                  </div>
-
-                  {(selected.freePoints ?? []).length > 0 && (
-                    <div className="border rounded overflow-auto max-h-56">
-                      <table className="w-full text-xs">
-                        <thead className="bg-slate-50 text-slate-500 sticky top-0 text-[11px]">
-                          <tr>
-                            <th className="px-1 py-1 text-left">点名</th>
-                            <th className="px-1 py-1 text-right w-28">X (北)</th>
-                            <th className="px-1 py-1 text-right w-28">Y (東)</th>
-                            <th className="w-6" />
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(selected.freePoints ?? []).map((fp) => (
-                            <tr key={fp.id} className="border-t">
-                              <td className="px-1 py-0.5">
-                                <input
-                                  type="text"
-                                  value={fp.name}
-                                  onChange={(e) =>
-                                    void updateChannel(selected.id, {
-                                      freePoints: (selected.freePoints ?? []).map((q) =>
-                                        q.id === fp.id ? { ...q, name: e.target.value } : q,
-                                      ),
-                                    })
-                                  }
-                                  className="w-full px-1 py-0.5 border rounded"
-                                />
-                              </td>
-                              <td className="px-1 py-0.5 text-right font-mono tabular-nums">
-                                {fp.x.toFixed(3)}
-                              </td>
-                              <td className="px-1 py-0.5 text-right font-mono tabular-nums">
-                                {fp.y.toFixed(3)}
-                              </td>
-                              <td className="px-1 py-0.5 text-center">
-                                <button
-                                  onClick={() =>
-                                    void updateChannel(selected.id, {
-                                      freePoints: (selected.freePoints ?? []).filter(
-                                        (q) => q.id !== fp.id,
-                                      ),
-                                    })
-                                  }
-                                  className="p-0.5 text-red-600 hover:bg-red-50 rounded"
-                                  title="消す"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </CollapsibleSection>
-              )}
-
               {/* 整地: 格子 の 高さ。 行 = 測点、 列 = 平行縦断。
                   グリッド計算 の 下 に 置いて、 計算 → 入力 の 順 に 並べる。 */}
               {isGrading && (
@@ -8578,6 +8922,181 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                     typeOptions={coordTypeOptions}
                     onRegisterPlan={registerGridPlanPoints}
                   />
+                </CollapsibleSection>
+              )}
+
+              {/* 任意測点。 地図 を 押して 拾う だけ の 点。
+                  平面図 CAD の 位置合わせ の 基準 に 使う。
+                  「背景CADに寄せる」 を ON に する と、 クリック した 位置 を
+                  平面図CAD の 最寄り の 頂点/辺 に スナップ して 拾う。 */}
+              {isGrading && (
+                <CollapsibleSection title="任意測点" storageKey="oc:section:free-points">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={() => setFreePicking((v) => !v)}
+                      className={
+                        'px-2 py-1 text-xs border rounded ' +
+                        (freePicking
+                          ? 'bg-violet-600 text-white border-violet-600'
+                          : 'bg-white hover:bg-slate-50 text-slate-700')
+                      }
+                      title="地図 の 任意 の 位置 を 押して 座標 を 拾う"
+                    >
+                      {freePicking ? '取得中 (押して 終了)' : '地図から取得'}
+                    </button>
+                    <label
+                      className="flex items-center gap-1 text-[11px] text-slate-600 select-none cursor-pointer"
+                      title="ON: 背景CADの最寄り頂点/辺にスナップ / OFF: クリック位置そのまま"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={freePickSnapCad}
+                        onChange={(e) => setFreePickSnapCad(e.target.checked)}
+                      />
+                      背景CADに寄せる
+                    </label>
+                    <span className="text-[11px] text-slate-400">
+                      {(selected.freePoints ?? []).length} 点
+                    </span>
+                  </div>
+
+                  {(selected.freePoints ?? []).length > 0 && (
+                    <div className="border rounded overflow-auto max-h-56">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-50 text-slate-500 sticky top-0 text-[11px]">
+                          <tr>
+                            <th className="px-1 py-1 text-left">点名</th>
+                            <th className="px-1 py-1 text-right w-24">X (北)</th>
+                            <th className="px-1 py-1 text-right w-24">Y (東)</th>
+                            <th
+                              className="px-1 py-1 text-right w-20"
+                              title="計画高 (m)。 「計算」 で 3 点 の 面 から 算出"
+                            >
+                              Z
+                            </th>
+                            <th className="w-24 text-center" title="計画高 を 3 点 面 で 算出">
+                              計算 / 面変更
+                            </th>
+                            <th className="w-6" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(selected.freePoints ?? []).map((fp) => (
+                            <tr
+                              key={fp.id}
+                              onClick={() =>
+                                setSelectedFreePointId((cur) =>
+                                  cur === fp.id ? null : fp.id,
+                                )
+                              }
+                              className={`border-t cursor-pointer ${
+                                selectedFreePointId === fp.id
+                                  ? 'bg-violet-50'
+                                  : 'hover:bg-slate-50'
+                              }`}
+                            >
+                              <td
+                                className="px-1 py-0.5"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <input
+                                  type="text"
+                                  value={fp.name}
+                                  onChange={(e) =>
+                                    void updateChannel(selected.id, {
+                                      freePoints: (selected.freePoints ?? []).map((q) =>
+                                        q.id === fp.id ? { ...q, name: e.target.value } : q,
+                                      ),
+                                    })
+                                  }
+                                  className="w-full px-1 py-0.5 border rounded"
+                                />
+                              </td>
+                              <td className="px-1 py-0.5 text-right font-mono tabular-nums">
+                                {fp.x.toFixed(3)}
+                              </td>
+                              <td className="px-1 py-0.5 text-right font-mono tabular-nums">
+                                {fp.y.toFixed(3)}
+                              </td>
+                              <td className="px-1 py-0.5 text-right font-mono tabular-nums">
+                                {fp.z != null && Number.isFinite(fp.z) ? fp.z.toFixed(3) : '-'}
+                              </td>
+                              <td
+                                className="px-1 py-0.5 text-center whitespace-nowrap"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => handleRequestPlaneCompute(fp.id)}
+                                  disabled={enumerableGridPoints.length < 3}
+                                  title={
+                                    enumerableGridPoints.length < 3
+                                      ? '計画高 が 入って いる 格子点 が 3 点 未満 の ため 計算 できません'
+                                      : lastPlanePointIds.length === 3
+                                        ? '直前 に 選んだ 3 点 を そのまま 使って 計画高 を 算出'
+                                        : '地図 上 で グリッド点 を 3 つ タップ して 面 を 決める'
+                                  }
+                                  className="px-1.5 py-0.5 rounded border text-[11px] bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  計算
+                                </button>
+                                {lastPlanePointIds.length === 3 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      // 直前 の 3 点 を 忘れて、 その 場 で ピック モード に 入る
+                                      setLastPlanePointIds([])
+                                      setFreePicking(false)
+                                      setMapCaptureTarget(null)
+                                      setPlanePickingFor(fp.id)
+                                      setPlanePicked([])
+                                    }}
+                                    title="別 の 3 点 を 地図 で 選び 直す"
+                                    className="ml-1 px-1 py-0.5 rounded border text-[10px] bg-white text-blue-700 border-blue-200 hover:bg-blue-50"
+                                  >
+                                    面変更
+                                  </button>
+                                )}
+                              </td>
+                              <td
+                                className="px-1 py-0.5 text-center"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  onClick={() =>
+                                    void updateChannel(selected.id, {
+                                      freePoints: (selected.freePoints ?? []).filter(
+                                        (q) => q.id !== fp.id,
+                                      ),
+                                    })
+                                  }
+                                  className="p-0.5 text-red-600 hover:bg-red-50 rounded"
+                                  title="消す"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* 3 点 を 選び 直す ボタン。 直前 の 3 点 が あれば 「別 の 3 点 に する」 で
+                      次 の 計算 で モーダル を もう一度 出す。 */}
+                  {lastPlanePointIds.length === 3 && (
+                    <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                      <span>直前 の 面: {lastPlanePointIds.length} 点</span>
+                      <button
+                        type="button"
+                        onClick={() => setLastPlanePointIds([])}
+                        className="text-blue-600 hover:underline"
+                      >
+                        別 の 3 点 に する
+                      </button>
+                    </div>
+                  )}
                 </CollapsibleSection>
               )}
 
@@ -9181,8 +9700,10 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
           )}
         </div>
 
-        {/* 右: 地図 (上) + 縦断図 (下) */}
-        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+        }
+        right={
+        /* 右: 地図 (上) + 縦断図 (下) */
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 h-full">
           <div className="flex-1 min-h-0 relative overflow-hidden isolate">
             {/* 地図 から 断面点 を 拾って いる 間 の 帯。
                 どの 断面 に 入る のか、今 効いて いるのか が 地図 を 見て いる
@@ -9192,6 +9713,28 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                 <span>地図 を 押す と 任意測点 に なります</span>
                 <button
                   onClick={() => setFreePicking(false)}
+                  className="px-2 py-0.5 rounded bg-white/20 hover:bg-white/30"
+                >
+                  終了
+                </button>
+              </div>
+            )}
+            {planePickingFor && (
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1200] flex items-center gap-2 px-3 py-1.5 rounded bg-violet-600 text-white text-xs shadow-lg">
+                <span>
+                  計画高 の 面 に する 格子点 を タップ ({planePicked.length} / 3)
+                </span>
+                {planePicked.length > 0 && (
+                  <button
+                    onClick={() => setPlanePicked([])}
+                    className="px-2 py-0.5 rounded bg-white/20 hover:bg-white/30"
+                    title="今回 の 選択 を やり直し"
+                  >
+                    やり直し
+                  </button>
+                )}
+                <button
+                  onClick={cancelPlanePicking}
                   className="px-2 py-0.5 rounded bg-white/20 hover:bg-white/30"
                 >
                   終了
@@ -9254,42 +9797,227 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
               />
 
 
-              {/* 任意測点 の 取得 中 だけ クリック を 拾う */}
-              {freePicking && <MapPointCatcher onPick={addFreePoint} />}
+              {/* 任意測点 の 取得 中 だけ クリック を 拾う。
+                  freePickSnapCad ON なら マウス 移動 中 に スナップ候補 を プレビュー。 */}
+              {freePicking && (
+                <MapPointCatcher
+                  onPick={addFreePoint}
+                  onHover={(lat, lng) => {
+                    if (Number.isNaN(lat) || Number.isNaN(lng)) {
+                      setSnapPreview(null)
+                      return
+                    }
+                    if (!freePickSnapCad || snapPolylines.length === 0) {
+                      setSnapPreview(null)
+                      return
+                    }
+                    setSnapPreview(snapLatLngToCadLines(lat, lng, snapPolylines))
+                  }}
+                />
+              )}
 
-              {/* 任意測点。 座標管理 と 区別 が つく よう 四角 に 近い 濃い 色 */}
-              {(selected?.freePoints ?? []).map((fp) => {
-                const ll = converter.toLatLng(fp.x, fp.y)
-                return (
+              {/* スナップ プレビュー。 端点 / 交点 は 緑 の 二重丸、 頂点 は 緑 単丸、
+                  辺 上 は 橙 単丸。 クリック すれば その 位置 が 使われる。 */}
+              {freePicking && snapPreview && (
+                <>
                   <CircleMarker
-                    key={`fp-${fp.id}`}
-                    center={[ll.lat, ll.lng]}
-                    radius={5}
+                    center={[snapPreview.lat, snapPreview.lng]}
+                    radius={
+                      snapPreview.kind === 'endpoint' || snapPreview.kind === 'intersection'
+                        ? 8
+                        : 6
+                    }
                     interactive={false}
                     pathOptions={{
-                      color: '#fff',
+                      color:
+                        snapPreview.kind === 'endpoint' || snapPreview.kind === 'intersection'
+                          ? '#16a34a'
+                          : snapPreview.kind === 'vertex'
+                            ? '#22c55e'
+                            : '#f97316',
                       weight: 2,
-                      fillColor: '#7c3aed',
-                      fillOpacity: 0.95,
+                      fillColor: 'white',
+                      fillOpacity: 0.9,
                     }}
-                  >
-                    <Tooltip permanent direction="right" offset={[6, 0]} className="map-plain-label">
-                      <span
-                        style={{
-                          color: '#5b21b6',
-                          fontWeight: 700,
-                          textShadow:
-                            '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                  />
+                  {(snapPreview.kind === 'endpoint' ||
+                    snapPreview.kind === 'intersection') && (
+                    <CircleMarker
+                      center={[snapPreview.lat, snapPreview.lng]}
+                      radius={3}
+                      interactive={false}
+                      pathOptions={{
+                        color: '#16a34a',
+                        weight: 0,
+                        fillColor: '#16a34a',
+                        fillOpacity: 1,
+                      }}
+                    />
+                  )}
+                </>
+              )}
+
+              {/* 縦横断 の 計画点 (plannedSectionRaw)。 面 の 候補 と して 出す。
+                  ピック 中 は 全部 (橙 色)。 それ 以外 は 直近 確定 の 3 点 に 含まれる もの だけ (紫)。 */}
+              {(() => {
+                if (!isGrading) return null
+                const sectPoints = enumerableGridPoints.filter((g) => g.kind === 'sect')
+                if (sectPoints.length === 0) return null
+                return sectPoints
+                  .filter((g) =>
+                    planePickingFor
+                      ? true
+                      : lastPlanePointIds.includes(g.id),
+                  )
+                  .map((g) => {
+                    const ll = converter.toLatLng(g.x, g.y)
+                    const active = planePickingFor ? planePicked : lastPlanePointIds
+                    const pickIdx = active.indexOf(g.id)
+                    const picked = pickIdx >= 0
+                    return (
+                      <CircleMarker
+                        key={`sect-pick-${g.id}-${planePickingFor ? 'p' : 'r'}`}
+                        center={[ll.lat, ll.lng]}
+                        radius={picked ? 7 : 5}
+                        interactive={planePickingFor != null}
+                        eventHandlers={
+                          planePickingFor
+                            ? { click: () => handlePickGridPointForPlane(g.id) }
+                            : undefined
+                        }
+                        pathOptions={{
+                          color: picked ? '#7c3aed' : '#fff',
+                          weight: picked ? 2 : 1,
+                          fillColor: picked ? '#a855f7' : '#f97316',
+                          fillOpacity: picked ? 1 : 0.85,
                         }}
                       >
-                        {fp.name}
-                      </span>
-                    </Tooltip>
-                  </CircleMarker>
+                        <Tooltip
+                          direction="right"
+                          offset={[6, 0]}
+                          className="map-plain-label"
+                        >
+                          <span
+                            style={{
+                              color: '#7c2d12',
+                              fontWeight: 700,
+                              fontSize: '10px',
+                              textShadow:
+                                '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                            }}
+                          >
+                            {g.name} (Z={g.z.toFixed(2)})
+                          </span>
+                        </Tooltip>
+                      </CircleMarker>
+                    )
+                  })
+              })()}
+
+              {/* 計画高 の 面 に 使う 3 点 を 三角形 で 囲む。
+                  ピック 中 の 途中 集合 (planePicked) と 直近 確定 (lastPlanePointIds) の
+                  どちら でも 2 点 で 線、 3 点 で 三角形 を 出す。 */}
+              {activePlaneLatLngs.length === 3 && (
+                <Polygon
+                  positions={activePlaneLatLngs}
+                  interactive={false}
+                  pathOptions={{
+                    color: '#7c3aed',
+                    weight: 2,
+                    fillColor: '#a855f7',
+                    fillOpacity: 0.12,
+                    dashArray: '5,4',
+                  }}
+                />
+              )}
+              {activePlaneLatLngs.length === 2 && (
+                <Polyline
+                  positions={activePlaneLatLngs}
+                  interactive={false}
+                  pathOptions={{
+                    color: '#7c3aed',
+                    weight: 2,
+                    dashArray: '5,4',
+                  }}
+                />
+              )}
+
+              {/* 任意測点。 座標管理 と 区別 が つく よう 四角 に 近い 濃い 色。
+                  一覧 で 選ばれて いる 点 は 大きく + 外側 に 薄い リング。 */}
+              {(selected?.freePoints ?? []).map((fp) => {
+                const ll = converter.toLatLng(fp.x, fp.y)
+                const isSelected = selectedFreePointId === fp.id
+                return (
+                  <div key={`fp-wrap-${fp.id}`}>
+                    {isSelected && (
+                      <CircleMarker
+                        key={`fp-halo-${fp.id}`}
+                        center={[ll.lat, ll.lng]}
+                        radius={12}
+                        interactive={false}
+                        pathOptions={{
+                          color: '#7c3aed',
+                          weight: 2,
+                          fillColor: '#a855f7',
+                          fillOpacity: 0.25,
+                        }}
+                      />
+                    )}
+                    <CircleMarker
+                      // planePicking 中 は 任意測点 マーカー が グリッド点 の
+                      // クリック を 奪わ ない よう 非対話 に する
+                      key={`fp-${fp.id}-${planePickingFor ? 'lock' : 'free'}`}
+                      center={[ll.lat, ll.lng]}
+                      radius={isSelected ? 7 : 5}
+                      interactive={planePickingFor == null}
+                      eventHandlers={
+                        planePickingFor == null
+                          ? {
+                              click: () =>
+                                setSelectedFreePointId((cur) =>
+                                  cur === fp.id ? null : fp.id,
+                                ),
+                            }
+                          : undefined
+                      }
+                      pathOptions={{
+                        color: '#fff',
+                        weight: 2,
+                        fillColor: '#7c3aed',
+                        fillOpacity: 0.95,
+                      }}
+                    >
+                      <Tooltip permanent direction="right" offset={[6, 0]} className="map-plain-label">
+                        <span
+                          style={{
+                            color: '#5b21b6',
+                            fontWeight: 700,
+                            textShadow:
+                              '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                          }}
+                        >
+                          {fp.name}
+                          {fp.z != null && Number.isFinite(fp.z) && (
+                            <span
+                              style={{
+                                display: 'block',
+                                fontSize: '10px',
+                                color: '#0284c7',
+                              }}
+                            >
+                              計 {fp.z.toFixed(3)}
+                            </span>
+                          )}
+                        </span>
+                      </Tooltip>
+                    </CircleMarker>
+                  </div>
                 )
               })}
 
-              {/* 平面図 CAD。 下敷き な ので 他 の 層 より 先 に 描く */}
+              {/* 平面図 CAD。 下敷き な ので 他 の 層 より 先 に 描く。
+                  透明度 は 工区設定 の 各CAD の opacity に 従う (useFarmPlanCadLines
+                  では もう そこ まで 保持 しない ので、平均 0.7 固定 で 十分)。 */}
               {planCadLines.map((l) => (
                 <Polyline
                   key={l.key}
@@ -9298,7 +10026,7 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                   pathOptions={{
                     color: l.color,
                     weight: 1,
-                    opacity: planCad?.opacity ?? 0.7,
+                    opacity: 0.7,
                   }}
                 />
               ))}
@@ -9337,28 +10065,63 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                           }}
                         />
                       )}
-                      {row.pts.map((p, j) => (
+                      {row.pts.map((p, j) => {
+                        const gridPtId = `grid-${row.idx}-${p.stationId}`
+                        // ピック中 は 選択中 の 途中 集合、 それ 以外 は 直近 確定 の 3 点 を 出す。
+                        const activePlaneIds = planePickingFor
+                          ? planePicked
+                          : lastPlanePointIds
+                        const pickIdx = activePlaneIds.indexOf(gridPtId)
+                        const pickedForPlane = pickIdx >= 0
+                        return (
                         <CircleMarker
                           // interactive は 作る ときの 設定 な ので key で 作り直す
-                          key={`gridpt-${row.idx}-${p.stationId}-${mapCaptureTarget ? 'lock' : 'free'}`}
+                          key={`gridpt-${row.idx}-${p.stationId}-${mapCaptureTarget || planePickingFor ? 'lock' : 'free'}`}
                           center={[p.lat, p.lng]}
-                          radius={3}
+                          radius={
+                            pickedForPlane
+                              ? 7
+                              : planePickingFor && p.planned != null
+                                ? 5
+                                : 3
+                          }
                           // 断面点 を 拾って いる 間 は 座標 の マーカー を 邪魔 しない
                           interactive={mapCaptureTarget == null}
                           eventHandlers={
-                            mapCaptureTarget == null
-                              ? {
-                                  // 押した 格子点 を 表 の セル と して 選ぶ
-                                  click: () =>
-                                    setGridCell({ stationId: p.stationId, idx: row.idx }),
-                                }
-                              : undefined
+                            mapCaptureTarget != null
+                              ? undefined
+                              : planePickingFor
+                                ? {
+                                    // 計画高 が 入って いる 点 だけ 計面 の 候補 に できる
+                                    click: () => {
+                                      if (p.planned == null) return
+                                      handlePickGridPointForPlane(gridPtId)
+                                    },
+                                  }
+                                : {
+                                    // 押した 格子点 を 表 の セル と して 選ぶ
+                                    click: () =>
+                                      setGridCell({ stationId: p.stationId, idx: row.idx }),
+                                  }
                           }
                           pathOptions={{
-                            color: '#fff',
-                            weight: 1,
-                            fillColor: p.current != null ? '#10b981' : '#94a3b8',
-                            fillOpacity: p.current != null ? 0.95 : 0.45,
+                            color: pickedForPlane
+                              ? '#7c3aed'
+                              : planePickingFor && p.planned == null
+                                ? '#94a3b8'
+                                : '#fff',
+                            weight: pickedForPlane ? 2 : 1,
+                            fillColor: pickedForPlane
+                              ? '#a855f7'
+                              : p.current != null
+                                ? '#10b981'
+                                : '#94a3b8',
+                            fillOpacity:
+                              pickedForPlane
+                                ? 1
+                                : p.current != null
+                                  ? 0.95
+                                  : 0.45,
                           }}
                         >
                           {/* 測点 名 / 地盤高 / 計画高 / 切深 を 縦 に 並べる。
@@ -9447,7 +10210,8 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                             </Tooltip>
                           )}
                         </CircleMarker>
-                      ))}
+                        )
+                      })}
                     </div>
                     )
                   })}
@@ -9592,7 +10356,7 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                       center={[stakeLL.lat, stakeLL.lng]}
                       radius={4}
                       // 断面点 を 拾って いる 間 は 座標 の マーカー を 邪魔 しない
-                      interactive={mapCaptureTarget == null}
+                      interactive={mapCaptureTarget == null && planePickingFor == null}
                       pathOptions={{
                         color: '#fff',
                         fillColor: '#ec4899',
@@ -9631,16 +10395,16 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                 const fillColor = hasOverride ? '#f59e0b' : '#a78bfa'
                 return (
                   <CircleMarker
-                    key={`${s.id}-${mapCaptureTarget ? 'locked' : 'free'}`}
+                    key={`${s.id}-${mapCaptureTarget || planePickingFor ? 'locked' : 'free'}`}
                     center={[ll.lat, ll.lng]}
                     radius={isSel ? 6 : 4}
-                    // 断面点 を 地図 から 拾って いる 間 は 測点 の 印 を 触れなく する。
+                    // 断面点 の 取り込み / 任意測点 の 面 選び 中 は 測点 の 印 を 触れなく する。
                     // 座標 の マーカー を 狙った つもり で 測点 を 選んで しまい、
                     // 別 の 測点 へ 地図 が 飛ぶ 事故 を 防ぐ。
                     // interactive は 作る ときの 設定 な ので key で 作り直す。
-                    interactive={mapCaptureTarget == null}
+                    interactive={mapCaptureTarget == null && planePickingFor == null}
                     eventHandlers={
-                      mapCaptureTarget == null
+                      mapCaptureTarget == null && planePickingFor == null
                         ? { click: () => setSelectedStationId(isSel ? null : s.id) }
                         : undefined
                     }
@@ -9741,7 +10505,8 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
             )}
           </div>
         </div>
-      </div>
+        }
+      />
 
       {/* 画面 下端 の 二面パネル: 縦断図 / 横断図 を タブ で 切替。
           - 縦断図: 変化点 の 編集 UI は 左サイドバー 「縦断」に。
@@ -10667,6 +11432,15 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
           onClose={() => setStandardSectionPicker(null)}
         />
       )}
+
+      {/* 工区 共通 の 背景CAD 管理 (全 工種 + スマホ 共通) */}
+      {farmPlanCadOpen && currentFarm && (
+        <FarmPlanCadModal
+          farmId={currentFarm.id}
+          onClose={() => setFarmPlanCadOpen(false)}
+        />
+      )}
+
 
       {/* 横断図 の DXF 出力 */}
       {planCadOpen && selected && (

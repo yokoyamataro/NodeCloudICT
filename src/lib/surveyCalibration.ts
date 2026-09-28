@@ -1,16 +1,9 @@
-// 実測値に かける スライド量 (工区ごとの 定数オフセット)。
+// 実測値 に かける スライド量 (dx/dy/dz オフセット) は 廃止 しました。
 //
-// GPS の 系統差や 基準点の ずれを 素早く 吸収する ための 簡易補正で、
-// 測設記録の 画面 (StakingRecordsPage) で 入力し、design_survey_calibration に
-// 工区単位で 保存している。
-//
-//   スライド後設計値   = 設計 + スライド量   (設計を 実測に 寄せる)
-//   逆スライド後実測値 = 実測 − スライド量   (実測を 設計に 寄せる)
-//
-// 現況横断の 取込など、実測値を 設計の 土俵に 乗せて 使う 場面では
-// 逆スライド後の 値を 使う。
-
-import { supabase } from './supabase'
+// 過去 に 「GPS の 系統差 / 基準点 の ずれ」 を 素早く 吸収する ため の 簡易 補正
+// と して 導入 していた が、実運用 で は 混乱 の 元 と なった ので 撤去。
+// 既存 の 呼出 と の 互換 を 保つ ため に 「常 に 0 で 恒等 な no-op」 の
+// スタブ を 残して あり、 将来 参照 が 消え次第 型 も 削除 する。
 
 export interface SurveySlide {
   dx: number
@@ -20,84 +13,23 @@ export interface SurveySlide {
 
 export const NO_SLIDE: SurveySlide = { dx: 0, dy: 0, dz: 0 }
 
-/**
- * 工区の スライド量を 読む。
- * 未マイグレーション環境や 未設定では 0 を 返す (Z だけ 旧 localStorage の
- * 値に 落ちる のは 測設記録の 画面と 同じ 扱い)。
- */
-export async function fetchSurveySlide(farmId: string): Promise<SurveySlide> {
-  let dx = 0
-  let dy = 0
-  let dz = 0
-  try {
-    const { data } = await supabase
-      .from('design_survey_calibration')
-      .select('dx_offset, dy_offset, dz_offset')
-      .eq('farm_id', farmId)
-      .maybeSingle()
-    const row = data as {
-      dx_offset?: number | string | null
-      dy_offset?: number | string | null
-      dz_offset?: number | string | null
-    } | null
-    if (row) {
-      const vx = row.dx_offset != null ? Number(row.dx_offset) : NaN
-      const vy = row.dy_offset != null ? Number(row.dy_offset) : NaN
-      const vz = row.dz_offset != null ? Number(row.dz_offset) : NaN
-      if (Number.isFinite(vx)) dx = vx
-      if (Number.isFinite(vy)) dy = vy
-      if (Number.isFinite(vz)) dz = vz
-    }
-  } catch {
-    /* 未マイグレーション環境。0 の まま */
-  }
-  if (dz === 0) {
-    // 旧: Z だけ 端末に 持っていた 時期の 値
-    try {
-      const raw =
-        typeof localStorage !== 'undefined'
-          ? localStorage.getItem(`staking:zOffset:${farmId}`)
-          : null
-      const v = raw != null ? parseFloat(raw) : NaN
-      if (Number.isFinite(v)) dz = v
-    } catch {
-      /* ignore */
-    }
-  }
-  return { dx, dy, dz }
+/** 廃止: 常に NO_SLIDE。 引数 の farmId は 使わない。 */
+export async function fetchSurveySlide(_farmId: string): Promise<SurveySlide> {
+  return NO_SLIDE
 }
 
-/**
- * 工区 の スライド量 を 保存 する。 記録セット に 属さない 記録 (未振り分け) の
- * 土俵 に なる 値。 セット ごと の 値 は survey_record_sets 側 に 持つ。
- *
- * Z だけ は 旧 localStorage も 併せて 更新 する (読み側 が そちら に 落ちる ため)。
- */
-export async function saveSurveySlide(farmId: string, slide: SurveySlide): Promise<void> {
-  const { error } = await supabase.from('design_survey_calibration').upsert(
-    {
-      farm_id: farmId,
-      is_enabled: true,
-      dx_offset: slide.dx,
-      dy_offset: slide.dy,
-      dz_offset: slide.dz,
-    } as never,
-    { onConflict: 'farm_id' },
-  )
-  if (error) throw error
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(`staking:zOffset:${farmId}`, String(slide.dz))
-    }
-  } catch {
-    /* ignore */
-  }
+/** 廃止: 何もしない no-op。 */
+export async function saveSurveySlide(
+  _farmId: string,
+  _slide: SurveySlide,
+): Promise<void> {
+  /* no-op */
 }
 
-/** 実測値を 設計の 土俵に 乗せる (実測 − スライド量) */
+/** 廃止: 恒等 (入力 を そのまま 返す)。 */
 export function applyReverseSlide(
   p: { x: number; y: number; z: number },
-  slide: SurveySlide,
+  _slide: SurveySlide,
 ): { x: number; y: number; z: number } {
-  return { x: p.x - slide.dx, y: p.y - slide.dy, z: p.z - slide.dz }
+  return { x: p.x, y: p.y, z: p.z }
 }

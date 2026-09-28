@@ -554,6 +554,9 @@ export interface FreePoint {
   x: number
   /** 東 */
   y: number
+  /** 計画高 (m)。 「3 点 の メッシュ グリッド 点 が 作る 面」 に 投影 して 算出。
+   *  未計算 は null / undefined。 */
+  z?: number | null
 }
 
 /** free_points の 正規化。 数値 で ない もの は 落とす */
@@ -566,7 +569,14 @@ export function normalizeFreePoints(raw: unknown): FreePoint[] {
     if (typeof o.id !== 'string' || o.id === '') continue
     if (typeof o.x !== 'number' || !Number.isFinite(o.x)) continue
     if (typeof o.y !== 'number' || !Number.isFinite(o.y)) continue
-    out.push({ id: o.id, name: typeof o.name === 'string' ? o.name : '', x: o.x, y: o.y })
+    const z = typeof o.z === 'number' && Number.isFinite(o.z) ? o.z : null
+    out.push({
+      id: o.id,
+      name: typeof o.name === 'string' ? o.name : '',
+      x: o.x,
+      y: o.y,
+      z,
+    })
   }
   return out
 }

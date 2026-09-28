@@ -16,6 +16,7 @@ import {
   EMPTY_ATTRIBUTES,
 } from '@/stores/parcelAttributeTypesStore'
 import { LAND_CATEGORIES } from '@/lib/landCategory'
+import { useParcelViewsStore } from '@/stores/parcelViewsStore'
 
 // 列の正準キー。表示順を兼ねる。
 export const CADASTRAL_COLUMN_KEYS = [
@@ -36,6 +37,7 @@ export const CADASTRAL_COLUMN_KEYS = [
   'landowners',
   'points_count',
   'computed_area_sqm',
+  'view_history',
 ] as const
 
 export type CadastralColumnKey = (typeof CADASTRAL_COLUMN_KEYS)[number]
@@ -58,6 +60,7 @@ export const CADASTRAL_COLUMN_LABELS: Record<CadastralColumnKey, string> = {
   landowners: '地権者',
   points_count: '点数',
   computed_area_sqm: '直角座標法面積(m²)',
+  view_history: '表示履歴',
 }
 
 // 既定で全列表示
@@ -101,6 +104,7 @@ export const CADASTRAL_COLUMN_WIDTH: Record<CadastralColumnKey, string> = {
   landowners: 'w-44',
   points_count: 'w-12',
   computed_area_sqm: 'w-28',
+  view_history: 'w-40',
 }
 
 // 第 3 位以下切捨 → 小数 2 桁で表示
@@ -420,6 +424,8 @@ export function CadastralRowFields({
             })()}
           </div>
         )
+      case 'view_history':
+        return <ViewHistoryCell workAreaId={area.id} />
     }
   }
 
@@ -452,6 +458,43 @@ export function CadastralRowFields({
       )}
     </>
   )
+}
+
+// 「表示履歴」 セル。 その 筆 を 最後 に 見た 人 と 時刻 を 出す。
+// タイトル (hover) で 直近 5 件 の 履歴 を 出す。
+function ViewHistoryCell({ workAreaId }: { workAreaId: string }) {
+  const rows = useParcelViewsStore(
+    (s) => s.byWorkAreaId.get(workAreaId) ?? [],
+  )
+  if (rows.length === 0) {
+    return <div className="px-1.5 py-1 text-slate-400 text-[11px]">—</div>
+  }
+  const top = rows[0]
+  const name = top.userName ?? '(不明)'
+  const when = formatShortDateTime(top.viewedAt)
+  const title = rows
+    .slice(0, 5)
+    .map((r) => `${formatShortDateTime(r.viewedAt)} ${r.userName ?? '(不明)'}`)
+    .join('\n')
+  return (
+    <div className="px-1.5 py-1 text-[11px] leading-tight" title={title}>
+      <div className="truncate text-slate-700">{name}</div>
+      <div className="truncate text-slate-400 font-mono">{when}</div>
+    </div>
+  )
+}
+
+// 「MM/DD HH:mm」 (今年 中) / 「YYYY/MM/DD」 (それ 以前) の 短い 表示
+function formatShortDateTime(iso: string | null | undefined): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '-'
+  const p = (n: number) => String(n).padStart(2, '0')
+  const now = new Date()
+  if (d.getFullYear() === now.getFullYear()) {
+    return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+  }
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`
 }
 
 // 地番に紐づける地権者をチェックボックスで選ぶモーダル

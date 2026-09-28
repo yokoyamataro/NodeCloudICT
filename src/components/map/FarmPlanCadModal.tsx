@@ -22,8 +22,19 @@ const blank = (): PlanCadAnchor => ({ dx: 0, dy: 0, x: 0, y: 0 })
  * 図面 は ファイル管理 に 上げた CAD を そのまま 使う。 ここ で 決める の は
  * 「どの 図面 を、 どの 2 点 で 実 座標 に 合わせるか」 と 表示 の 有無 だけ。
  * 工区 単位 な ので、 決めれば 全 工種 と スマホ で 同じ 位置 に 出る。
+ *
+ * initialFile を 渡す と ファイル管理 から 呼ばれた モード に なり、
+ * 一覧 を 通さず に その 図面 の 位置合わせ 画面 を 直接 開く。
  */
-export function FarmPlanCadModal({ farmId, onClose }: { farmId: string; onClose: () => void }) {
+export function FarmPlanCadModal({
+  farmId,
+  onClose,
+  initialFile,
+}: {
+  farmId: string
+  onClose: () => void
+  initialFile?: { storagePath: string; name: string } | null
+}) {
   const farms = useFarmStore((s) => s.farms)
   const currentFarm = useFarmStore((s) => s.currentFarm)
   const updateFarm = useFarmStore((s) => s.updateFarm)
@@ -72,6 +83,33 @@ export function FarmPlanCadModal({ farmId, onClose }: { farmId: string; onClose:
   const [error, setError] = useState<string | null>(null)
   const [picking, setPicking] = useState<1 | 2 | null>(null)
 
+  // ファイル管理 から 「位置合わせ」 で 呼ばれた 時 は 一覧 を 挟まず、
+  // その 図面 の 編集画面 を 直接 開く。 既 登録 が あれば その まま 続き。
+  const directMode = initialFile != null
+  useEffect(() => {
+    if (!initialFile) return
+    const existing = cads.find((c) => c.storagePath === initialFile.storagePath)
+    if (existing) {
+      setEditing(existing)
+    } else {
+      setEditing({
+        id: newId(),
+        name: initialFile.name,
+        storagePath: initialFile.storagePath,
+        p1: blank(),
+        p2: blank(),
+        visible: true,
+        opacity: 0.7,
+      })
+    }
+    setDoc(null)
+    setLoading(true)
+    setError(null)
+    setPicking(null)
+    // cads は 直接 mode 起動時 だけ 見る (変更中 に 差し替わる のを 防ぐ)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFile?.storagePath])
+
   /** 位置合わせ を 開く。 読み込み の 支度 も ここ で 済ませる */
   const openEditing = (cad: FarmPlanCad) => {
     setEditing(cad)
@@ -104,9 +142,39 @@ export function FarmPlanCadModal({ farmId, onClose }: { farmId: string; onClose:
     }
   }, [storagePath])
 
-  const save = (next: FarmPlanCad[]) => {
-    if (!farm) return
-    void updateFarm(farm.id, { plan_cads: next })
+  const save = async (next: FarmPlanCad[]): Promise<boolean> => {
+    if (!farm) {
+      setError('工区 が 選ばれて いません。 工区 を 開き 直して ください。')
+      return false
+    }
+    await updateFarm(farm.id, { plan_cads: next })
+    // updateFarm は 失敗 しても throw せず に store.error に 積む だけ な ので、
+    // ここ で 拾って モーダル に 出す。 出ない と 「押した のに 何 も 変わら ない」 と 迷う。
+    const storeError = useFarmStore.getState().error
+    if (storeError) {
+      // PGRST204: PostgREST が スキーマ に plan_cads を 見つけ られ ない = マイグレーション 未適用。
+      // 一目 で 分かる 案内 に 差し替える。
+      if (/PGRST204|plan_cads.*schema cache|schema cache.*plan_cads/i.test(storeError)) {
+        setError(
+          'DB マイグレーション が 適用 されて いません (plan_cads 列 が 無い)。\n' +
+            'Supabase の SQL Editor で\n' +
+            '  ALTER TABLE farms ADD COLUMN IF NOT EXISTS plan_cads JSONB NOT NULL DEFAULT \'[]\'::jsonb;\n' +
+            '  NOTIFY pgrst, \'reload schema\';\n' +
+            'を 実行 してから やり直して ください (supabase/migrations/20260925c_farm_plan_cads.sql)',
+        )
+      } else {
+        setError(storeError)
+      }
+      return false
+    }
+    // 保存 直後 の 反映 を 直接 確かめる。 反映 されて いれば 呼び側 は 閉じて OK。
+    const updated = useFarmStore.getState().farms.find((f) => f.id === farm.id)
+    const ok = (updated?.plan_cads ?? []).length === next.length
+    if (!ok) {
+      setError('保存 に 失敗 しました (反映 されて いません)。 マイグレーション 未適用 の 可能性 あり。')
+      return false
+    }
+    return true
   }
 
   const transform = useMemo(
@@ -140,20 +208,27 @@ export function FarmPlanCadModal({ farmId, onClose }: { farmId: string; onClose:
             {picking === no ? '図面 を 押して ください' : '図面 で 拾う'}
           </button>
         </div>
+        {/* 図面 の 座標 は 測量 の 慣習 (X=北, Y=東) で 並べ 直して 出す。
+            内部 の (dx, dy) は 図面 の 東, 北 の 順 (CAD 慣習) で 持って いる ので、
+            表示 と onChange の 対応 を 入れ替える。
+            図面 が 測量座標系 で 描かれて いる こと が 多い ため、
+            現場 の 人 が 「先 に 北」 で 読めば すぐ 分かる ように する。 */}
         <div className="flex items-center gap-1 text-[11px]">
           <span className="text-slate-500 w-10">図面</span>
           <input
             type="number"
             step={0.001}
-            value={a.dx}
-            onChange={(e) => set({ ...a, dx: parseFloat(e.target.value) || 0 })}
+            value={a.dy}
+            onChange={(e) => set({ ...a, dy: parseFloat(e.target.value) || 0 })}
+            title="図面 X (北)"
             className="flex-1 min-w-0 px-1 py-0.5 border rounded text-right font-mono"
           />
           <input
             type="number"
             step={0.001}
-            value={a.dy}
-            onChange={(e) => set({ ...a, dy: parseFloat(e.target.value) || 0 })}
+            value={a.dx}
+            onChange={(e) => set({ ...a, dx: parseFloat(e.target.value) || 0 })}
+            title="図面 Y (東)"
             className="flex-1 min-w-0 px-1 py-0.5 border rounded text-right font-mono"
           />
         </div>
@@ -214,6 +289,11 @@ export function FarmPlanCadModal({ farmId, onClose }: { farmId: string; onClose:
               <div className="font-semibold truncate" title={editing.name}>
                 {editing.name}
               </div>
+              <div className="flex items-center gap-1 text-[10px] text-slate-500 pl-10">
+                {/* 図面 と 実 座標 の 両方 とも 「X (北) が 先, Y (東) が 後」 で 並べる */}
+                <span className="flex-1 text-center">X (北)</span>
+                <span className="flex-1 text-center">Y (東)</span>
+              </div>
               {anchorRow(1)}
               {anchorRow(2)}
               <div className="text-[11px]">
@@ -236,25 +316,39 @@ export function FarmPlanCadModal({ farmId, onClose }: { farmId: string; onClose:
               <div className="mt-auto flex gap-1">
                 <button
                   onClick={() => {
+                    if (directMode) {
+                      onClose()
+                      return
+                    }
                     setEditing(null)
                     setDoc(null)
                     setPicking(null)
                   }}
                   className="flex-1 px-2 py-1 border rounded bg-white hover:bg-slate-50"
                 >
-                  戻る
+                  {directMode ? '閉じる' : '戻る'}
                 </button>
                 <button
                   onClick={() => {
                     if (!transform) return
-                    const exists = cads.some((c) => c.id === editing.id)
-                    save(
-                      exists
-                        ? cads.map((c) => (c.id === editing.id ? editing : c))
-                        : [...cads, editing],
+                    // 既 存 記録 の 判定 は id で なく storagePath で 行う。
+                    // 直接 mode で 開き 直し た とき に 新しい id で 上書き され て
+                    // しまう と、 同じ 図面 が 二重 登録 に なる。
+                    const exists = cads.find(
+                      (c) => c.id === editing.id || c.storagePath === editing.storagePath,
                     )
-                    setEditing(null)
-                    setPicking(null)
+                    const next = exists
+                      ? cads.map((c) => (c === exists ? { ...editing, id: exists.id } : c))
+                      : [...cads, editing]
+                    void save(next).then((ok) => {
+                      if (!ok) return
+                      if (directMode) {
+                        onClose()
+                        return
+                      }
+                      setEditing(null)
+                      setPicking(null)
+                    })
                   }}
                   disabled={!transform}
                   className="flex-1 px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
@@ -265,7 +359,11 @@ export function FarmPlanCadModal({ farmId, onClose }: { farmId: string; onClose:
             </div>
             <div className="flex-1 min-w-0 p-2 flex flex-col">
               {loading && <div className="text-xs text-slate-500">図面 読込中...</div>}
-              {error && <div className="text-xs text-red-600">{error}</div>}
+              {error && (
+                <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5 whitespace-pre-line font-mono">
+                  {error}
+                </div>
+              )}
               <div className="flex-1 min-h-0">
                 {doc ? (
                   <DxfCrossSectionViewer
@@ -286,7 +384,11 @@ export function FarmPlanCadModal({ farmId, onClose }: { farmId: string; onClose:
                     }}
                     pickCursorHint="trace"
                     snapEnabled
-                    cursorLabelFormatter={(p) => [`図面 ${p.x.toFixed(2)}, ${p.y.toFixed(2)}`]}
+                    cursorLabelFormatter={(p) => [
+                      // 測量座標 (X=北, Y=東) の 並び で 出す。
+                      // 図面 が CAD 慣習 (raw X=東, raw Y=北) で 描かれて いる 前提。
+                      `図面 X:${p.y.toFixed(2)}, Y:${p.x.toFixed(2)}`,
+                    ]}
                   />
                 ) : (
                   !loading && (
@@ -315,7 +417,7 @@ export function FarmPlanCadModal({ farmId, onClose }: { farmId: string; onClose:
                           type="checkbox"
                           checked={c.visible !== false}
                           onChange={(e) =>
-                            save(
+                            void save(
                               cads.map((q) =>
                                 q.id === c.id ? { ...q, visible: e.target.checked } : q,
                               ),

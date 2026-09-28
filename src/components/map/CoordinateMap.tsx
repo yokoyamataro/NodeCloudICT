@@ -12,7 +12,6 @@ import { useCoordinateStore, type CoordinateRow, type RoutePoint } from '@/store
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { PlanCadLayers } from './PlanCadLayers'
-import { FarmPlanCadModal } from './FarmPlanCadModal'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { useOrthophotoStore } from '@/stores/orthophotoStore'
 
@@ -519,7 +518,7 @@ function HighDensityList<T>({
 
 // 背景地図の種類
 /** 背景地図の種類。'none' は背景なし (作図だけを見たいとき) */
-export type BaseLayerType = 'osm' | 'gsi-photo' | 'gsi-std' | 'none' | 'cad'
+export type BaseLayerType = 'osm' | 'gsi-photo' | 'gsi-std' | 'none'
 
 // 外部から渡す区域ポリゴン
 export interface ExternalPolygon {
@@ -801,9 +800,10 @@ export function CoordinateMap({
   const currentFarm = useFarmStore((s) => s.currentFarm)
   const projects = useProjectListStore((s) => s.projects)
   const planCadFarm = farmId ? (farms.find((f) => f.id === farmId) ?? currentFarm) : currentFarm
-  const [planCadModalOpen, setPlanCadModalOpen] = useState(false)
+  const updateFarm = useFarmStore((s) => s.updateFarm)
   const planCadZone =
     projects.find((p) => p.id === planCadFarm?.project_id)?.coordinate_zone ?? 13
+  const registeredCads = planCadFarm?.plan_cads ?? []
   // 背景地図の選択は全ページ共有 (座標管理 / 地番管理 / 全体図 で一貫)。
   // 地図右下 HUD の <select> でここを書き換える。
   const baseLayer = useMapViewStore((s) => s.baseLayer)
@@ -864,44 +864,59 @@ export function CoordinateMap({
           で共通表示するため CoordinateMap 内に集約している。設定は useMapViewStore
           で永続化・ページ間共有される。ページ固有ボタン (法務省地図 / 地番データ取込)
           は bottom-left に置いて棲み分け。 */}
-      <div className="absolute right-2 bottom-6 z-[1000] flex items-center gap-1">
-        <div
-          className="h-[26px] px-2 flex items-center justify-center bg-white border border-slate-300 rounded text-[11px] font-mono font-bold text-slate-700 shadow select-none"
-          title="現在のズームレベル"
-        >
-          z{Math.round(currentZoom)}
-        </div>
-        <select
-          value={baseLayer}
-          onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
-          className="h-[26px] px-2 text-xs border border-slate-300 rounded bg-white shadow"
-          title="背景地図を切替 (全ページで共有)"
-        >
-          <option value="osm">地図</option>
-          <option value="gsi-photo">航空写真</option>
-          <option value="gsi-std">地理院地図</option>
-          <option value="none">背景なし</option>
-          <option value="cad">CAD (平面図)</option>
-        </select>
-        {farmId && (
-          <button
-            type="button"
-            onClick={() => setPlanCadModalOpen(true)}
-            className="h-[26px] px-2 text-xs border border-slate-300 rounded bg-white shadow hover:bg-slate-50"
-            title="背景 に 敷く 平面図 CAD を 決める (工区 共通)"
-          >
-            背景CAD
-            {(planCadFarm?.plan_cads ?? []).length > 0 && (
-              <span className="ml-1 text-slate-400">
-                {(planCadFarm?.plan_cads ?? []).length}
-              </span>
-            )}
-          </button>
+      <div className="absolute right-2 bottom-6 z-[1000] flex flex-col items-end gap-1">
+        {/* 地図 種類 の 上 に、 工区 に 位置合わせ 済み の CAD を チェックボックス で
+            並べる。 ここ で ON に した CAD が 地図 の 下敷き に なる。
+            登録 / 位置合わせ 自体 は ファイル管理 で 行う (工区 共通)。 */}
+        {farmId && registeredCads.length > 0 && (
+          <div className="max-w-[240px] bg-white border border-slate-300 rounded shadow px-2 py-1 text-[11px] space-y-0.5">
+            {registeredCads.map((c) => (
+              <label
+                key={c.id}
+                className="flex items-center gap-1 cursor-pointer hover:bg-slate-50 rounded px-0.5"
+              >
+                <input
+                  type="checkbox"
+                  checked={c.visible !== false}
+                  onChange={(e) => {
+                    if (!planCadFarm) return
+                    void updateFarm(planCadFarm.id, {
+                      plan_cads: registeredCads.map((q) =>
+                        q.id === c.id ? { ...q, visible: e.target.checked } : q,
+                      ),
+                    })
+                  }}
+                />
+                <span
+                  className="flex-1 min-w-0 truncate font-mono"
+                  title={c.name}
+                >
+                  {c.name}
+                </span>
+              </label>
+            ))}
+          </div>
         )}
+        <div className="flex items-center gap-1">
+          <div
+            className="h-[26px] px-2 flex items-center justify-center bg-white border border-slate-300 rounded text-[11px] font-mono font-bold text-slate-700 shadow select-none"
+            title="現在のズームレベル"
+          >
+            z{Math.round(currentZoom)}
+          </div>
+          <select
+            value={baseLayer}
+            onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
+            className="h-[26px] px-2 text-xs border border-slate-300 rounded bg-white shadow"
+            title="背景地図を切替 (全ページで共有)"
+          >
+            <option value="osm">地図</option>
+            <option value="gsi-photo">航空写真</option>
+            <option value="gsi-std">地理院地図</option>
+            <option value="none">背景なし</option>
+          </select>
+        </div>
       </div>
-      {planCadModalOpen && farmId && (
-        <FarmPlanCadModal farmId={farmId} onClose={() => setPlanCadModalOpen(false)} />
-      )}
       <MapContainer
       center={initialCenter}
       zoom={15}
@@ -1335,12 +1350,9 @@ export function CoordinateMap({
         />
       )}
 
-      {/* 工区 の 平面図 CAD。 他 の 層 より 先 に 描いて 下敷き に する */}
-      <PlanCadLayers
-        cads={planCadFarm?.plan_cads}
-        zone={planCadZone}
-        forceAll={baseLayer === 'cad'}
-      />
+      {/* 工区 の 平面図 CAD。 他 の 層 より 先 に 描いて 下敷き に する。
+          どの CAD を 出す か は 右下 の CAD ポップオーバー で 選ぶ (visible フラグ) */}
+      <PlanCadLayers cads={planCadFarm?.plan_cads} zone={planCadZone} />
 
       {/* 外部から差し込む追加レイヤ（オルソ画像ページの作図・計測など） */}
       {children}

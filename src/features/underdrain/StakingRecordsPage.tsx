@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X, Settings2 } from 'lucide-react'
+import { Loader2, Trash2, Download, RefreshCw, Link as LinkIcon, X, Settings2 } from 'lucide-react'
 import { Marker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useFarmStore } from '@/stores/farmStore'
-import { useStakingStore, type SurveyCategory, type StakingRecord } from '@/stores/stakingStore'
+import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
+import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { CoordinateConverter, COORDINATE_TYPE_NAMES, type CoordinateType } from '@/lib/coordinates'
-import { supabase } from '@/lib/supabase'
 import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
 import {
   deriveRow,
@@ -48,6 +48,7 @@ function createMeasuredIcon(opts: {
 }
 
 // 表 の 列 セクション 定義。 折りたたみ (hidden) / Z 表示 制御 は これ を 参照。
+// slidedD / revSlideM は dx/dy/dz スライド 補正 廃止 に 伴い 削除。
 type SectionKey =
   | 'design'
   | 'm1'
@@ -55,8 +56,6 @@ type SectionKey =
   | 'diff'
   | 'avg'
   | 'dvs'
-  | 'slidedD'
-  | 'revSlideM'
 const TABLE_SECTIONS: Array<{
   key: SectionKey
   label: string
@@ -117,14 +116,9 @@ function RecordZoomController({
   return null
 }
 
-// 起工測量・出来形測量の実測記録を一覧表示し、SIMA/CSV で出力するページ。
+// 実測記録を一覧表示し、SIMA/CSV で出力するページ。
 // 工区横断のトップレベル経路 /staking-records に紐付け。
-
-const CATEGORY_LABEL: Record<SurveyCategory | 'all', string> = {
-  all: '全て',
-  initial: '起工測量',
-  asbuilt: '出来形測量',
-}
+// 起工測量/出来形測量 の 区分 は 撤去 のため CATEGORY_LABEL は 削除。
 
 export function StakingRecordsPage() {
   const { currentFarm } = useFarmStore()
@@ -141,7 +135,7 @@ export function StakingRecordsPage() {
   } = useStakingStore()
   const { coordinates, fetchCoordinates } = useCoordinateStore()
   const { projects } = useProjectListStore()
-  const [filter, setFilter] = useState<'all' | SurveyCategory>('all')
+  // 起工/出来形 の カテゴリ 絞込 は 撤去。
 
   // 設計座標 の 事後リンク 対象 の 記録 ID。 セット されている 間は 地図クリック
   // で 選んだ 座標 を その 記録 に 割り付ける。
@@ -169,12 +163,14 @@ export function StakingRecordsPage() {
 
   // 表 の 列 表示 制御。 セクション 単位 で 折りたたみ + Z 列 全体 を まとめて 非表示。
   const [hiddenSections] = useState<Set<string>>(new Set())
-  const [showZ, setShowZ] = useState<boolean>(true)
+  // Z 列 は 常 に 表示 (「Z 列 を 表示」 チェック は 撤去)
+  const showZ = true
 
   // 座標管理 に 登録 する 行 の 選択 (グループ.key 単位)
   const [selectedGroupKeys, setSelectedGroupKeys] = useState<Set<string>>(new Set())
-  // TABLE_SECTIONS に 存在 しない キー (m2 / diff / avg / dvs / slidedD /
-  // revSlideM) は 常に 非表示 扱い。 これら の 表示 は 座標精度管理表 側 で 行う。
+  // TABLE_SECTIONS に 存在 しない キー (m2 / diff / avg / dvs) は 常に 非表示 扱い。
+  // これら の 表示 は 座標精度管理表 側 で 行う。 スライド系 (slidedD / revSlideM) は
+  // dx/dy/dz スライド 補正 廃止 に 伴い 削除 済み。
   const VALID_SECTION_KEYS = useMemo(
     () => new Set(TABLE_SECTIONS.map((s) => s.key as string)),
     [],
@@ -375,119 +371,14 @@ export function StakingRecordsPage() {
 
   // X/Y/Z 補正値 (実測値に加算)。工区ごとに DB (design_survey_calibration) に
   // 永続化して PC / スマホ間 で 共有 する。 Z 補正 は 従来 localStorage の
-  // フォールバック も 参照 (旧環境 互換)。X/Y 補正 は 追加 したての ため
-  // DB 直接。
-  // 記録セット。 スライド量 は セット ごと に 持つ。
-  // 工区 単位 の 値 (下 の xOffset 等) は セット が 無い 記録 の 受け皿 と して 残す。
+  // 記録セット。 dx/dy/dz スライド 補正 は 廃止 のため、 スライド量 の 読み書き は しない。
   const sets = useSurveySetStore((st) => st.sets)
   const fetchSets = useSurveySetStore((st) => st.fetchByFarm)
   const updateSet = useSurveySetStore((st) => st.updateSet)
+  const deleteSet = useSurveySetStore((st) => st.deleteSet)
   useEffect(() => {
     if (currentFarm) void fetchSets(currentFarm.id)
   }, [currentFarm, fetchSets])
-  // 記録 の セッション間 移動 は 廃止 (moveRecordsToSet も 使わない)
-
-  const zOffsetKey = currentFarm ? `staking:zOffset:${currentFarm.id}` : null
-  const [xOffset, setXOffset] = useState<number>(0)
-  const [yOffset, setYOffset] = useState<number>(0)
-  const [zOffset, setZOffset] = useState<number>(0)
-  useEffect(() => {
-    if (!currentFarm) {
-      setXOffset(0)
-      setYOffset(0)
-      setZOffset(0)
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      let dbX: number | null = null
-      let dbY: number | null = null
-      let dbZ: number | null = null
-      try {
-        const { data } = await supabase
-          .from('design_survey_calibration')
-          .select('dx_offset, dy_offset, dz_offset')
-          .eq('farm_id', currentFarm.id)
-          .maybeSingle()
-        const row = data as {
-          dx_offset?: number | string | null
-          dy_offset?: number | string | null
-          dz_offset?: number | string | null
-        } | null
-        if (row) {
-          const vx = row.dx_offset != null ? Number(row.dx_offset) : NaN
-          const vy = row.dy_offset != null ? Number(row.dy_offset) : NaN
-          const vz = row.dz_offset != null ? Number(row.dz_offset) : NaN
-          if (Number.isFinite(vx)) dbX = vx
-          if (Number.isFinite(vy)) dbY = vy
-          if (Number.isFinite(vz)) dbZ = vz
-        }
-      } catch { /* noop: 未マイグレーション環境 */ }
-      if (cancelled) return
-      // Z は localStorage フォールバック 有り
-      if (dbZ == null) {
-        try {
-          const raw = zOffsetKey ? localStorage.getItem(zOffsetKey) : null
-          const v = raw != null ? parseFloat(raw) : 0
-          dbZ = Number.isFinite(v) ? v : 0
-        } catch { dbZ = 0 }
-      }
-      const x = dbX ?? 0
-      const y = dbY ?? 0
-      const z = dbZ ?? 0
-      setXOffset(x)
-      setYOffset(y)
-      setZOffset(z)
-      if (zOffsetKey) {
-        try { localStorage.setItem(zOffsetKey, String(z)) } catch { /* ignore */ }
-      }
-      // localStorage 由来 の Z が あれば DB に も 書き戻し (一度きり)
-      if (dbZ != null && dbX == null && dbY == null && z !== 0) {
-        try {
-          await supabase
-            .from('design_survey_calibration')
-            .upsert(
-              { farm_id: currentFarm.id, is_enabled: true, dz_offset: z } as never,
-              { onConflict: 'farm_id' },
-            )
-        } catch { /* ignore */ }
-      }
-    })()
-    return () => { cancelled = true }
-  }, [currentFarm, zOffsetKey])
-
-  // 工区 の 既定 の 保存 (X / Y / Z いずれか の 単一 フィールド 更新)。
-  const commitOffset = async (
-    axis: 'x' | 'y' | 'z',
-    s: string,
-  ) => {
-    const n = parseFloat(s)
-    const next = Number.isFinite(n) ? n : 0
-    if (axis === 'x') setXOffset(next)
-    if (axis === 'y') setYOffset(next)
-    if (axis === 'z') {
-      setZOffset(next)
-      if (zOffsetKey) {
-        try { localStorage.setItem(zOffsetKey, String(next)) } catch { /* ignore */ }
-      }
-    }
-    if (!currentFarm) return
-    const patch: Record<string, unknown> = {
-      farm_id: currentFarm.id,
-      is_enabled: true,
-    }
-    if (axis === 'x') patch.dx_offset = next
-    if (axis === 'y') patch.dy_offset = next
-    if (axis === 'z') patch.dz_offset = next
-    try {
-      const { error } = await supabase
-        .from('design_survey_calibration')
-        .upsert(patch as never, { onConflict: 'farm_id' })
-      if (error) console.warn(`[staking] ${axis.toUpperCase()} 補正 の 保存 に 失敗`, error)
-    } catch (err) {
-      console.warn(`[staking] ${axis.toUpperCase()} 補正 の 保存 に 失敗`, err)
-    }
-  }
 
   /**
    * 見て いる 記録セット。 'all' は 全部、'none' は 未振り分け、
@@ -564,64 +455,18 @@ export function StakingRecordsPage() {
     initialRecentPickedRef.current = false
   }, [currentFarm?.id])
 
-  /**
-   * スライド量 の 保存先。 いま 見て いる タブ に 合わせる:
-   *   セット の タブ … その セット (survey_record_sets)
-   *   すべて / 未振り分け … 工区 の 既定 (design_survey_calibration)
-   * 記録 1 件 に 効く のは どちら か 片方 だけ (slideOfRecord と 同じ 決め方) な ので、
-   * 両方 に 値 が 入って いて も 二重 に 掛かる こと は ない。
-   */
+  /** セッション 詳細 の 表示対象 (タブ で 選ばれた セット)。 */
   const slideTargetSet = setTab === 'none' ? null : (sets.find((x) => x.id === setTab) ?? null)
-  /** 入力中 の 生 文字列 (触って いない 軸 は null = 保存値 を 3 桁 で 表示) */
-  const [slideDraft, setSlideDraft] = useState<{
-    x: string | null
-    y: string | null
-    z: string | null
-  }>({ x: null, y: null, z: null })
-  // タブ を 変えたら 対象 が 変わる ので 下書き は 捨てる
-  useEffect(() => {
-    setSlideDraft({ x: null, y: null, z: null })
-  }, [setTab])
-
-  const commitSlide = async (axis: 'x' | 'y' | 'z', raw: string) => {
-    setSlideDraft((d) => ({ ...d, [axis]: null }))
-    const n = parseFloat(raw.trim())
-    if (!Number.isFinite(n)) return
-    const next = Math.round(n * 1000) / 1000
-    if (slideTargetSet) {
-      const key = axis === 'x' ? 'dx' : axis === 'y' ? 'dy' : 'dz'
-      if (slideTargetSet.slide[key] === next) return
-      await updateSet(slideTargetSet.id, { slide: { ...slideTargetSet.slide, [key]: next } })
-      return
-    }
-    await commitOffset(axis, String(next))
-  }
 
   const filtered = useMemo(() => {
-    // タブ は 必ず どれ か 1 つ の セット (または 未振り分け)。
-    // 混ざる と どの 補正値 で 見て いる か 分から なく なる ので 「すべて」 は 出さない。
-    const base =
-      setTab === 'none'
-        ? records.filter((r) => !r.recordSetId)
-        : records.filter((r) => r.recordSetId === setTab)
-    if (filter === 'all') return base
-    return base.filter((r) => r.surveyCategory === filter)
-  }, [records, filter, setTab])
+    // 起工/出来形 の 区分 は 撤去 のため カテゴリ 絞込 は しない
+    return setTab === 'none'
+      ? records.filter((r) => !r.recordSetId)
+      : records.filter((r) => r.recordSetId === setTab)
+  }, [records, setTab])
 
-  // 同じ 設計座標 に リンク された 実測記録 を 「実測1 / 実測2」に ペアリング。
-  // 3 件 以上 ある 場合 は 2 件 ごと に 追加行 を 生成。 フリー / 未リンク は
-  // ペアリング せず 単独行 として 扱う。
-  /** セット id → スライド量。 セット が 無い 記録 は 工区 単位 の 値 に 落とす */
-  const slideOfSet = useMemo(() => {
-    const m = new Map<string, { dx: number; dy: number; dz: number }>()
-    for (const s of sets) m.set(s.id, s.slide)
-    return m
-  }, [sets])
-  const slideOfRecord = (r: StakingRecord | null) => {
-    const hit = r?.recordSetId ? slideOfSet.get(r.recordSetId) : undefined
-    return hit ?? { dx: xOffset, dy: yOffset, dz: zOffset }
-  }
-  // 記録 の セッション間移動 は 廃止 (誤操作 防止)。 セッション は 測定時 に 固定。
+  // dx/dy/dz スライド 補正 は 廃止 のため、 記録 に 効く スライド量 は 常 に 0。
+  const slideOfRecord = (_r: StakingRecord | null) => ({ dx: 0, dy: 0, dz: 0 })
 
   /** この 工区 の 記録 の 数 (タブ の 「すべて」) */
 
@@ -642,45 +487,7 @@ export function StakingRecordsPage() {
   // groupStakingRecords は 今後 精度管理表 で 使う 予定 (import の 保持 の ため 参照)
   void groupStakingRecords
 
-  // 平均誤差・件数 の 簡易サマリ。 平均 dX / dY は 実測平均 と 設計 の 生 の 差
-  // (実測 - 設計) を グループ 全体 で 平均。 スライド量 を どう 設定 すれば 良い か
-  // の 参考値 に なる (この 値 を そのまま 入力 すれば 中央値 が 揃う)。
-  const summary = useMemo(() => {
-    let stakeCount = 0
-    let freeCount = 0
-    for (const r of filtered) {
-      if (r.targetType === 'free') freeCount++
-      else stakeCount++
-    }
-    let sumDvsX = 0
-    let sumDvsY = 0
-    let sumDist2 = 0
-    let pairs = 0
-    for (const g of grouped) {
-      if (g.designX == null || g.designY == null || !g.m1) continue
-      const avgMX = g.m2 ? (g.m1.measuredX + g.m2.measuredX) / 2 : g.m1.measuredX
-      const avgMY = g.m2 ? (g.m1.measuredY + g.m2.measuredY) / 2 : g.m1.measuredY
-      // 生 の 差 (実測平均 - 設計)。 補正 を 掛ける 前 の バイアス。
-      const dvsX = avgMX - g.designX
-      const dvsY = avgMY - g.designY
-      sumDvsX += dvsX
-      sumDvsY += dvsY
-      sumDist2 += dvsX * dvsX + dvsY * dvsY
-      pairs++
-    }
-    const avgDx = pairs > 0 ? sumDvsX / pairs : null
-    const avgDy = pairs > 0 ? sumDvsY / pairs : null
-    const rms = pairs > 0 ? Math.sqrt(sumDist2 / pairs) : null
-    return {
-      total: filtered.length,
-      stake: stakeCount,
-      free: freeCount,
-      rms,
-      avgDx,
-      avgDy,
-      pairs,
-    }
-  }, [filtered, grouped])
+  // 合計 / 測設 / フリー / 平均 dX/dY / RMS の 簡易サマリ 表示 は 撤去。
 
   const handleDelete = async (id: string, name: string | null) => {
     if (!confirm(`記録「${name ?? '(無題)'}」を削除しますか？`)) return
@@ -688,22 +495,18 @@ export function StakingRecordsPage() {
   }
 
 
-  // CSV 出力（実測値ベース）
+  // CSV 出力（実測値ベース。 dx/dy/dz スライド 補正 は 廃止 のため 「逆スライド」列 も 削除）
   const handleExportCSV = () => {
     if (filtered.length === 0) return
     const header =
-      '点名,測量種別,X(実測),Y(実測),Z(実測),X(逆スライド),Y(逆スライド),Z(逆スライド),X(計画),Y(計画),Z(計画),精度(m),サンプル数,記録日時\n'
+      '点名,X(実測),Y(実測),Z(実測),X(計画),Y(計画),Z(計画),精度(m),サンプル数,記録日時\n'
     const rows = filtered
       .map((r) =>
         [
           r.targetName ?? '',
-          CATEGORY_LABEL[r.surveyCategory],
           r.measuredX.toFixed(3),
           r.measuredY.toFixed(3),
           r.measuredZ != null ? r.measuredZ.toFixed(3) : '',
-          (r.measuredX - xOffset).toFixed(3),
-          (r.measuredY - yOffset).toFixed(3),
-          r.measuredZ != null ? (r.measuredZ - zOffset).toFixed(3) : '',
           r.targetX != null ? r.targetX.toFixed(3) : '',
           r.targetY != null ? r.targetY.toFixed(3) : '',
           r.targetZ != null ? r.targetZ.toFixed(3) : '',
@@ -783,7 +586,7 @@ export function StakingRecordsPage() {
       const kind =
         g.targetType === 'free' ? 'フリー' : g.targetType === 'pipe_vertex' ? '頂点' : '座標'
       const values: (string | number | null)[] = [
-        `${kind} / ${CATEGORY_LABEL[g.surveyCategory]}${m2 ? ' ×2' : ''}`,
+        `${kind}${m2 ? ' ×2' : ''}`,
       ]
       const push = (sec: SectionKey, vals: (string | number | null)[]) => {
         if (isHidden(sec)) return
@@ -802,8 +605,6 @@ export function StakingRecordsPage() {
       push('diff', [d.diffX, d.diffY, d.diffZ])
       push('avg', [d.avgX, d.avgY, d.avgZ])
       push('dvs', [d.dvsX, d.dvsY, d.dvsZ, d.dvsH])
-      push('slidedD', [d.slidedDX, d.slidedDY, d.slidedDZ])
-      push('revSlideM', [d.revSlideMX, d.revSlideMY, d.revSlideMZ])
       values.push(d.acc)
       values.push(m1?.recordedAt ? new Date(m1.recordedAt).toLocaleString('ja-JP') : '')
       ws.addRow(values)
@@ -839,17 +640,17 @@ export function StakingRecordsPage() {
     const projectName = currentFarm?.name || 'NoName'
     const lines: string[] = []
     lines.push(`G00,04,${projectName},`)
-    lines.push('Z00, /* 起工測量実測座標 */,')
+    lines.push('Z00, /* 実測座標 */,')
     lines.push('Z01,2,')
     lines.push('A00,')
     filtered.forEach((r, index) => {
       const name = r.targetName ?? `pt-${index + 1}`
       const paddedName = name.padEnd(20, ' ')
-      // 逆スライド実測 (実測平均 - スライド量) を 出力 の 既定 と する。
-      const xStr = (r.measuredX - xOffset).toFixed(3).padStart(10, ' ')
-      const yStr = (r.measuredY - yOffset).toFixed(3).padStart(10, ' ')
+      // dx/dy/dz スライド 補正 は 廃止 のため、 実測値 を そのまま 出力。
+      const xStr = r.measuredX.toFixed(3).padStart(10, ' ')
+      const yStr = r.measuredY.toFixed(3).padStart(10, ' ')
       const zStr =
-        r.measuredZ != null ? (r.measuredZ - zOffset).toFixed(3).padStart(10, ' ') : ''
+        r.measuredZ != null ? r.measuredZ.toFixed(3).padStart(10, ' ') : ''
       const numStr = (index + 1).toString().padStart(5, ' ')
       lines.push(`A01,${numStr},${paddedName},${xStr},${yStr},${zStr},`)
     })
@@ -874,114 +675,41 @@ export function StakingRecordsPage() {
 
   return (
     <div className="h-full w-full min-w-0 max-w-full flex flex-col overflow-hidden">
-      {/* ヘッダー */}
-      <div className="px-4 py-3 border-b bg-white flex items-center gap-2 flex-wrap">
-        <FileSearch className="h-4 w-4 text-slate-500" />
-        <span className="font-medium">起工測量 実測記録</span>
-        <span className="text-xs text-slate-500">{currentFarm.name}</span>
+      {/* ヘッダー (タイトル / サマリ / 型 の 注記 バー は 撤去)。
+          点種 フィルタ の 右端 に 再読込 と Excel/CSV/SIMA ダウンロード を まとめて 配置。 */}
 
-        <div className="ml-4 flex items-center gap-1 text-xs">
-          {(['all', 'initial', 'asbuilt'] as const).map((c) => (
-            <button
-              key={c}
-              onClick={() => setFilter(c)}
-              className={`px-2 py-1 rounded border ${
-                filter === c
-                  ? 'bg-slate-800 text-white border-slate-800'
-                  : 'hover:bg-slate-50'
-              }`}
-            >
-              {CATEGORY_LABEL[c]}
-            </button>
-          ))}
-        </div>
-
-        <div className="ml-auto flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => fetchRecords(currentFarm.id)}
-            className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
-            title="再読み込み"
-          >
-            <RefreshCw className="h-3 w-3" />
-            再読込
-          </button>
-          <button
-            onClick={() => void handleExportExcel()}
-            disabled={grouped.length === 0}
-            className="flex items-center gap-1 px-3 py-1 text-xs bg-emerald-700 text-white rounded hover:bg-emerald-800 disabled:opacity-50"
-            title="画面の表をそのまま Excel に出力 (座標は小数 3 桁表示)"
-          >
-            <Download className="h-3 w-3" />
-            Excel
-          </button>
-          <button
-            onClick={handleExportCSV}
-            disabled={filtered.length === 0}
-            className="flex items-center gap-1 px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-          >
-            <Download className="h-3 w-3" />
-            CSV
-          </button>
-          <button
-            onClick={handleExportSIMA}
-            disabled={filtered.length === 0}
-            className="flex items-center gap-1 px-3 py-1 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
-          >
-            <Download className="h-3 w-3" />
-            SIMA
-          </button>
-        </div>
-      </div>
-
-      {/* サマリ (幅 が 狭い とき は 折り返し) */}
-      <div className="px-4 py-2 border-b bg-slate-50 flex items-center gap-4 text-xs text-slate-600 flex-wrap">
-        <span>合計 <span className="font-semibold">{summary.total}</span> 件</span>
-        <span>測設 <span className="font-semibold">{summary.stake}</span> / フリー <span className="font-semibold">{summary.free}</span></span>
-        {summary.avgDx != null && summary.avgDy != null && (
-          <>
-            <span>
-              平均 dX: <span className="font-mono font-semibold">{summary.avgDx.toFixed(4)}</span> m
+      {/* pendingLink 系 の 案内 バー (発動中 だけ 出す。 通常時 は 非表示) */}
+      {(pendingLinkRecordId || pendingLinkM2ForM1Id || error) && (
+        <div className="px-3 py-1 border-b bg-slate-50 flex items-center gap-2 text-xs text-slate-600 flex-wrap">
+          {pendingLinkRecordId && (
+            <span className="flex items-center gap-2 text-blue-700 font-semibold">
+              📍 地図上の 当初 の 座標 を クリック で 割り付け
+              <button
+                onClick={() => setPendingLinkRecordId(null)}
+                className="p-0.5 rounded border hover:bg-white"
+                title="キャンセル"
+              >
+                <X className="h-3 w-3" />
+              </button>
             </span>
-            <span>
-              平均 dY: <span className="font-mono font-semibold">{summary.avgDy.toFixed(4)}</span> m
+          )}
+          {pendingLinkM2ForM1Id && (
+            <span className="flex items-center gap-2 text-purple-700 font-semibold">
+              🎯 実測2 の 候補 を 選択 (5cm 以内 の 実測点)
+              <button
+                onClick={handleCancelLinkM2}
+                className="p-0.5 rounded border hover:bg-white"
+                title="キャンセル"
+              >
+                <X className="h-3 w-3" />
+              </button>
             </span>
-          </>
-        )}
-        {summary.rms != null && (
-          <span>
-            RMS: <span className="font-mono font-semibold">{summary.rms.toFixed(3)}</span> m
-            <span className="text-slate-400 ml-1">(n={summary.pairs})</span>
-          </span>
-        )}
-        {pendingLinkRecordId && (
-          <span className="ml-auto flex items-center gap-2 text-blue-700 font-semibold">
-            📍 地図上の 当初 の 座標 を クリック で 割り付け
-            <button
-              onClick={() => setPendingLinkRecordId(null)}
-              className="p-0.5 rounded border hover:bg-white"
-              title="キャンセル"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
-        )}
-        {pendingLinkM2ForM1Id && (
-          <span className="ml-auto flex items-center gap-2 text-purple-700 font-semibold">
-            🎯 実測2 の 候補 を 選択 (5cm 以内 の 実測点)
-            <button
-              onClick={handleCancelLinkM2}
-              className="p-0.5 rounded border hover:bg-white"
-              title="キャンセル"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
-        )}
-        {error && <span className="text-red-600">{error}</span>}
-      </div>
+          )}
+          {error && <span className="text-red-600">{error}</span>}
+        </div>
+      )}
 
-      {/* 点種 フィルタ (座標管理 の visibleTypes と 同じ 考え方)。 工区内 に
-          存在する 点種 だけ を チップ で 出し、クリック で ON/OFF。 */}
+      {/* 点種 フィルタ + ダウンロード / 再読込 ボタン */}
       {availableTypes.length > 0 && (
         <div className="px-3 py-1.5 border-b bg-white flex items-center gap-1 flex-wrap">
           <span className="text-[11px] text-slate-500 mr-1">表示点種:</span>
@@ -1010,7 +738,7 @@ export function StakingRecordsPage() {
           })}
           <button
             onClick={() => setVisibleTypesState(new Set(availableTypes))}
-            className="ml-auto text-[11px] text-slate-500 hover:text-blue-600"
+            className="text-[11px] text-slate-500 hover:text-blue-600"
           >
             全 ON
           </button>
@@ -1020,6 +748,42 @@ export function StakingRecordsPage() {
           >
             全 OFF
           </button>
+          {/* 点種 の 右側 に 再読込 と 出力 系 を まとめる */}
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={() => fetchRecords(currentFarm.id)}
+              className="flex items-center gap-1 px-2 py-0.5 text-[11px] border rounded hover:bg-slate-50"
+              title="再読み込み"
+            >
+              <RefreshCw className="h-3 w-3" />
+              再読込
+            </button>
+            <button
+              onClick={() => void handleExportExcel()}
+              disabled={grouped.length === 0}
+              className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-emerald-700 text-white rounded hover:bg-emerald-800 disabled:opacity-50"
+              title="画面の表をそのまま Excel に出力 (座標は小数 3 桁表示)"
+            >
+              <Download className="h-3 w-3" />
+              Excel
+            </button>
+            <button
+              onClick={handleExportCSV}
+              disabled={filtered.length === 0}
+              className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              <Download className="h-3 w-3" />
+              CSV
+            </button>
+            <button
+              onClick={handleExportSIMA}
+              disabled={filtered.length === 0}
+              className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
+            >
+              <Download className="h-3 w-3" />
+              SIMA
+            </button>
+          </div>
         </div>
       )}
 
@@ -1034,32 +798,46 @@ export function StakingRecordsPage() {
               key: st.id,
               label: setLabel(st),
               n: countBySet.get(st.id) ?? 0,
-              slide: st.slide,
             })),
             ...((countBySet.get(null) ?? 0) > 0
-              ? [{ key: 'none', label: '未振り分け', n: countBySet.get(null) ?? 0, slide: null }]
+              ? [{ key: 'none', label: '未振り分け', n: countBySet.get(null) ?? 0 }]
               : []),
           ].map((t) => {
             const on = setTab === t.key
+            const isSession = t.key !== 'none'
             return (
-              <button
+              <div
                 key={t.key}
-                type="button"
-                onClick={() => setSetTab(t.key)}
-                className={`px-3 py-1.5 -mb-px border-b-2 text-xs whitespace-nowrap ${
+                className={`inline-flex items-center -mb-px border-b-2 whitespace-nowrap ${
                   on
-                    ? 'border-blue-600 text-blue-700 font-medium'
-                    : 'border-transparent text-slate-600 hover:text-slate-800'
+                    ? 'border-blue-600'
+                    : 'border-transparent'
                 }`}
-                title={
-                  t.slide
-                    ? `スライド量 dX ${t.slide.dx} / dY ${t.slide.dy} / dZ ${t.slide.dz}`
-                    : undefined
-                }
               >
-                {t.label}
-                <span className="ml-1 text-slate-400">{t.n}</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setSetTab(t.key)}
+                  className={`px-3 py-1.5 text-xs whitespace-nowrap ${
+                    on
+                      ? 'text-blue-700 font-medium'
+                      : 'text-slate-600 hover:text-slate-800'
+                  }`}
+                >
+                  {t.label}
+                  <span className="ml-1 text-slate-400">{t.n}</span>
+                </button>
+                {/* タブ の 右 に 詳細 編集 ボタン。 未振り分け に は 出さない。 */}
+                {isSession && on && (
+                  <button
+                    type="button"
+                    onClick={() => setSessionDetailOpen(true)}
+                    title="この セッション の 詳細 (名前 / 日付 / 担当者 / 基準局) を 編集"
+                    className="mr-1 p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                  >
+                    <Settings2 className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
             )
           })}
           {/* PC からの セッション追加 / 削除 / 記録移動 は 廃止。
@@ -1067,107 +845,16 @@ export function StakingRecordsPage() {
         </div>
       )}
 
-      {/* 選択行 の 座標管理 登録 バー。 左端 に スライド量 (X/Y/Z) 入力 を 配置 */}
-      <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 text-xs flex-wrap">
-        {/* スライド量。 実測 は セット 単位 で ずれる ので、いま 見て いる
-            タブ の 対象 を 直す:
-              セット の タブ … その セット の 値 (survey_record_sets)
-              未振り分け … 工区 の 既定 (design_survey_calibration)
-            どの 記録 に どちら が 効く か は slideOfRecord と 同じ 決め方 (片方 だけ)
-            な ので、二重 に 掛かる こと は ない。 */}
-        <span className="text-[11px] text-slate-500">スライド量 (m)</span>
-        <span className="text-[10px] text-slate-400">
-          {slideTargetSet ? `対象: ${setLabel(slideTargetSet)}` : '対象: 工区の既定 (未振り分け用)'}
-        </span>
-        {(['x', 'y', 'z'] as const).map((axis) => (
-          <label key={axis} className="flex items-center gap-1">
-            <span className="text-slate-500">{axis.toUpperCase()}</span>
-            <input
-              type="text"
-              inputMode="decimal"
-              value={
-                slideDraft[axis] ??
-                (slideTargetSet
-                  ? slideTargetSet.slide[axis === 'x' ? 'dx' : axis === 'y' ? 'dy' : 'dz']
-                  : axis === 'x'
-                    ? xOffset
-                    : axis === 'y'
-                      ? yOffset
-                      : zOffset
-                ).toFixed(3)
-              }
-              onFocus={() =>
-                setSlideDraft((d) => ({
-                  ...d,
-                  [axis]: String(
-                    slideTargetSet
-                      ? slideTargetSet.slide[axis === 'x' ? 'dx' : axis === 'y' ? 'dy' : 'dz']
-                      : axis === 'x'
-                        ? xOffset
-                        : axis === 'y'
-                          ? yOffset
-                          : zOffset,
-                  ),
-                }))
-              }
-              onChange={(e) => setSlideDraft((d) => ({ ...d, [axis]: e.target.value }))}
-              onBlur={(e) => void commitSlide(axis, e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
-              }}
-              className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
-            />
-          </label>
-        ))}
-        {/* 実測 から 座標管理 へ 直接 登録 する 導線 は 廃止。 実測 は 実測 の まま
-            残し、座標 に する なら Excel / SIMA を 通す。
-            セッション 間 の 移動 も 廃止 (誤操作 防止、セッション は 測定時 に 固定)。 */}
-        <span className="text-slate-400 mx-1">|</span>
-        <span className="text-slate-500">選択 {selectedGroupKeys.size} 件</span>
-        {/* 現在 タブ の セッション 詳細 (名前・日付・担当者・基準局・スライド量) */}
-        <button
-          type="button"
-          onClick={() => setSessionDetailOpen(true)}
-          disabled={setTab === 'none' || setTab === 'all'}
-          className="ml-auto shrink-0 px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
-          title={
-            setTab === 'none' || setTab === 'all'
-              ? 'セッション の タブ を 選ぶ と 有効 に なります'
-              : '現在の セッション の 詳細 (名前 / 日付 / 担当者 / スライド量) を 編集'
-          }
-        >
-          <Settings2 className="h-3 w-3" />
-          詳細
-        </button>
-        {selectedGroupKeys.size > 0 && (
-          <button
-            onClick={() => setSelectedGroupKeys(new Set())}
-            className="ml-2 text-slate-500 hover:text-blue-600"
-          >
-            選択解除
-          </button>
-        )}
-        <span className="ml-auto text-[11px] text-slate-400">
-          型 は 「現況」で 登録 されます
-        </span>
-      </div>
-
-      {/* 列 表示 切替: Z 列 の 一括 非表示 のみ */}
-      <div className="px-3 py-1 border-b bg-slate-50 flex items-center gap-2 text-[11px] text-slate-500">
-        <label className="flex items-center gap-1">
-          <input
-            type="checkbox"
-            checked={showZ}
-            onChange={(e) => setShowZ(e.target.checked)}
-          />
-          Z 列 を 表示
-        </label>
-      </div>
-
-      {/* 左右 分割: 左 = テーブル、右 = 地図。
+      {/* 左右 分割: 左 = テーブル、右 = 地図。 幅 は ドラッグ で 変え られる。
           isolate で テーブル 内 sticky thead の z-index が 地図側 と 干渉 しない。 */}
-      <div className="flex-1 min-h-0 flex overflow-hidden">
-      <div className="flex-1 min-h-0 min-w-0 overflow-auto bg-white isolate border-r-2 border-slate-300">
+      <ResizableSplit
+        storageKey="staking-records"
+        defaultLeft={860}
+        minLeft={420}
+        maxLeft={1600}
+        className="flex-1 min-h-0"
+        left={
+      <div className="flex-1 min-h-0 min-w-0 overflow-auto bg-white isolate w-full">
         {loading ? (
           <div className="h-full flex items-center justify-center text-slate-500">
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
@@ -1250,18 +937,14 @@ export function StakingRecordsPage() {
                   g.targetType === 'coordinate' && g.designName
                     ? g.designName.replace(/^G2?_/, '')
                     : m1?.targetName ?? '(無題)'
-                // 表 に 出す 値 は Excel 出力 と 同じ 計算 を 使う
+                // 表 に 出す 値 は Excel 出力 と 同じ 計算 を 使う。
+                // dx/dy/dz スライド 補正 は 廃止 のため 常 に 0。
                 const {
                   diffX, diffY, diffZ,
                   avgX, avgY, avgZ,
                   dvsX, dvsY, dvsZ, dvsH,
-                  slidedDX, slidedDY, slidedDZ,
-                  revSlideMX, revSlideMY, revSlideMZ,
                   acc,
-                } = deriveRow(g, ...(() => {
-                  const sl = slideOfRecord(g.m1 ?? g.m2)
-                  return [sl.dx, sl.dy, sl.dz] as const
-                })())
+                } = deriveRow(g, 0, 0, 0)
                 const clickId = m1?.id ?? null
                 return (
                   <tr
@@ -1302,9 +985,7 @@ export function StakingRecordsPage() {
                             ? '頂点'
                             : '座標'}
                       </span>
-                      <span className="ml-1 text-[10px] text-slate-500">
-                        {CATEGORY_LABEL[g.surveyCategory]}
-                      </span>
+                      {/* 起工/出来形 の 区分 表示 は 撤去 */}
                       {m2 && (
                         <span
                           className="ml-1 text-[10px] px-1 py-0.5 rounded bg-purple-100 text-purple-700"
@@ -1575,38 +1256,7 @@ export function StakingRecordsPage() {
                         </td>
                       </>
                     )}
-                    {/* スライド設計 = 設計 + スライド量 (設計 を 実測 に 近づける) */}
-                    {!isHidden('slidedD') && (
-                      <>
-                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-fuchsia-50/50">
-                          {slidedDX != null ? slidedDX.toFixed(3) : '—'}
-                        </td>
-                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-fuchsia-50/50">
-                          {slidedDY != null ? slidedDY.toFixed(3) : '—'}
-                        </td>
-                        {showZ && (
-                          <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-fuchsia-50/50">
-                            {slidedDZ != null ? slidedDZ.toFixed(3) : '—'}
-                          </td>
-                        )}
-                      </>
-                    )}
-                    {/* 逆スライド実測 = 実測平均 - スライド量 (実測 を 設計 に 近づける、出力 の 既定) */}
-                    {!isHidden('revSlideM') && (
-                      <>
-                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
-                          {revSlideMX != null ? revSlideMX.toFixed(3) : '—'}
-                        </td>
-                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
-                          {revSlideMY != null ? revSlideMY.toFixed(3) : '—'}
-                        </td>
-                        {showZ && (
-                          <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
-                            {revSlideMZ != null ? revSlideMZ.toFixed(3) : '—'}
-                          </td>
-                        )}
-                      </>
-                    )}
+                    {/* スライド設計 / 逆スライド実測 の 列 は dx/dy/dz スライド 廃止 のため 削除 */}
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right">
                       {acc != null ? acc.toFixed(3) : '—'}
                     </td>
@@ -1658,11 +1308,13 @@ export function StakingRecordsPage() {
         )}
       </div>
 
-      {/* 右側: 地図 (座標管理 と 同じ CoordinateMap)。設計座標 を クリック
-          で 事後リンク 可能。 実測点 は オレンジ 十字マーカー で 表示。
-          isolate で 地図 内 の z-[1000] HUD が 隣 の テーブル に 被らない よう
-          独立 スタッキング コンテキスト を 作る。 */}
-      <div className="flex-1 min-h-0 min-w-0 relative overflow-hidden isolate">
+        }
+        right={
+          // 右側: 地図 (座標管理 と 同じ CoordinateMap)。設計座標 を クリック で
+          // 事後リンク 可能。 実測点 は オレンジ 十字マーカー で 表示。
+          // isolate で 地図 内 の z-[1000] HUD が 隣 の テーブル に 被らない よう
+          // 独立 スタッキング コンテキスト を 作る。
+      <div className="flex-1 min-h-0 min-w-0 relative overflow-hidden isolate h-full">
         <CoordinateMap
           farmId={currentFarm.id}
           showLabels
@@ -1697,7 +1349,8 @@ export function StakingRecordsPage() {
           {measuredPointsForMap.map((m) => {
             const isSelected = selectedRecordId === m.id
             const isPending = pendingLinkM2ForM1Id === m.id
-            const fill = m.record.surveyCategory === 'asbuilt' ? '#10b981' : '#f97316'
+            // 起工/出来形 の 色分け は 撤去。 実測点 は 一律 で 橙。
+            const fill = '#f97316'
             return (
               <Marker
                 key={`meas-${m.id}`}
@@ -1729,7 +1382,8 @@ export function StakingRecordsPage() {
           })}
         </CoordinateMap>
       </div>
-      </div>
+        }
+      />
       {/* /左右 分割 */}
 
       {/* 実測2 選択 モーダル: 5cm 以内 の 候補 リスト から 選ぶ。
@@ -2081,9 +1735,45 @@ export function StakingRecordsPage() {
                   : '—'}
               </div>
               <div className="text-[10px] text-slate-400">
-                スライド量 は 詳細 の 下 (タブ 直下 の 行) で 編集 できます。
                 名前 は 空 に すると 日付 + 担当者 で 表示 されます。
               </div>
+            </div>
+            {/* 手簿 (セッション) の 削除。 記録 が 残って いる 場合 は 警告 を 出す。
+                削除 して も staking_records は ON DELETE SET NULL で 残り、
+                未振り分け タブ に 移る (記録 本体 は 消え ない)。 */}
+            <div className="px-3 py-2 border-t bg-slate-50 flex items-center justify-between">
+              <div className="text-[10px] text-slate-500">
+                {(countBySet.get(slideTargetSet.id) ?? 0) > 0
+                  ? `この 手簿 に は 記録 が ${countBySet.get(slideTargetSet.id)} 点 あります。`
+                  : '記録 は ありません。'}
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  const n = countBySet.get(slideTargetSet.id) ?? 0
+                  const label = setLabel(slideTargetSet)
+                  const msg =
+                    n > 0
+                      ? `「${label}」 を 削除 します。\n` +
+                        `この 手簿 に ぶら下がる 記録 ${n} 点 は 未振り分け に なります (記録 自体 は 残ります)。\n\n削除 して よろしい ですか？`
+                      : `「${label}」 を 削除 します。 記録 は ありません。\n\n削除 して よろしい ですか？`
+                  if (!window.confirm(msg)) return
+                  const deletedId = slideTargetSet.id
+                  await deleteSet(deletedId)
+                  setSessionDetailOpen(false)
+                  // 直近 削除 した タブ を 見て いたら 「すべて」 に 戻す
+                  setSetTab((cur) => (cur === deletedId ? 'all' : cur))
+                }}
+                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] rounded border border-red-300 text-red-700 hover:bg-red-50"
+                title={
+                  (countBySet.get(slideTargetSet.id) ?? 0) > 0
+                    ? '記録 が ある セッション を 削除 (確認 あり)'
+                    : 'この セッション を 削除'
+                }
+              >
+                <Trash2 className="h-3 w-3" />
+                この 手簿 を 削除
+              </button>
             </div>
           </div>
         </div>

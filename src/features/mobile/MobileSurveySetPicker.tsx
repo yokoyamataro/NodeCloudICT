@@ -119,10 +119,6 @@ export function MobileSurveySetPicker({
                         <span className="block text-[11px] text-slate-500 font-mono">
                           {hhmm(s.startedAt)} 〜 {hhmm(s.endedAt)}
                         </span>
-                        <span className="block text-[11px] text-slate-500 font-mono">
-                          スライド dX {s.slide.dx.toFixed(3)} / dY {s.slide.dy.toFixed(3)} / dZ{' '}
-                          {s.slide.dz.toFixed(3)}
-                        </span>
                       </span>
                       <ArrowRight className="h-4 w-4 text-slate-400 shrink-0" />
                     </button>

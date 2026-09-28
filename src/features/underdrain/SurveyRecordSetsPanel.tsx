@@ -15,33 +15,6 @@ import {
 
 const inputCls = 'w-full px-1.5 py-1 text-xs border rounded'
 
-function NumCell({
-  value,
-  onChange,
-}: {
-  value: number
-  onChange: (v: number) => void
-}) {
-  const [text, setText] = useState<string | null>(null)
-  return (
-    <input
-      type="text"
-      inputMode="decimal"
-      className="w-20 px-1.5 py-1 text-xs border rounded text-right font-mono"
-      value={text ?? String(value)}
-      onChange={(e) => {
-        const t = e.target.value
-        setText(t)
-        const n = Number(t)
-        if (t.trim() === '') onChange(0)
-        else if (Number.isFinite(n)) onChange(n)
-      }}
-      onFocus={(e) => e.currentTarget.select()}
-      onBlur={() => setText(null)}
-    />
-  )
-}
-
 /** 開始 / 終了日時。 未記録 は — */
 function fmtStamp(iso: string | null): string {
   if (!iso) return '—'
@@ -82,8 +55,8 @@ export function SurveyRecordSetsPanel({
   return (
     <div className="space-y-2 text-xs">
       <div className="text-slate-500">
-        セッション (実測記録の 束)。 スライド量 は セッション ごと に 持ちます。
-        別 の 日 / 別 の 担当者 / 基準局 や 設定 を 変えた ときは 新しい セッション に します。
+        セッション (実測記録の 束)。 別 の 日 / 別 の 担当者 / 基準局 や 設定 を 変えた
+        ときは 新しい セッション に します。 (dx/dy/dz スライド 補正 は 廃止)
       </div>
 
       {unassigned > 0 && (
@@ -122,12 +95,7 @@ export function SurveyRecordSetsPanel({
                   </button>
                   <span className="flex-1 min-w-0 truncate">{setLabel(s)}</span>
                   <span className="text-[11px] text-slate-400 font-mono">{n} 点</span>
-                  <span
-                    className="text-[10px] text-slate-500 font-mono"
-                    title="スライド量 (dx / dy / dz)"
-                  >
-                    {s.slide.dx.toFixed(3)} / {s.slide.dy.toFixed(3)} / {s.slide.dz.toFixed(3)}
-                  </span>
+                  {/* dx/dy/dz スライド 補正 は 廃止 のため 表示 を 削除 */}
                   <button
                     type="button"
                     onClick={() => farmId && void setDefault(farmId, s.id)}
@@ -204,28 +172,7 @@ export function SurveyRecordSetsPanel({
                         placeholder="例: アンテナ高 1.800 / FIX のみ採用"
                       />
                     </label>
-                    <div className="flex items-center gap-2 pt-1">
-                      <span className="text-[11px] text-slate-500">スライド量</span>
-                      <span className="text-[11px] text-slate-400">dX</span>
-                      <NumCell
-                        value={s.slide.dx}
-                        onChange={(v) => void updateSet(s.id, { slide: { ...s.slide, dx: v } })}
-                      />
-                      <span className="text-[11px] text-slate-400">dY</span>
-                      <NumCell
-                        value={s.slide.dy}
-                        onChange={(v) => void updateSet(s.id, { slide: { ...s.slide, dy: v } })}
-                      />
-                      <span className="text-[11px] text-slate-400">dZ</span>
-                      <NumCell
-                        value={s.slide.dz}
-                        onChange={(v) => void updateSet(s.id, { slide: { ...s.slide, dz: v } })}
-                      />
-                    </div>
-                    <div className="text-[11px] text-slate-400">
-                      実測 から この 量 を 引いた もの が 当初 の 土俵 に 乗る 値 です
-                      (補正実測値 = 実測 − スライド量)。
-                    </div>
+                    {/* dx/dy/dz スライド 入力 は 廃止 (計測時 の 補正 機能 は 撤去) */}
                     {/* 作業 の 幅。 スマホ で セット を 選んだ 時刻 と、最後 に
                         記録 が 入った 時刻 が 自動 で 入る (手入力 は しない) */}
                     <div className="text-[11px] text-slate-500 font-mono">

@@ -9,7 +9,7 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 import { errorMessage } from '@/lib/errorMessage'
-import type { SurveySlide } from '@/lib/surveyCalibration'
+import { NO_SLIDE, type SurveySlide } from '@/lib/surveyCalibration'
 
 export interface SurveyRecordSet {
   id: string
@@ -27,7 +27,7 @@ export interface SurveyRecordSet {
   /** 移動局 の 受信機 名 / 型番 */
   receiverName: string | null
   settingsNote: string | null
-  /** スライド量 */
+  /** スライド量 は 廃止。 互換 の ため 常 に NO_SLIDE (0/0/0) を 返す。 */
   slide: SurveySlide
   /** 新しい 記録 を 入れる 先 */
   isDefault: boolean
@@ -76,7 +76,8 @@ function toSet(r: Record<string, unknown>): SurveyRecordSet {
     antennaName: (r.antenna_name as string) ?? null,
     receiverName: (r.receiver_name as string) ?? null,
     settingsNote: (r.settings_note as string) ?? null,
-    slide: { dx: num(r.dx_offset), dy: num(r.dy_offset), dz: num(r.dz_offset) },
+    // dx/dy/dz スライド は 廃止。 DB に 残って いる 値 は 無視 して 常 に 0。
+    slide: NO_SLIDE,
     isDefault: r.is_default === true,
     sortOrder: num(r.sort_order),
     createdAt: String(r.created_at ?? ''),
@@ -212,6 +213,7 @@ export const useSurveySetStore = create<State>((set, get) => ({
     try {
       const cur = get().sets
       const next = cur.reduce((m, s) => Math.max(m, s.sortOrder), 0) + 1
+      // dx/dy/dz スライド は 廃止 (DB カラム は 残す が 常 に 0)。
       const body: Record<string, unknown> = {
         farm_id: farmId,
         name: init?.name ?? null,
@@ -222,9 +224,9 @@ export const useSurveySetStore = create<State>((set, get) => ({
         antenna_name: init?.antennaName ?? null,
         receiver_name: init?.receiverName ?? null,
         settings_note: init?.settingsNote ?? null,
-        dx_offset: init?.slide?.dx ?? 0,
-        dy_offset: init?.slide?.dy ?? 0,
-        dz_offset: init?.slide?.dz ?? 0,
+        dx_offset: 0,
+        dy_offset: 0,
+        dz_offset: 0,
         is_default: cur.length === 0,
         sort_order: next,
         started_at: init?.startedAt ?? null,
@@ -259,11 +261,7 @@ export const useSurveySetStore = create<State>((set, get) => ({
     if (patch.sortOrder !== undefined) body.sort_order = patch.sortOrder
     if (patch.startedAt !== undefined) body.started_at = patch.startedAt
     if (patch.endedAt !== undefined) body.ended_at = patch.endedAt
-    if (patch.slide) {
-      body.dx_offset = patch.slide.dx
-      body.dy_offset = patch.slide.dy
-      body.dz_offset = patch.slide.dz
-    }
+    // dx/dy/dz スライド は 廃止。 patch.slide が 来ても DB には 書か ない。
     // 画面 の 反応 を 待たせない ため 先 に 反映
     set((s) => ({ sets: s.sets.map((x) => (x.id === id ? { ...x, ...patch } : x)) }))
     try {

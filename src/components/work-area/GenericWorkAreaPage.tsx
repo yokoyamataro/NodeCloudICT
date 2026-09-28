@@ -70,6 +70,8 @@ import {
   REGISTRY_PDF_CATEGORY,
 } from '@/features/boundary-survey/RegistryPdfImportModal'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
+import { useParcelViewsStore } from '@/stores/parcelViewsStore'
+import { touchParcelView } from '@/lib/parcelViews'
 
 // メイン工事区域ページコンポーネント
 interface GenericWorkAreaPageProps {
@@ -463,6 +465,21 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBoundarySurvey, areas.map((a) => a.id).join(','), fetchParcels])
 
+  // 地籍モード: 各 work_area の 閲覧履歴 (parcel_views) を 一括 取得。
+  // 「表示履歴」 列 で 最終 閲覧者・時刻 を 出す ため。
+  const fetchParcelViews = useParcelViewsStore((s) => s.fetchForWorkAreas)
+  const clearParcelViews = useParcelViewsStore((s) => s.clear)
+  const bumpParcelView = useParcelViewsStore((s) => s.bumpLocal)
+  useEffect(() => {
+    if (!isBoundarySurvey || !farmId) {
+      clearParcelViews()
+      return
+    }
+    if (areas.length === 0) return
+    void fetchParcelViews(farmId, areas.map((a) => a.id))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBoundarySurvey, farmId, areas.map((a) => a.id).join(',')])
+
   // 地籍モード: 各 work_area に紐づく添付ファイル（登記 PDF など）を一括取得。
   // 行頭の「登記PDFを開く」ボタンの表示判定に使う。
   const attachmentsByEntity = useAttachmentStore((s) => s.byEntity)
@@ -735,15 +752,23 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
    * 別 の 筆 を 選ぶ と、前 の 編集 は 抜ける (setEditingAreaId(null))。
    */
   const [zoomTick, setZoomTick] = useState(0)
-  const selectArea = useCallback((id: string | null) => {
-    setSelectedAreaId(id)
-    setEditingAreaId(null)
-    if (id) setZoomTick((n) => n + 1)
-    setSelectedConstituentPointId(null)
-    setPendingInsertIdx(null)
-    // 畳んで いても 地番を 選んだら 構成点 を 見たい はず なので 開く
-    if (id) setPointPanelCollapsed(false)
-  }, [])
+  const selectArea = useCallback(
+    (id: string | null) => {
+      setSelectedAreaId(id)
+      setEditingAreaId(null)
+      if (id) setZoomTick((n) => n + 1)
+      setSelectedConstituentPointId(null)
+      setPendingInsertIdx(null)
+      // 畳んで いても 地番を 選んだら 構成点 を 見たい はず なので 開く
+      if (id) setPointPanelCollapsed(false)
+      // 「表示履歴」 に 自分 の 閲覧 を 記録。 保存失敗 で も 画面 は 止まらない。
+      if (id && isBoundarySurvey) {
+        void touchParcelView(id)
+        void bumpParcelView(id)
+      }
+    },
+    [isBoundarySurvey, bumpParcelView],
+  )
 
   /**
    * 変更地積 は 「確定境界 の 座標法面積」。

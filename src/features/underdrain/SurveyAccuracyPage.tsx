@@ -12,7 +12,6 @@ import { useFarmStore } from '@/stores/farmStore'
 import {
   useStakingStore,
   type StakingRecord,
-  type SurveyCategory,
 } from '@/stores/stakingStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { deriveRow, groupStakingRecords, type StakingGroup } from '@/lib/stakingGroups'
@@ -22,10 +21,7 @@ import {
   type SurveyRecordSet,
 } from '@/stores/surveySetStore'
 
-const CATEGORY_LABEL: Record<SurveyCategory, string> = {
-  initial: '起工',
-  asbuilt: '出来形',
-}
+// 起工/出来形 の カテゴリ は 撤去 のため CATEGORY_LABEL は 削除。
 
 export function SurveyAccuracyPage() {
   const { currentFarm } = useFarmStore()
@@ -37,7 +33,7 @@ export function SurveyAccuracyPage() {
   const sets = useSurveySetStore((st) => st.sets)
   const fetchSets = useSurveySetStore((st) => st.fetchByFarm)
 
-  const [filter, setFilter] = useState<'all' | SurveyCategory>('all')
+  // 起工/出来形 の カテゴリ 絞込 は 撤去。
   const [showZ, setShowZ] = useState(true)
   const [pickerOpen, setPickerOpen] = useState(false)
   // 選択済み: 空 = 未取込 (テーブル は 表示 しない)
@@ -77,18 +73,14 @@ export function SurveyAccuracyPage() {
     })
   }, [filteredRecords, selectedDesignIds])
 
-  const filteredGrouped = useMemo(() => {
-    if (filter === 'all') return grouped
-    return grouped.filter((g) => g.surveyCategory === filter)
-  }, [grouped, filter])
-
+  // 起工/出来形 の カテゴリ 絞込 は 撤去 のため grouped を そのまま 使う
   const rows = useMemo(
     () =>
-      filteredGrouped.map((g) => ({
+      grouped.map((g) => ({
         g,
         d: deriveRow(g, 0, 0, 0),
       })),
-    [filteredGrouped],
+    [grouped],
   )
 
   const hasSelection = selectedDesignIds.size > 0 || selectedRecordIds.size > 0
@@ -113,21 +105,7 @@ export function SurveyAccuracyPage() {
         <ClipboardCheck className="h-4 w-4 text-slate-500" />
         <span className="font-medium">座標比較表</span>
         <span className="text-xs text-slate-500">{currentFarm.name}</span>
-        <div className="ml-4 flex items-center gap-1 text-xs">
-          {(['all', 'initial', 'asbuilt'] as const).map((c) => (
-            <button
-              key={c}
-              onClick={() => setFilter(c)}
-              className={`px-2 py-0.5 rounded border ${
-                filter === c
-                  ? 'bg-slate-800 text-white border-slate-800'
-                  : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              {c === 'all' ? 'すべて' : CATEGORY_LABEL[c]}
-            </button>
-          ))}
-        </div>
+        {/* 起工/出来形 の カテゴリ 絞込 は 撤去 */}
         <label className="ml-4 flex items-center gap-1 text-[11px] text-slate-500">
           <input
             type="checkbox"
@@ -333,9 +311,7 @@ export function SurveyAccuracyPage() {
                   <tr key={g.key} className="hover:bg-blue-50/40">
                     <td className="px-2 py-1 border-b border-r text-slate-600">
                       {kind}
-                      <span className="ml-1 text-slate-400">
-                        {CATEGORY_LABEL[g.surveyCategory]}
-                      </span>
+                      {/* 起工/出来形 の 区分 表示 は 撤去 */}
                     </td>
                     {/* 当初 */}
                     <td className="px-2 py-1 border-b border-r truncate max-w-[8rem]">

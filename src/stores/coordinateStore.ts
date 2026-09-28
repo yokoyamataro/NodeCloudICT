@@ -79,6 +79,10 @@ export interface CoordinateRow {
   deletedAt?: string | null
   /** 削除者 user_id */
   deletedBy?: string | null
+  /** 点検 日時 (ISO)。 null なら 未点検 */
+  inspectedAt?: string | null
+  /** 点検 した user_id (auth.uid())。 null なら 未点検 */
+  inspectedBy?: string | null
 }
 
 /** importCoordinates の入力。点番号/X/Y は必須、それ以外は任意。 */
@@ -136,6 +140,10 @@ export function mapDesignCoordinateRows(
       updatedAt: row.updated_at ?? null,
       createdBy: row.created_by ?? null,
       updatedBy: row.updated_by ?? null,
+      inspectedAt:
+        (row as { inspected_at?: string | null }).inspected_at ?? null,
+      inspectedBy:
+        (row as { inspected_by?: string | null }).inspected_by ?? null,
     }
   })
 }
@@ -199,6 +207,11 @@ interface CoordinateState {
     }[],
   ) => Promise<number>
   updateCoordinate: (id: string, field: keyof CoordinateRow, value: string | number | null) => void
+  /**
+   * 点検 チェック の 切替。 チェック ON → 自分 の user_id と 今 の 時刻 を 記録。
+   * OFF → 両方 null に 戻す。 保存 は pending changes 経由 では なく 即 DB へ 反映。
+   */
+  toggleInspection: (id: string, checked: boolean) => Promise<void>
   deleteCoordinate: (id: string) => Promise<void>
   deleteCoordinates: (ids: string[]) => Promise<void>
   /** 削除済み 座標 (直近 30 日) の 一覧を Supabase から 取得 */
@@ -559,6 +572,39 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     newPendingChanges.set(id, updated)
     set({ pendingChanges: newPendingChanges })
     useSettingsStore.getState().setHasUnsavedChanges(true)
+  },
+
+  toggleInspection: async (id, checked) => {
+    const state = get()
+    const coord = state.coordinates.find((c) => c.id === id)
+    if (!coord) return
+    try {
+      const { data: userRes } = await supabase.auth.getUser()
+      const uid = userRes.user?.id ?? null
+      const nowIso = new Date().toISOString()
+      const patch = checked
+        ? { inspected_at: nowIso, inspected_by: uid }
+        : { inspected_at: null, inspected_by: null }
+      const { error } = await supabase
+        .from('design_coordinates')
+        .update(patch as never)
+        .eq('id', id)
+      if (error) throw error
+      set((s) => ({
+        coordinates: s.coordinates.map((c) =>
+          c.id === id
+            ? {
+                ...c,
+                inspectedAt: checked ? nowIso : null,
+                inspectedBy: checked ? uid : null,
+              }
+            : c,
+        ),
+      }))
+    } catch (err) {
+      console.error('[coordinateStore] toggleInspection failed', err)
+      set({ error: extractSupabaseErrorMessage(err, '点検 の 更新 に 失敗 しました') })
+    }
   },
 
   deleteCoordinate: async (id) => {

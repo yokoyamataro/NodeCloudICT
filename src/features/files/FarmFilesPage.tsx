@@ -8,8 +8,9 @@
 // 効かせてあるが、押す前に 分かるよう 画面でも 出す。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, Download, Trash2, Eye, Loader2, FileText } from 'lucide-react'
+import { Upload, Download, Trash2, Eye, Loader2, FileText, Crosshair } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
+import { FarmPlanCadModal } from '@/components/map/FarmPlanCadModal'
 import { openAppPath, openExternal } from '@/lib/openExternal'
 import {
   FARM_FILE_ACCEPT,
@@ -40,12 +41,18 @@ function daysLeft(expiresAt: string): number {
 }
 
 export function FarmFilesPage() {
+  const farms = useFarmStore((s) => s.farms)
   const currentFarm = useFarmStore((s) => s.currentFarm)
   const farmId = currentFarm?.id ?? null
+  const farm = farms.find((f) => f.id === farmId) ?? currentFarm
+  const registeredCadPaths = new Set((farm?.plan_cads ?? []).map((c) => c.storagePath))
   const [rows, setRows] = useState<FarmFileRow[]>([])
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [georefTarget, setGeorefTarget] = useState<{ storagePath: string; name: string } | null>(
+    null,
+  )
   const inputRef = useRef<HTMLInputElement>(null)
   /**
    * 中身を 見る ための モーダル。
@@ -224,6 +231,8 @@ export function FarmFilesPage() {
           <div className="border rounded divide-y bg-white">
             {rows.map((row) => {
               const left = daysLeft(row.expiresAt)
+              const isCad = row.kind === 'dxf' || row.kind === 'sfc' || row.kind === 'p21'
+              const georefDone = isCad && registeredCadPaths.has(row.storagePath)
               return (
                 <div key={row.id} className="p-2 flex items-center gap-2">
                   <FileText className="h-4 w-4 text-slate-400 shrink-0" />
@@ -237,9 +246,36 @@ export function FarmFilesPage() {
                       </span>
                       <span className="font-mono">{formatBytes(row.sizeBytes)}</span>
                       <span className={left <= 7 ? 'text-amber-600' : ''}>残り {left} 日</span>
+                      {georefDone && (
+                        <span className="px-1 rounded bg-emerald-100 text-emerald-700">
+                          位置合わせ済み
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {isCad && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setGeorefTarget({ storagePath: row.storagePath, name: row.name })
+                        }
+                        className={
+                          'flex items-center gap-1 px-2 py-1.5 rounded border text-xs ' +
+                          (georefDone
+                            ? 'border-emerald-600 text-emerald-700 hover:bg-emerald-50'
+                            : 'border-blue-600 text-blue-700 hover:bg-blue-50')
+                        }
+                        title={
+                          georefDone
+                            ? '実 座標 に 合わせ直す (背景 に 敷き 直す)'
+                            : '2 点 で 実 座標 に 合わせ、 背景 に 敷く'
+                        }
+                      >
+                        <Crosshair className="h-3.5 w-3.5" />
+                        位置合わせ
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => void handleOpen(row, false)}
@@ -290,6 +326,13 @@ export function FarmFilesPage() {
         </div>
       </div>
 
+      {georefTarget && farmId && (
+        <FarmPlanCadModal
+          farmId={farmId}
+          initialFile={georefTarget}
+          onClose={() => setGeorefTarget(null)}
+        />
+      )}
     </div>
   )
 }

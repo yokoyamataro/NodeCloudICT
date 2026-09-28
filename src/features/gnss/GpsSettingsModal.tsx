@@ -586,33 +586,9 @@ function SurveySetBar() {
 
   return (
     <div className="border-t pt-3 space-y-2">
-      <div className="text-slate-700 font-semibold">補正値 と セッション</div>
+      <div className="text-slate-700 font-semibold">セッション</div>
+      {/* dx/dy/dz 補正値 は 廃止 のため 入力欄 を 削除。 セッション 切替 のみ を 残す。 */}
 
-      <div className="flex items-center gap-2">
-        <span className="w-16 shrink-0 text-slate-500">補正値</span>
-        {(['dx', 'dy', 'dz'] as const).map((axis) => (
-          <label key={axis} className="flex items-center gap-1 flex-1">
-            <span className="text-[10px] text-slate-400">
-              {axis === 'dx' ? 'dX' : axis === 'dy' ? 'dY' : 'dZ'}
-            </span>
-            <SlideInput
-              value={active?.slide[axis] ?? 0}
-              disabled={!active}
-              onCommit={(v) => {
-                if (!active) return
-                void updateSet(active.id, { slide: { ...active.slide, [axis]: v } })
-              }}
-            />
-          </label>
-        ))}
-      </div>
-      <div className="text-[10px] text-slate-500 pl-16">
-        実測 − 補正値 = 設計 の 土俵。 入れる と 実測 の 表示 も、ターゲット の
-        誘導 と 比高 も 補正後 の 値 に なります (X=北 / Y=東、単位 m)。
-        {!active && ' セッション 未選択 の 間 は 工区 の 既定 が 効きます。'}
-      </div>
-
-      {/* 補正値 は セッション ごと な ので、対象 の セッション は すぐ 下 に */}
       <div className="flex items-center gap-2">
         <span className="w-16 shrink-0 text-slate-500">セッション</span>
         <select
@@ -656,42 +632,6 @@ function SurveySetBar() {
   )
 }
 
-/** 補正値 1 軸 の 入力。 触って いない 間 は mm 単位 (小数 3 桁) で 揃える */
-function SlideInput({
-  value,
-  onCommit,
-  disabled,
-}: {
-  value: number
-  onCommit: (v: number) => void
-  disabled?: boolean
-}) {
-  const [buf, setBuf] = useState<string | null>(null)
-  return (
-    <input
-      type="text"
-      inputMode="decimal"
-      disabled={disabled}
-      value={buf ?? value.toFixed(3)}
-      onFocus={() => setBuf(String(value))}
-      onChange={(e) => setBuf(e.target.value)}
-      onBlur={() => {
-        const raw = buf
-        setBuf(null)
-        if (raw == null) return
-        const n = parseFloat(raw.trim())
-        if (!Number.isFinite(n)) return
-        const rounded = Math.round(n * 1000) / 1000
-        if (rounded !== value) onCommit(rounded)
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
-      }}
-      className="w-full min-w-0 px-1 py-1 border border-slate-300 rounded text-right font-mono disabled:bg-slate-100"
-    />
-  )
-}
-
 /**
  * 点検。
  *
@@ -709,20 +649,13 @@ function SurveyCheckSection() {
   const coordinates = useCoordinateStore((s) => s.coordinates)
   const farmId = useFarmStore((s) => s.currentFarm?.id ?? null)
   const zone = useProjectListStore((s) => s.currentProject?.coordinate_zone ?? 13)
-  const sets = useSurveySetStore((s) => s.sets)
   const activeSetId = useSurveySetStore((s) => s.activeSetId)
   const touchSet = useSurveySetStore((s) => s.touchSet)
-  const updateSet = useSurveySetStore((s) => s.updateSet)
   const addRecord = useStakingStore((s) => s.addRecord)
   const antennaHeight = useGnssSettingsStore((s) => s.antennaHeight)
   const useGeoidCorrection = useGnssSettingsStore((s) => s.useGeoidCorrection)
 
-  const activeSet = sets.find((s) => s.id === activeSetId) ?? null
-  const slide = activeSet?.slide ?? { dx: 0, dy: 0, dz: 0 }
-  // 自動補正 対象 軸 (XYZ / XYのみ / Zのみ)
-  const [autoAxis, setAutoAxis] = useState<'xyz' | 'xy' | 'z'>('xyz')
-  const [autoBusy, setAutoBusy] = useState(false)
-  const [autoStatus, setAutoStatus] = useState<string | null>(null)
+  // dx/dy/dz スライド 補正 は 廃止 のため activeSet の slide は 参照しない。
   // 基準点 が 無い 工区 も ある ので、その ときは 全部 から 選ばせる
   const controls = coordinates.filter((c) => c.type === 'control')
   const pickable = controls.length > 0 ? controls : coordinates
@@ -771,11 +704,11 @@ function SurveyCheckSection() {
       const seps = samples.map((s) => s.sep).filter((v): v is number => v != null)
       const alt = alts.length > 0 ? avg(alts) : null
 
-      // 平面直角 に 直して から 補正値 を 引く (= 補正実測値)
+      // 平面直角 に 直す (dx/dy/dz スライド 補正 は 廃止 のため 減算 は しない)
       const conv = new CoordinateConverter(zone)
       const xy = conv.toXY(lat, lon)
-      const cx = xy.x - slide.dx
-      const cy = xy.y - slide.dy
+      const cx = xy.x
+      const cy = xy.y
 
       // 標高。 統一ヘルパで 内蔵/外部GPS + ジオイドON/OFF を 一括判定
       let elev: number | null = null
@@ -793,7 +726,7 @@ function SurveyCheckSection() {
           geoidGrid: grid,
         })
       }
-      const cz = elev != null ? elev - slide.dz : null
+      const cz = elev
 
       const dx = cx - target.x
       const dy = cy - target.y
@@ -899,86 +832,11 @@ function SurveyCheckSection() {
           </div>
           <div className="text-[10px] opacity-80">{result.n} エポック の 平均</div>
           {!result.ok && (
-            <div className="text-[11px] space-y-1.5 pt-1 border-t border-red-200">
-              <div>
-                補正値 を 見直す か、基準点 の 座標 / アンテナ高 を 確かめて ください。
-              </div>
-              {/* 自動補正: 現行 slide に 今回 の 差 を 足して 差 が 0 に なる 補正値 に する。
-                  対象 軸 を XYZ / XY のみ / Z のみ で 選べる (高さ だけ 追い込みたい 等) */}
-              {activeSet && (
-                <div className="rounded border border-red-200 bg-white/80 p-1.5 space-y-1">
-                  <div className="text-slate-700 font-semibold">補正値 を 自動計算</div>
-                  <div className="flex items-center gap-1">
-                    {(['xyz', 'xy', 'z'] as const).map((k) => (
-                      <button
-                        key={k}
-                        type="button"
-                        onClick={() => setAutoAxis(k)}
-                        className={`px-2 py-0.5 text-[11px] border rounded ${
-                          autoAxis === k
-                            ? 'bg-blue-600 text-white border-blue-600'
-                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        {k === 'xyz' ? 'XYZ' : k === 'xy' ? 'XYのみ' : 'Zのみ'}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    disabled={autoBusy}
-                    onClick={async () => {
-                      setAutoBusy(true)
-                      setAutoStatus(null)
-                      try {
-                        const newSlide = {
-                          dx:
-                            autoAxis === 'z'
-                              ? slide.dx
-                              : slide.dx + result.dx,
-                          dy:
-                            autoAxis === 'z'
-                              ? slide.dy
-                              : slide.dy + result.dy,
-                          dz:
-                            autoAxis === 'xy' || result.dz == null
-                              ? slide.dz
-                              : slide.dz + result.dz,
-                        }
-                        await updateSet(activeSet.id, { slide: newSlide })
-                        setAutoStatus(
-                          `更新しました → dX ${newSlide.dx.toFixed(3)} / dY ${newSlide.dy.toFixed(
-                            3,
-                          )} / dZ ${newSlide.dz.toFixed(3)} (もう一度 点検 で 収まる か 確認)`,
-                        )
-                        // 表示中 の 結果 は 古い ので 消す (再点検 を 促す)
-                        setResult(null)
-                      } catch (e) {
-                        setAutoStatus(
-                          e instanceof Error ? `更新失敗: ${e.message}` : '更新失敗',
-                        )
-                      } finally {
-                        setAutoBusy(false)
-                      }
-                    }}
-                    className="w-full px-2 py-1 rounded bg-red-600 text-white text-[11px] font-medium disabled:opacity-40 flex items-center justify-center gap-1"
-                  >
-                    {autoBusy && <Loader2 className="h-3 w-3 animate-spin" />}
-                    現行 の 補正値 に 差 を 加算 して 更新
-                  </button>
-                  <div className="text-[10px] text-slate-500">
-                    現行 dX {slide.dx.toFixed(3)} / dY {slide.dy.toFixed(3)} / dZ{' '}
-                    {slide.dz.toFixed(3)}
-                  </div>
-                </div>
-              )}
+            <div className="text-[11px] pt-1 border-t border-red-200">
+              基準点 の 座標 / アンテナ高 を 確かめて ください。
+              {/* dx/dy/dz スライド 補正 は 廃止 のため、 自動補正 の ボタン は 削除。 */}
             </div>
           )}
-        </div>
-      )}
-      {autoStatus && (
-        <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
-          {autoStatus}
         </div>
       )}
     </div>
