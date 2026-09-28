@@ -54,6 +54,7 @@ import { useFarmMemoStore, EMPTY_FARM_MEMOS } from '@/stores/farmMemoStore'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
+import { useFarmPlanCadLines } from '@/components/map/PlanCadLayers'
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
 import {
   MapDrawingLayer,
@@ -1056,7 +1057,12 @@ export function OrthophotoPage() {
     return out
   }, [panelIds])
 
-  // 図形以外のスナップ候補（座標管理の点 ＋ 区域の頂点）
+  // 背景CAD の 線 (lat/lng)。 端点 と 辺 を スナップ候補 に 足す ため に 拾う。
+  // useFarmPlanCadLines は visible=true の CAD だけ 返す ので、 チェック 済み の
+  // 分 だけ 相手 に なる。 大量 に あって も MAX_LINES で 打ち切って いる。
+  const planCadLines = useFarmPlanCadLines(currentFarm?.plan_cads, projectZone ?? 13)
+
+  // 図形以外のスナップ候補（座標管理の点 ＋ 区域の頂点 ＋ 背景CAD の 端点 / 頂点）
   const extraSnapPoints = useMemo<[number, number][]>(() => {
     const out: [number, number][] = []
     for (const c of coordinates) {
@@ -1065,10 +1071,16 @@ export function OrthophotoPage() {
     for (const poly of workAreaPolygons) {
       for (const p of poly.positions) out.push(p)
     }
+    // CAD の 折れ線 は 端点 と 中間 頂点 の 両方 を 単点 スナップ 候補 に する。
+    // 端点 だけ に 絞る と 「線 の 途中 の 折れ 点」 を 拾え ない ので 両方 出す。
+    for (const line of planCadLines) {
+      for (const p of line.pts) out.push(p)
+    }
     return out
-  }, [coordinates, workAreaPolygons])
+  }, [coordinates, workAreaPolygons, planCadLines])
 
-  // 区域ポリゴンの辺。交点 / 線上のピックで ペイントの線と 同じように 相手にする
+  // 区域ポリゴンの辺 ＋ 背景CAD の 辺。交点 / 線上 の ピック で ペイント の 線 と
+  // 同じ ように 相手 に する。
   const extraSegments = useMemo<Array<[{ lat: number; lng: number }, { lat: number; lng: number }]>>(
     () => {
       const out: Array<[{ lat: number; lng: number }, { lat: number; lng: number }]> = []
@@ -1082,9 +1094,17 @@ export function OrthophotoPage() {
           ])
         }
       }
+      for (const line of planCadLines) {
+        for (let i = 0; i + 1 < line.pts.length; i += 1) {
+          out.push([
+            { lat: line.pts[i][0], lng: line.pts[i][1] },
+            { lat: line.pts[i + 1][0], lng: line.pts[i + 1][1] },
+          ])
+        }
+      }
       return out
     },
-    [workAreaPolygons],
+    [workAreaPolygons, planCadLines],
   )
 
   // DXF 出力。作図・計測をペイントへ統合したので、出力元もペイント (map_drawings)。

@@ -81,6 +81,7 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { CoordinatePickerModal } from '@/features/boundary-survey/CoordinatePickerModal'
+import { snapLatLngToCadLines, type SnapKind } from '@/lib/openChannel/planCadSnap'
 import { useProjectListStore } from '@/stores/projectListStore'
 import {
   defaultGridLines,
@@ -434,116 +435,8 @@ function MapPointCatcher({
   return null
 }
 
-// 背景CAD の 端点 / 交点 / 線上 に 寄せる ため の スナップ。
-//
-// planCadLines は 各 polyline が [lat, lng] の 列。
-// 距離 は 経度 を 緯度換算 (中央緯度 の cos) して 「近似平坦」 で 二乗距離。
-// 上限 (SNAP_DEG) を 超える 場合 は null (= クリック 位置 そのまま)。
-//
-// 優先 順位:
-//   1. 端点 (polyline の 先頭 / 末尾) — 一番 特徴 的 な 点
-//   2. 交点 (2 本 の polyline の 交わり) — 特徴 2 番目
-//   3. 中間 頂点 (折れ点) — 線上 だが 候補 として 残す
-//   4. 辺 上 (垂線) — 線 の 途中 の 点
-// 上位 tier に 候補 が あれば tier 内 の 最短 を 使う。 下位 tier は 見な い。
-export type SnapKind = 'endpoint' | 'intersection' | 'vertex' | 'edge'
-const SNAP_DEG = 0.0002 // ≈ 22m 相当。 地図を 引き過ぎて いる とき 誤爆 させ ない ため の 大まかな 上限
-function snapLatLngToCadLines(
-  lat: number,
-  lng: number,
-  polylines: { pts: [number, number][] }[],
-): { lat: number; lng: number; kind: SnapKind } | null {
-  const kx = Math.cos((lat * Math.PI) / 180) // 経度方向 の 縮尺
-  const tol = SNAP_DEG
-  const tol2 = tol * tol
-  type Cand = { lat: number; lng: number; d2: number }
-  const endpoints: Cand[] = []
-  const vertices: Cand[] = []
-  const edges: Cand[] = []
-  // 交点 計算 用: クリック 近傍 の 辺 だけ 集める
-  type Seg = { alat: number; alng: number; blat: number; blng: number }
-  const nearSegs: Seg[] = []
-
-  const d2Of = (plat: number, plng: number) => {
-    const dy = plat - lat
-    const dx = (plng - lng) * kx
-    return dx * dx + dy * dy
-  }
-
-  for (const line of polylines) {
-    const pts = line.pts
-    const n = pts.length
-    if (n < 1) continue
-    for (let i = 0; i < n; i++) {
-      const [alat, alng] = pts[i]
-      const d2 = d2Of(alat, alng)
-      if (d2 < tol2) {
-        const isEndpoint = i === 0 || i === n - 1
-        ;(isEndpoint ? endpoints : vertices).push({ lat: alat, lng: alng, d2 })
-      }
-      if (i + 1 >= n) continue
-      const [blat, blng] = pts[i + 1]
-      // 辺 の bbox が 近傍 か ざっくり 判定
-      const minLat = Math.min(alat, blat) - tol
-      const maxLat = Math.max(alat, blat) + tol
-      const minLng = Math.min(alng, blng) - tol / kx
-      const maxLng = Math.max(alng, blng) + tol / kx
-      if (lat < minLat || lat > maxLat || lng < minLng || lng > maxLng) continue
-      nearSegs.push({ alat, alng, blat, blng })
-      // 辺 上 の 最近接 点 (垂線 が 辺内 の とき)
-      const eyLat = blat - alat
-      const eyLng = (blng - alng) * kx
-      const den = eyLat * eyLat + eyLng * eyLng
-      if (den <= 0) continue
-      const dyLat = lat - alat
-      const dyLng = (lng - alng) * kx
-      const t = (dyLat * eyLat + dyLng * eyLng) / den
-      if (t <= 0 || t >= 1) continue
-      const plat = alat + t * (blat - alat)
-      const plng = alng + t * (blng - alng)
-      const dEdge2 = d2Of(plat, plng)
-      if (dEdge2 < tol2) edges.push({ lat: plat, lng: plng, d2: dEdge2 })
-    }
-  }
-
-  // 交点 (2 本 の 辺 の 交わり) を 近傍 の 辺 の 組合せ から 計算
-  const intersections: Cand[] = []
-  for (let i = 0; i < nearSegs.length; i++) {
-    const s1 = nearSegs[i]
-    for (let j = i + 1; j < nearSegs.length; j++) {
-      const s2 = nearSegs[j]
-      const p = segSegIntersect(s1, s2, kx)
-      if (!p) continue
-      const d2 = d2Of(p.lat, p.lng)
-      if (d2 < tol2) intersections.push({ lat: p.lat, lng: p.lng, d2 })
-    }
-  }
-
-  // 特徴 点 (端点 / 交点) は 同じ tier で 距離 比較。
-  // ユーザ が 端点 と 交点 の どちら に 近く 押した か で 素直 に 決まる。
-  const pickBestKind = (
-    arrs: { arr: Cand[]; kind: SnapKind }[],
-  ): { c: Cand; kind: SnapKind } | null => {
-    let best: { c: Cand; kind: SnapKind } | null = null
-    for (const { arr, kind } of arrs) {
-      for (const c of arr) {
-        if (!best || c.d2 < best.c.d2) best = { c, kind }
-      }
-    }
-    return best
-  }
-  const feature = pickBestKind([
-    { arr: endpoints, kind: 'endpoint' },
-    { arr: intersections, kind: 'intersection' },
-  ])
-  if (feature) return { lat: feature.c.lat, lng: feature.c.lng, kind: feature.kind }
-  const line = pickBestKind([
-    { arr: vertices, kind: 'vertex' },
-    { arr: edges, kind: 'edge' },
-  ])
-  if (line) return { lat: line.c.lat, lng: line.c.lng, kind: line.kind }
-  return null
-}
+// 背景CAD スナップ は src/lib/openChannel/planCadSnap.ts に 移動。
+// 整地 の 任意測点 取得 と 全体図 の 座標追加 で 共有 する。
 
 // 3 点 (x, y, z) が 作る 面 に 座標 (x, y) を 投影 し z を 返す。
 // 面 が 垂直 (法線 の z が ほぼ 0) だ と 一意 に 決まら ない ので null。
@@ -567,31 +460,6 @@ function planeZAt(
   if (!Number.isFinite(nz) || Math.abs(nz) < 1e-9) return null
   // 平面方程式: nx*(x-p1.x) + ny*(y-p1.y) + nz*(z-p1.z) = 0
   return p1.z - (nx * (x - p1.x) + ny * (y - p1.y)) / nz
-}
-
-// 2 辺 の 交点 (両方 の 辺内 で 交わる とき だけ 返す)。
-// kx は 経度→緯度 の 縮尺補正 (近似平坦)。
-function segSegIntersect(
-  s1: { alat: number; alng: number; blat: number; blng: number },
-  s2: { alat: number; alng: number; blat: number; blng: number },
-  kx: number,
-): { lat: number; lng: number } | null {
-  const x1 = s1.alng * kx
-  const y1 = s1.alat
-  const x2 = s1.blng * kx
-  const y2 = s1.blat
-  const x3 = s2.alng * kx
-  const y3 = s2.alat
-  const x4 = s2.blng * kx
-  const y4 = s2.blat
-  const den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-  if (Math.abs(den) < 1e-18) return null
-  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den
-  const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / den
-  if (t < 0 || t > 1 || u < 0 || u > 1) return null
-  const plat = y1 + t * (y2 - y1)
-  const plng = (x1 + t * (x2 - x1)) / kx
-  return { lat: plat, lng: plng }
 }
 
 function StationFocus({
