@@ -24,7 +24,7 @@ import {
   WifiOff,
 } from 'lucide-react'
 import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
-import { setLabel, useSurveySetStore, generateDefaultSessionName, jstTodayIso } from '@/stores/surveySetStore'
+import { setLabel, useSurveySetStore } from '@/stores/surveySetStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -534,47 +534,20 @@ function AntennaHeightInput({
 }
 
 /**
- * 実測 の 記録セット と 補正値 (スライド量)。
+ * 実測 の 記録セット の 表示。
  *
- * ここ で 選んだ セット が 「今 測って いる セット」 に なり、実測 は そこ に 入る。
- * 補正値 は その セット の もの で、入れる と 実測 は 設計 の 土俵 に 乗せ 直され、
- * ターゲット の 誘導 (方位 / 距離 / 近接) と 比高 も 補正後 の 値 で 出る。
+ * セッション は 工区 を 開いた とき に 自動 で 作られる (MobileStakingPage の
+ * useEffect 参照)。 ここ で は 「今 測って いる セット の 名前」 を 見せる のと、
+ * 名前 を 直したい とき に 変えられる ように する だけ。 選択 select と 追加
+ * ボタン は 廃止 (誤って 別 の セット に 入れる 事故 を 避ける)。
  *
  * 工区 を 開いて いない 画面 (現場 / 工区 一覧) では セット が 無い ので 出さない。
  */
 function SurveySetBar() {
   const sets = useSurveySetStore((s) => s.sets)
   const activeSetId = useSurveySetStore((s) => s.activeSetId)
-  const setActiveSetId = useSurveySetStore((s) => s.setActiveSetId)
   const updateSet = useSurveySetStore((s) => s.updateSet)
-  const touchSet = useSurveySetStore((s) => s.touchSet)
-  const createSet = useSurveySetStore((s) => s.createSet)
-  const farmId = useFarmStore((s) => s.currentFarm?.id ?? null)
-  const [creating, setCreating] = useState(false)
   const active = sets.find((s) => s.id === activeSetId) ?? null
-
-  /** セッション を 追加 して、そのまま 作業中 に する。 デフォルト名 (NNN{A,B,C})
-   *  を 提案 し、必要 なら その場 で リネーム できる。 */
-  const handleCreate = async () => {
-    if (!farmId) return
-    const today = jstTodayIso()
-    const suggested = generateDefaultSessionName(sets)
-    const name = window.prompt('セッション名', suggested)
-    if (name === null) return
-    setCreating(true)
-    try {
-      const row = await createSet(farmId, {
-        measuredOn: today,
-        name: name.trim() || suggested,
-      })
-      if (row) {
-        setActiveSetId(row.id)
-        void touchSet(row.id, { start: true })
-      }
-    } finally {
-      setCreating(false)
-    }
-  }
 
   /** 選んで いる セッション の 名前 を 変える */
   const handleRename = async () => {
@@ -587,26 +560,14 @@ function SurveySetBar() {
   return (
     <div className="border-t pt-3 space-y-2">
       <div className="text-slate-700 font-semibold">セッション</div>
-      {/* dx/dy/dz 補正値 は 廃止 のため 入力欄 を 削除。 セッション 切替 のみ を 残す。 */}
-
       <div className="flex items-center gap-2">
         <span className="w-16 shrink-0 text-slate-500">セッション</span>
-        <select
-          value={activeSetId ?? ''}
-          onChange={(e) => {
-            const id = e.target.value || null
-            setActiveSetId(id)
-            if (id) void touchSet(id, { start: true })
-          }}
-          className="flex-1 min-w-0 px-2 py-1.5 border border-slate-300 rounded"
+        <div
+          className="flex-1 min-w-0 px-2 py-1.5 border border-slate-200 bg-slate-50 rounded truncate font-mono text-slate-700"
+          title={active ? setLabel(active) : '未選択'}
         >
-          <option value="">(選択なし)</option>
-          {sets.map((s) => (
-            <option key={s.id} value={s.id}>
-              {setLabel(s)}
-            </option>
-          ))}
-        </select>
+          {active ? setLabel(active) : '(未選択)'}
+        </div>
         <button
           type="button"
           onClick={() => void handleRename()}
@@ -617,16 +578,10 @@ function SurveySetBar() {
         >
           <Pencil className="h-3 w-3" />
         </button>
-        <button
-          type="button"
-          onClick={() => void handleCreate()}
-          disabled={creating}
-          className="shrink-0 px-2 py-1.5 border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
-          title="セッション を 追加 (測量日 は 今日)。 作った セッション が すぐ 作業中 に なる"
-        >
-          {creating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
-          追加
-        </button>
+      </div>
+      <div className="text-[10px] text-slate-400">
+        セッション は 工区 を 開くと 自動 で 用意 されます。 一度 も 測ら ず に
+        離れる と 消えます。 別 の セッション に 移し たい とき は 実測一覧 から。
       </div>
     </div>
   )

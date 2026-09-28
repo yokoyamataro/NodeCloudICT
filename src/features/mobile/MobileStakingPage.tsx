@@ -927,6 +927,69 @@ export function MobileStakingPage() {
     if (!farmId) return
     void fetchSurveySets(farmId)
   }, [farmId, fetchSurveySets])
+
+  // 工区 を 開いた とき に セッション を 用意 する。
+  //   1. 今日 (JST) 同一アカウント の 既 存 セッション が あれば それ を 継続。
+  //   2. 無けれ ば 新規 セッション を 作って active に する。
+  //      作った id は autoCreatedSessionIdRef に 覚えて おき、
+  //      工区 を 離れる とき に 「結局 1 回も 測って いない」 なら 静か に 消す。
+  //      (実測記録 が 入って いる セッション は 触ら ない。)
+  // 従来 は 「初回 測定 で 決める」 方式 だった が、 手数 を 減らす ため 前倒し。
+  const autoCreatedSessionIdRef = useRef<string | null>(null)
+  const autoSessionSetupRef = useRef(false)
+  useEffect(() => {
+    if (!farmId) return
+    return () => {
+      // 工区 が 変わる / 画面 を 離れる: 自動作成 で 未使用 の セッション を 消す。
+      const autoId = autoCreatedSessionIdRef.current
+      autoCreatedSessionIdRef.current = null
+      autoSessionSetupRef.current = false
+      if (!autoId) return
+      const rs = useStakingStore.getState().records
+      if (rs.some((r) => r.recordSetId === autoId)) return
+      void useSurveySetStore.getState().deleteSet(autoId)
+    }
+  }, [farmId])
+  useEffect(() => {
+    if (!farmId) return
+    if (sessionSetId) return
+    if (autoSessionSetupRef.current) return
+    // 一覧 の 読込 が 済む まで 待つ。 済んで から やる ように しない と、
+    // 既 に 今日 分 の セッション が ある のに 見え て いなくて 二重 に 作って しまう。
+    if (useSurveySetStore.getState().loadedFarmId !== farmId) return
+    autoSessionSetupRef.current = true
+    ;(async () => {
+      try {
+        const today = jstTodayIso()
+        const uid = user?.id ?? null
+        const matches = surveySets
+          .filter((s) => s.farmId === farmId)
+          .filter((s) => s.measuredOn === today)
+          .filter((s) => s.baseStation == null)
+          .filter((s) => uid == null || s.createdBy == null || s.createdBy === uid)
+          .sort((a, b) => {
+            const at = a.endedAt ?? a.startedAt ?? a.createdAt
+            const bt = b.endedAt ?? b.startedAt ?? b.createdAt
+            return bt.localeCompare(at)
+          })
+        const hit = matches[0]
+        if (hit) {
+          setSessionSetId(hit.id)
+          return
+        }
+        const row = await createSurveySet(farmId, {
+          measuredOn: today,
+          name: generateDefaultSessionName(surveySets),
+        })
+        if (row) {
+          setSessionSetId(row.id)
+          autoCreatedSessionIdRef.current = row.id
+        }
+      } finally {
+        autoSessionSetupRef.current = false
+      }
+    })()
+  }, [farmId, sessionSetId, surveySets, user?.id, setSessionSetId, createSurveySet])
   const [showRecordList, setShowRecordList] = useState(
     () => params.get('openCoords') === '1',
   )
@@ -3735,9 +3798,8 @@ export function MobileStakingPage() {
   // 記録開始
   const startRecording = async (opts: { forceFreePoint?: boolean } = {}) => {
     if (recording) return
-    // 起動後 の 1 回目 は どの 記録セット に 入れる か を 自動 で 決める。
-    // 手動 の 選択 UI (MobileSurveySetPicker) は 廃止。 変更 したい 場合 は
-    // 実測一覧 シート から セッション を 選び 直す。
+    // セッション は 工区 を 開いた とき に 自動 で 用意 して ある (下 の
+    // useEffect 参照)。 万一 まだ 決まって いない 場合 だけ 保険 で 用意 する。
     if (!sessionSetId) {
       const id = await ensureSessionSetId()
       if (!id) return
