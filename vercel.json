@@ -9,8 +9,6 @@
       "destination": "/mobility.html"
     },
     {
-      "//": "マニュアル (Astro Starlight, 別 Vercel プロジェクト) を /manual/* に プロキシ。",
-      "//_1": "デプロイ 後 の 実 URL に 合わせて destination を 差し替える。",
       "source": "/manual",
       "destination": "https://nodecloud-manual.vercel.app/manual"
     },
