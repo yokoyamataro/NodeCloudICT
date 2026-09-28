@@ -80,6 +80,7 @@ import { sampleStationCrossSection } from '@/lib/openChannel/tinCrossSection'
 import { useFarmStore } from '@/stores/farmStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
+import { CoordinatePickerModal } from '@/features/boundary-survey/CoordinatePickerModal'
 import { useProjectListStore } from '@/stores/projectListStore'
 import {
   defaultGridLines,
@@ -6743,6 +6744,8 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
   const [lastPlanePointIds, setLastPlanePointIds] = useState<string[]>([])
   /** 一覧 の 行 で 選んだ 任意測点。 地図 上 で ハイライト。 */
   const [selectedFreePointId, setSelectedFreePointId] = useState<string | null>(null)
+  /** 任意測点 を 座標管理 から 選んで 取込 む ダイアログ */
+  const [freeImportOpen, setFreeImportOpen] = useState(false)
   /** 地図 に 敷く 図面 の 図形 (読み込み 済み) */
 
   /** 縦断 を CAD から なぞる ダイアログ を 開いて いる 線 */
@@ -8943,6 +8946,17 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                       title="地図 の 任意 の 位置 を 押して 座標 を 拾う"
                     >
                       {freePicking ? '取得中 (押して 終了)' : '地図から取得'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFreePicking(false)
+                        setFreeImportOpen(true)
+                      }}
+                      disabled={!farmId}
+                      className="px-2 py-1 text-xs border rounded bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-40"
+                      title="座標管理 に 登録 済み の 点 を 複数 選んで 任意測点 に する"
+                    >
+                      座標管理から取込
                     </button>
                     <label
                       className="flex items-center gap-1 text-[11px] text-slate-600 select-none cursor-pointer"
@@ -11438,6 +11452,59 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
         <FarmPlanCadModal
           farmId={currentFarm.id}
           onClose={() => setFarmPlanCadOpen(false)}
+        />
+      )}
+
+      {/* 任意測点 を 座標管理 から 取り込む。 選ん だ 座標 を そのまま 任意測点
+          として 追加 する (id は 別 に 振る)。 同じ 位置 の 二重 登録 を 避ける
+          ため、 既存 の 任意測点 と 座標 が cm 単位 で 一致 する もの は 除外。 */}
+      {freeImportOpen && selected && farmId && (
+        <CoordinatePickerModal
+          farmId={farmId}
+          title="座標管理 から 任意測点 に 取込"
+          alreadyIn={
+            new Set(
+              (selected.freePoints ?? [])
+                .map((fp) => {
+                  const hit = (coordinates as CoordinateRow[]).find(
+                    (c) =>
+                      Math.abs(c.x - fp.x) < 0.005 && Math.abs(c.y - fp.y) < 0.005,
+                  )
+                  return hit?.id
+                })
+                .filter((v): v is string => typeof v === 'string'),
+            )
+          }
+          onCancel={() => setFreeImportOpen(false)}
+          onConfirm={(picks) => {
+            if (picks.length === 0) {
+              setFreeImportOpen(false)
+              return
+            }
+            const cur = selected.freePoints ?? []
+            const usedNames = new Set(cur.map((p) => p.name))
+            const nextPoints = [...cur]
+            for (const p of picks) {
+              // 点名 は 座標管理 の pointNumber を そのまま。 衝突 したら 末尾 に
+              // -2, -3 … を 足して 識別 する。
+              let name = p.pointNumber || '任意測点'
+              if (usedNames.has(name)) {
+                let n = 2
+                while (usedNames.has(`${name}-${n}`)) n++
+                name = `${name}-${n}`
+              }
+              usedNames.add(name)
+              nextPoints.push({
+                id: `fp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                name,
+                x: Math.round(p.x * 1000) / 1000,
+                y: Math.round(p.y * 1000) / 1000,
+                z: typeof p.z === 'number' && Number.isFinite(p.z) ? p.z : null,
+              })
+            }
+            void updateChannel(selected.id, { freePoints: nextPoints })
+            setFreeImportOpen(false)
+          }}
         />
       )}
 
