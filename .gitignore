@@ -48,10 +48,19 @@ doc/*.sim
 doc/*.SIM
 doc/*.pdf
 doc/*.PDF
+# 登記 / 土地調査書 CSV も 個人情報 を 含む ので サブ階層 まで 弾く
+doc/**/*.csv
+doc/**/*.CSV
+# 登記閲覧 の 図面 BMP (地番 と 所有者 が 分かる) も 同様
+doc/**/*.bmp
+doc/**/*.BMP
 
 # 検証用の GeoJSON / 大容量 inventory (法務省地図から DL したテストデータ)
 doc/*.geojson
 doc/parcel-map-inventory.json
+
+# Android アプリ の crash_dump helper が 落とす クラッシュログ (adb pull 由来)
+crash.txt
 
 # Capacitor / Android ビルド生成物
 android/build/
