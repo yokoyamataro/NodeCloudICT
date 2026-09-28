@@ -2426,7 +2426,7 @@ export function CoordinatesPage() {
                     aria-label="全選択"
                   />
                 </th>
-                <th className="px-0.5 py-2 text-left font-medium w-20 bg-slate-100">点番号</th>
+                <th className="px-0.5 py-2 text-left font-medium min-w-[8rem] bg-slate-100">点番号</th>
                 {showCol('x') && (
                   <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
                 )}
@@ -2593,7 +2593,11 @@ export function CoordinatesPage() {
                       value={coord.pointNumber}
                       onChange={(e) => updateCoordinate(coord.id, 'pointNumber', e.target.value)}
                       onClick={(e) => e.stopPropagation()}
-                      className="w-full px-1 py-0.5 border rounded text-sm"
+                      title={coord.pointNumber}
+                      // size は input 幅 を 文字数 に 応じて 広げる 素朴 な 手段。
+                      // 長い 点名 でも 全部 見えて、 かつ 短い もの で 幅 を 食わ ない。
+                      size={Math.max(8, coord.pointNumber.length + 1)}
+                      className="min-w-full px-1 py-0.5 border rounded text-sm font-mono"
                     />
                   </td>
                   {showCol('x') && (
@@ -2889,7 +2893,7 @@ export function CoordinatesPage() {
                           aria-label="全選択"
                         />
                       </th>
-                      <th className="px-0.5 py-2 text-left font-medium w-20 bg-slate-100">点番号</th>
+                      <th className="px-0.5 py-2 text-left font-medium min-w-[8rem] bg-slate-100">点番号</th>
                       {showCol('x') && (
                   <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
                 )}
@@ -3058,7 +3062,9 @@ export function CoordinatesPage() {
                             value={coord.pointNumber}
                             onChange={(e) => updateCoordinate(coord.id, 'pointNumber', e.target.value)}
                             onClick={(e) => e.stopPropagation()}
-                            className="w-full px-1 py-0.5 border rounded text-sm"
+                            title={coord.pointNumber}
+                            size={Math.max(8, coord.pointNumber.length + 1)}
+                            className="min-w-full px-1 py-0.5 border rounded text-sm font-mono"
                           />
                         </td>
                         {showCol('x') && (
