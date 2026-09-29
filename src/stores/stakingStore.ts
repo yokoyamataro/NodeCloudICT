@@ -33,6 +33,9 @@ export interface StakingRecord {
   sampleCount: number | null
   durationSeconds: number | null
   recordedAt: string
+  /** 記録 を 保存 した ユーザ (auth.uid())。 表示 は プロジェクト メンバー
+   *  の display_name / email を 引き当てて 出す。 旧行 は null。 */
+  recordedBy: string | null
   notes: string | null
   /** 設計座標 に リンク して いない (free) 記録同士 を 束ねる 対称ポインタ。 */
   pairedWithId: string | null
@@ -65,6 +68,7 @@ interface StakingRecordRow {
   sample_count: number | null
   duration_seconds: number | null
   recorded_at: string
+  recorded_by: string | null
   notes: string | null
   paired_with_id: string | null
   record_set_id?: string | null
@@ -89,6 +93,7 @@ function rowToRecord(r: StakingRecordRow): StakingRecord {
     sampleCount: r.sample_count,
     durationSeconds: r.duration_seconds != null ? Number(r.duration_seconds) : null,
     recordedAt: r.recorded_at,
+    recordedBy: r.recorded_by ?? null,
     notes: r.notes,
     pairedWithId: r.paired_with_id,
     recordSetId: r.record_set_id ?? null,
@@ -138,6 +143,9 @@ function queuedToRecord(q: QueuedMeasurement): StakingRecord {
     sampleCount: q.record.sampleCount,
     durationSeconds: q.record.durationSeconds,
     recordedAt: q.queuedAt,
+    // ローカル退避 の 時点 で auth.uid() が 引けて いれば q.userId に 入って いる。
+    // 圏外 で 引け なかった 場合 は 送信時 に 埋める ので、 ここ は null で 良い。
+    recordedBy: q.userId ?? null,
     notes: q.record.notes,
     // オフラインで 作る のは 常に 単独記録。ペアリングは 送信後に 画面から 行う
     pairedWithId: null,
@@ -187,7 +195,7 @@ interface StakingState {
   hydrateRecords: (rows: unknown[], farmId: string) => void
   /** 新規 レコード の 作成。 pairedWithId は 初期 null 固定 の ため 引数外。 */
   addRecord: (
-    record: Omit<StakingRecord, 'id' | 'recordedAt' | 'pairedWithId'>,
+    record: Omit<StakingRecord, 'id' | 'recordedAt' | 'recordedBy' | 'pairedWithId'>,
   ) => Promise<StakingRecord | null>
   /**
    * 実測記録を 保存する。オンラインなら 従来どおり Supabase に insert し、
@@ -196,7 +204,7 @@ interface StakingState {
    * 呼出側が importCoordinates で 行い、地図に 即反映させる)。
    */
   saveMeasurement: (
-    record: Omit<StakingRecord, 'id' | 'recordedAt' | 'pairedWithId'>,
+    record: Omit<StakingRecord, 'id' | 'recordedAt' | 'recordedBy' | 'pairedWithId'>,
     coordinate: QueuedCoordinate | null,
     meta: { zone: number },
   ) => Promise<SaveMeasurementResult>
@@ -291,6 +299,15 @@ export const useStakingStore = create<StakingState>()((set, get) => ({
   addRecord: async (rec) => {
     set({ saving: true, error: null })
     try {
+      // 誰 が 計測 した か を 残す。 圏外 で 引け ない ケース は RLS 側 の
+      // insert ポリシー が auth.uid() を 落とす ので 送信 は 失敗 する。
+      let recordedBy: string | null = null
+      try {
+        const { data } = await supabase.auth.getUser()
+        recordedBy = data.user?.id ?? null
+      } catch {
+        /* 圏外 は 呼出元 で 退避 に 回る */
+      }
       const row = {
         farm_id: rec.farmId,
         survey_category: rec.surveyCategory,
@@ -307,6 +324,7 @@ export const useStakingStore = create<StakingState>()((set, get) => ({
         accuracy: rec.accuracy,
         sample_count: rec.sampleCount,
         duration_seconds: rec.durationSeconds,
+        recorded_by: recordedBy,
         notes: rec.notes,
         ...(rec.recordSetId ? { record_set_id: rec.recordSetId } : {}),
       }
@@ -433,6 +451,8 @@ export const useStakingStore = create<StakingState>()((set, get) => ({
             sample_count: q.record.sampleCount,
             duration_seconds: q.record.durationSeconds,
             recorded_at: q.queuedAt,
+            // 圏外 で 引け なかった 場合 は、 送信時 の uid を 採用
+            recorded_by: q.userId ?? uid,
             notes: q.record.notes,
           } as never,
           { onConflict: 'id' },

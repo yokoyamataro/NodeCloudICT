@@ -134,7 +134,20 @@ export function StakingRecordsPage() {
     updateRecordName,
   } = useStakingStore()
   const { coordinates, fetchCoordinates } = useCoordinateStore()
-  const { projects } = useProjectListStore()
+  const { projects, members, fetchMembers } = useProjectListStore()
+  // プロジェクト メンバー を 引いて uid → 表示名 / メール の 辞書 を 作る。
+  useEffect(() => {
+    const pid = currentFarm?.project_id
+    if (pid) void fetchMembers(pid)
+  }, [currentFarm?.project_id, fetchMembers])
+  const memberNameById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const mb of members) {
+      const name = (mb.display_name && mb.display_name.trim()) || mb.email || mb.user_id
+      m.set(mb.user_id, name)
+    }
+    return m
+  }, [members])
   // 起工/出来形 の カテゴリ 絞込 は 撤去。
 
   // 設計座標 の 事後リンク 対象 の 記録 ID。 セット されている 間は 地図クリック
@@ -499,7 +512,7 @@ export function StakingRecordsPage() {
   const handleExportCSV = () => {
     if (filtered.length === 0) return
     const header =
-      '点名,X(実測),Y(実測),Z(実測),X(計画),Y(計画),Z(計画),精度(m),サンプル数,記録日時\n'
+      '点名,X(実測),Y(実測),Z(実測),X(計画),Y(計画),Z(計画),精度(m),サンプル数,測定日時,測定者\n'
     const rows = filtered
       .map((r) =>
         [
@@ -513,6 +526,7 @@ export function StakingRecordsPage() {
           r.accuracy != null ? r.accuracy.toFixed(3) : '',
           r.sampleCount ?? '',
           r.recordedAt,
+          r.recordedBy ? memberNameById.get(r.recordedBy) ?? '' : '',
         ].join(','),
       )
       .join('\n')
@@ -550,7 +564,8 @@ export function StakingRecordsPage() {
       }
     }
     cols.push({ group: '', label: '精度(m)', num: true })
-    cols.push({ group: '', label: '記録日時', num: false })
+    cols.push({ group: '', label: '測定日時', num: false })
+    cols.push({ group: '', label: '測定者', num: false })
 
     // 1 行目 = 区分 (同じ 区分 は 結合)、2 行目 = 列名
     ws.addRow(cols.map((c) => c.group))
@@ -607,6 +622,7 @@ export function StakingRecordsPage() {
       push('dvs', [d.dvsX, d.dvsY, d.dvsZ, d.dvsH])
       values.push(d.acc)
       values.push(m1?.recordedAt ? new Date(m1.recordedAt).toLocaleString('ja-JP') : '')
+      values.push(m1?.recordedBy ? memberNameById.get(m1.recordedBy) ?? '' : '')
       ws.addRow(values)
     }
 
@@ -907,7 +923,8 @@ export function StakingRecordsPage() {
                   )
                 })}
                 <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>精度(m)</th>
-                <th className="px-2 py-2 border-b border-r text-left" rowSpan={2}>記録日時</th>
+                <th className="px-2 py-2 border-b border-r text-left" rowSpan={2}>測定日時</th>
+                <th className="px-2 py-2 border-b border-r text-left" rowSpan={2}>測定者</th>
                 <th className="px-2 py-2 border-b text-center w-10" rowSpan={2}></th>
               </tr>
               <tr className="text-slate-700">
@@ -1269,6 +1286,14 @@ export function StakingRecordsPage() {
                             hour: '2-digit',
                             minute: '2-digit',
                           })
+                        : '—'}
+                    </td>
+                    <td
+                      className="px-2 py-1.5 border-b border-r text-slate-600 whitespace-nowrap"
+                      title={m1?.recordedBy ?? ''}
+                    >
+                      {m1?.recordedBy
+                        ? memberNameById.get(m1.recordedBy) ?? '(未登録)'
                         : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b text-center">
