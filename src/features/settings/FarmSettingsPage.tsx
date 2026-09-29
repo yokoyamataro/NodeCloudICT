@@ -85,7 +85,7 @@ export function FarmSettingsPage() {
   const [deleting, setDeleting] = useState(false)
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   // ファイルストレージは 集計 RPC (get_farm_storage_usage) の 対象外なので
-  // ここで 別に 取って 足す。上限が 別建て (20MB) なので 行にも 明記する
+  // ここで 別に 取って 足す。上限が 別建て (100MB) なので 行にも 明記する
   const [fileRows, setFileRows] = useState<FarmFileRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

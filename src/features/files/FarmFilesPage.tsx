@@ -4,7 +4,7 @@
 // 受け渡す ための 場所。CAD 解析や LandXML の 登録とは 別で、ここは
 // 「原本を 置いておく」用途。
 //
-// 制限は 1 工区 20MB・アップロードから 3 ヶ月。どちらも DB 側でも
+// 制限は 1 工区 100MB・アップロードから 3 ヶ月。どちらも DB 側でも
 // 効かせてあるが、押す前に 分かるよう 画面でも 出す。
 
 import { useCallback, useEffect, useRef, useState } from 'react'

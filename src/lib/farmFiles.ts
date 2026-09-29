@@ -1,7 +1,7 @@
 // 工区ごとの ファイルストレージ。
 //
 // メタデータ: public.farm_files / 実体: storage バケット 'farm-files'
-// 制限は 1 工区 20MB、アップロードから 3 ヶ月。どちらも DB 側でも 効かせて
+// 制限は 1 工区 100MB、アップロードから 3 ヶ月。どちらも DB 側でも 効かせて
 // あるので、ここでの 判定は 「押す前に 分かる」ための もの。
 //
 // 扱う 種類: PDF / SFC / P21 / DXF / LandXML / SIM
@@ -32,7 +32,7 @@ export function errorMessage(e: unknown): string {
 const BUCKET = 'farm-files'
 
 /** 1 工区あたりの 上限 [バイト]。DB の トリガと 同じ 値に する */
-export const FARM_FILE_QUOTA_BYTES = 20 * 1024 * 1024
+export const FARM_FILE_QUOTA_BYTES = 100 * 1024 * 1024
 
 export type FarmFileKind = 'pdf' | 'sfc' | 'p21' | 'dxf' | 'landxml' | 'sim'
 
