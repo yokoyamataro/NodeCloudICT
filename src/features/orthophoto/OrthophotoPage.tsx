@@ -1550,11 +1550,11 @@ export function OrthophotoPage() {
           </div>
         )}
 
-        {/* 法務省地図トグル + 一括取込ボタン。
-            地図まわりの操作を右下に 1 か所へまとめるため、背景地図の
-            セレクタ (CoordinateMap 内、right-2 bottom-6) の真上に置く */}
+        {/* 法務省地図 トグル + 一括取込ボタン。
+            右下 は 背景地図 セレクタ + 背景CAD の チェック 列 と 重なる ので
+            左下 に 逃がす (2026-09-30)。 */}
         {hasActiveParcelDataset && (
-          <div className="absolute bottom-14 right-2 z-[1000] flex flex-col items-end gap-2">
+          <div className="absolute bottom-6 left-2 z-[1000] flex flex-col items-start gap-2">
             {showParcelMap && (
               <ParcelBatchImportBar
                 farmId={currentFarm.id}
