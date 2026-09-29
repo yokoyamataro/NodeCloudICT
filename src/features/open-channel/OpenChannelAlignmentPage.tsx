@@ -2693,7 +2693,8 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
       const factor = e.deltaY > 0 ? 0.9 : 1.1
       const oldZoom = viewRef.current.zoom
       const oldPan = viewRef.current.pan
-      const nz = Math.max(0.2, Math.min(10, oldZoom * factor))
+      // 上限 は 60x。 現場 で 座標 が 密集 する 位置 を 拾い たい ので 深めに 取る。
+      const nz = Math.max(0.2, Math.min(60, oldZoom * factor))
       const k = nz / oldZoom
       setViewZoom(nz)
       setViewPan({
@@ -2742,12 +2743,21 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
   } | null>(null)
 
   /**
-   * マウス の 今 の 位置 を 世界 座標 (offset / 標高) に 直した もの。
-   * 図 の 右上 に 常時 表示 して、 「今 どの あたり を 見て いる か」 を
-   * 数値 で 拾える ように する。 計画高 が 決まって いない 場合 は 中心
-   * から の 相対高 (中心 基準 0m) を 出す。
+   * マウス の 今 の 位置 と、 それ を 世界 座標 に 直した もの。
+   * SVG 内 の 画素 位置 (svgX / svgY) は 追従 HUD の 位置決め に、
+   * offset / elevation は HUD の 表示 値 に 使う。
+   * 計画高 が 決まって いない 場合 は 中心 から の 相対高 を 出す。
    */
-  const [mouseWorld, setMouseWorld] = useState<{ offset: number; elevation: number } | null>(null)
+  const [mouseWorld, setMouseWorld] = useState<
+    { svgX: number; svgY: number; offset: number; elevation: number } | null
+  >(null)
+
+  /**
+   * 座標管理 マーカー の 選択。 近接 して 隠れて いる 点 を 1 つ ずつ 拾える
+   * ように、 押した 点 を 覚えて 目立たせ + 詳細 ラベル (点名 / 高さ / 離れ)
+   * を 常時 表示 する。 もう 一度 押す と 選択 解除。
+   */
+  const [selectedCoordMarkId, setSelectedCoordMarkId] = useState<string | null>(null)
 
   // 世界 座標 → 画面 ピクセル (パン/ズーム 込み)。参照線 の 位置 決定 等 に 使う
   const vx = (x: number) => viewPan.x + viewZoom * tx(x)
@@ -2802,13 +2812,14 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
         })
       }
     }
-    // マウス の 今 の 世界 座標 を 追う (右上 の 表示 用)。
+    // マウス の 今 の 世界 座標 を 追う (追従 HUD の 表示 用)。
     // vx/vy の 逆変換。 y は 中心 から の 相対高。
+    // svgX / svgY は HUD の 位置 決め に 使う (SVG 内 pixel)。
     if (scale > 0 && Number.isFinite(px) && Number.isFinite(py)) {
       const wx = ((px - viewPan.x) / viewZoom - offsetX) / scale
       const wyDelta = (offsetY - (py - viewPan.y) / viewZoom) / scale
       const wz = centerHeight != null ? centerHeight + wyDelta : wyDelta
-      setMouseWorld({ offset: wx, elevation: wz })
+      setMouseWorld({ svgX: px, svgY: py, offset: wx, elevation: wz })
     }
   }
   const onSvgMouseLeave = () => {
@@ -3608,34 +3619,69 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
 
           {/* 座標管理 に 登録 済み で 断面線 の 近く に ある 点。 呼び側 で
               直交 距離 (デフォルト 50cm) 以内 に 絞って いる。 中心設計高 が
-              決まって いる とき は 相対高 に 直して 描く。 */}
+              決まって いる とき は 相対高 に 直して 描く。
+              近接 して 隠れる 点 を 1 つ ずつ 見分け られる よう、 押した
+              マーカー を 覚えて 目立たせ + 詳細 ラベル を 常時 出す。 */}
           {coordMarks && coordMarks.length > 0 && centerHeight !== undefined && (
             <g>
               {coordMarks.map((c) => {
                 const cxp = vx(c.offset)
                 const cyp = vy(c.elevation - centerHeight)
+                const on = selectedCoordMarkId === c.id
                 return (
-                  <g key={`cm-${c.id}`} pointerEvents="none">
+                  <g key={`cm-${c.id}`}>
+                    {/* 選択 の 「クリック 判定」 用 の 透明 円。
+                        近接 して 重なる とき でも クリック し やすい ように
+                        本体 より 一回り 大きく。 */}
                     <circle
                       cx={cxp}
                       cy={cyp}
-                      r={4}
-                      fill="#10b981"
-                      stroke="#fff"
-                      strokeWidth={1.2}
+                      r={9}
+                      fill="transparent"
+                      style={{ cursor: 'pointer' }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setSelectedCoordMarkId(on ? null : c.id)
+                      }}
                     />
-                    <text
-                      x={cxp + 6}
-                      y={cyp - 6}
-                      fontSize={11}
-                      fontWeight={600}
-                      fill="#065f46"
+                    <circle
+                      cx={cxp}
+                      cy={cyp}
+                      r={on ? 6 : 4}
+                      fill={on ? '#059669' : '#10b981'}
                       stroke="#fff"
-                      strokeWidth={3}
-                      paintOrder="stroke"
-                    >
-                      {c.name}
-                    </text>
+                      strokeWidth={on ? 2 : 1.2}
+                      pointerEvents="none"
+                    />
+                    {on ? (
+                      // 選択中 は 点名 + 標高 + 離れ の 詳細 を 目立たせて 出す
+                      <g pointerEvents="none">
+                        <text
+                          x={cxp + 10}
+                          y={cyp - 12}
+                          fontSize={12}
+                          fontWeight={700}
+                          fill="#065f46"
+                          stroke="#fff"
+                          strokeWidth={4}
+                          paintOrder="stroke"
+                        >
+                          {c.name}
+                        </text>
+                        <text
+                          x={cxp + 10}
+                          y={cyp + 2}
+                          fontSize={11}
+                          fontWeight={600}
+                          fill="#065f46"
+                          stroke="#fff"
+                          strokeWidth={3}
+                          paintOrder="stroke"
+                        >
+                          {shiftText(c.offset)} / {c.elevation.toFixed(3)}m
+                        </text>
+                      </g>
+                    ) : null}
                   </g>
                 )
               })}
@@ -3644,9 +3690,19 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
         </svg>
 
         {/* マウス の 位置 を 世界 座標 (中心 から の 離れ / 標高) で 出す HUD。
-            右上 に 重ねる。 SVG の 外 に 置いた 方 が パン/ズーム で 動か ない。 */}
+            マウス の 右下 に 追従 させる (右上 固定 より 数値 と 対象 の 対応 が
+            見え やすい)。 pointer-events は 触ら ない。 */}
         {mouseWorld && (
-          <div className="absolute top-1 right-1 pointer-events-none px-2 py-0.5 rounded bg-slate-900/85 text-white text-[11px] font-mono shadow">
+          <div
+            className="absolute pointer-events-none px-2 py-0.5 rounded bg-slate-900/85 text-white text-[11px] font-mono shadow whitespace-nowrap"
+            style={{
+              // 画面 端 近く で 見切れ ない よう、 SVG の 内側 に 収まる 範囲 で
+              // 右下 に 少し ずらす。 12px ずらし は カーソル と 重ならない
+              // 最小 の 目安。
+              left: Math.max(4, Math.min(size.w - 120, mouseWorld.svgX + 12)),
+              top: Math.max(4, Math.min(size.h - 24, mouseWorld.svgY + 14)),
+            }}
+          >
             {shiftText(mouseWorld.offset)} /{' '}
             {centerHeight != null
               ? `${mouseWorld.elevation.toFixed(3)}m`
