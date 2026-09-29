@@ -6948,37 +6948,28 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
 
   /**
    * 座標管理 に 登録 済み の 点 の うち、 縦断図 に 落とし込 む もの。
-   * 整地 で 縦線 (F/G/H…) を 設定 して いる とき は 「中心線 に 一番 近い」
-   * だけ で なく、 各 縦線 (grid line) に 近い 点 も 拾う。 これ で 縦線
-   * ごと に 打った 座標 が 中心線 に 押し 固められ ず、 それぞれ の SP
-   * 位置 で 縦断図 に 出る。
+   * 整地 で 縦線 (F/G/H…) を 選んで いる とき は、 その 縦線 の offset
+   * から 幅 以内 の 座標 だけ を 拾う (別 の 縦線 沿い の 点 は 出さ ない)。
+   * 縦線 未選択 (中心線 の 縦断) の とき は 中心線 から 幅 以内 で 拾う。
    * distance は BP から の 内部 累積距離 (spOffset を 足す のは ProfileChart 側)。
    */
   const profileCoordMarks = useMemo(() => {
     if (!segments.length) return []
-    // 縦線 の offset 一覧 (符号 は 表示 慣習 で 正規化 済み)。 整地 以外 は 中心線 のみ。
     const sign = selected?.sideOrientation === 'reverse' ? -1 : 1
-    const gridOffsets: number[] =
-      isGrading && selected
-        ? gridLineIndices(selected.gridLines).map(
-            (i) => gridLineOffset(selected.gridLines, i) * sign,
-          )
-        : [0]
-    // 中心線 も 常 に 相手 に する (縦線 が 未設定 の 工種 と 挙動 を 揃える)。
-    if (!gridOffsets.includes(0)) gridOffsets.push(0)
+    // 対象 の 縦線 の offset。 未選択 は 中心線 (0)。
+    // 表示 慣習 (右 を +) の 符号 で 統一 する ため、 projected offset も
+    // 同じ sign を 掛けて 比べる。
+    const targetOffset: number =
+      isGrading && selected && gridLineIdx != null
+        ? gridLineOffset(selected.gridLines, gridLineIdx) * sign
+        : 0
     const marks: { id: string; distance: number; elevation: number; name: string }[] = []
     for (const c of coordinates as CoordinateRow[]) {
       if (c.z == null || !Number.isFinite(c.z)) continue
       const r = projectPointToAlignment(segments, { x: c.x, y: c.y })
       if (!r) continue
       const offSigned = r.offset * sign
-      // 一番 近い 縦線 と の 距離 を 見る。 その 距離 が 幅 以内 なら 拾う。
-      let bestGap = Infinity
-      for (const gOff of gridOffsets) {
-        const g = Math.abs(offSigned - gOff)
-        if (g < bestGap) bestGap = g
-      }
-      if (bestGap > coordProximityM) continue
+      if (Math.abs(offSigned - targetOffset) > coordProximityM) continue
       marks.push({
         id: c.id,
         distance: r.distance,
@@ -6987,7 +6978,7 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
       })
     }
     return marks
-  }, [coordinates, segments, coordProximityM, isGrading, selected])
+  }, [coordinates, segments, coordProximityM, isGrading, selected, gridLineIdx])
 
   /**
    * 整地 の 路線 を まっさら に する。
