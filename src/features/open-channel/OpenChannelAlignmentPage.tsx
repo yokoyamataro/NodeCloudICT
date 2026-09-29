@@ -5553,6 +5553,11 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
   useEffect(() => {
     try { localStorage.setItem('oc:crossBandM', String(crossBandM)) } catch { /* ignore */ }
   }, [crossBandM])
+  // 横断計画 の 変化点 を 座標管理 に 一括 登録 する ため の 開閉 / 点種 / 進行中 / 結果 表示。
+  const [planRegOpen, setPlanRegOpen] = useState(false)
+  const [planRegType, setPlanRegType] = useState<string>('')
+  const [planRegBusy, setPlanRegBusy] = useState(false)
+  const [planRegMsg, setPlanRegMsg] = useState<string>('')
   /** 横断上の 実測点を 出す ための 測設記録 */
   const stakingRecords = useStakingStore((st) => st.records)
   const fetchStakingRecords = useStakingStore((st) => st.fetchRecords)
@@ -7300,6 +7305,76 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
           z: r.z,
           type: type as CoordinateRow['type'],
           notes: `${selected.name} グリッド計画高`,
+        })),
+      )
+      added = res.length
+    }
+    return { added, updated }
+  }
+
+  /**
+   * 全 測点 の 横断計画 (plannedSectionRaw) の 変化点 を 座標管理 に 一括
+   * 登録 する。 整地 の registerGridPlanPoints の 「一般 線形物 版」。
+   * 名前 は 変化点 の note (点名) が あれば それ に SP を 付ける、
+   * 無ければ defaultStakeName (SP + L/R + 離れ) で 作る。
+   * 同じ 名前 が 座標管理 に あれば 更新、 無ければ 追加。
+   */
+  const registerCrossPlanPoints = async (
+    type: string,
+  ): Promise<{ added: number; updated: number }> => {
+    if (!selected || segments.length === 0) return { added: 0, updated: 0 }
+    const sign = selected.sideOrientation === 'reverse' ? -1 : 1
+    type Row = { pointNumber: string; x: number; y: number; z: number }
+    const rows: Row[] = []
+    const sorted = [...stations].sort((a, b) => a.distance - b.distance)
+    for (const st of sorted) {
+      const pts = st.plannedSectionRaw ?? []
+      if (pts.length === 0) continue
+      const c = pointAtDistance(segments, st.distance)
+      const t = tangentAtDistance(segments, st.distance)
+      if (!c || !t) continue
+      const px = -t.y * sign
+      const py = t.x * sign
+      const sp = st.distance + spOffset
+      for (const p of pts) {
+        const named = (p.note ?? '').trim()
+        const name = named
+          ? `${named} SP${sp.toFixed(2)}`
+          : defaultStakeName(sp, p.offset * sign)
+        rows.push({
+          pointNumber: name,
+          x: c.x + p.offset * px,
+          y: c.y + p.offset * py,
+          z: p.elevation,
+        })
+      }
+    }
+    if (rows.length === 0) return { added: 0, updated: 0 }
+    // 同じ 名前 が rows 内 で かぶった ら 後 勝ち
+    const uniq = new Map(rows.map((r) => [r.pointNumber, r]))
+    rows.length = 0
+    rows.push(...uniq.values())
+    // 同じ 名前 の 座標 が あれば 更新
+    const byName = new Map(
+      (coordinates as CoordinateRow[]).map((c) => [c.pointNumber ?? '', c]),
+    )
+    const toUpdate = rows.flatMap((r) => {
+      const ex = byName.get(r.pointNumber)
+      return ex ? [{ id: ex.id, x: r.x, y: r.y, z: r.z, type }] : []
+    })
+    const toAdd = rows.filter((r) => !byName.has(r.pointNumber))
+    let updated = 0
+    if (toUpdate.length > 0) updated = await updateCoordinatesBulk(toUpdate)
+    let added = 0
+    if (toAdd.length > 0) {
+      const res = await addCoordinatesBulk(
+        toAdd.map((r) => ({
+          pointNumber: r.pointNumber,
+          x: r.x,
+          y: r.y,
+          z: r.z,
+          type: type as CoordinateRow['type'],
+          notes: `${selected.name} 横断計画 変化点`,
         })),
       )
       added = res.length
@@ -9707,6 +9782,22 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                   {crossExportButtons()}
                   <button
                     type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setPlanRegOpen((v) => !v)
+                      setPlanRegMsg('')
+                    }}
+                    className={`px-2 py-0.5 text-[11px] border rounded ${
+                      planRegOpen
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                    }`}
+                    title="全 測点 の 横断計画 の 変化点 を 座標管理 に 登録 する"
+                  >
+                    計画点を登録
+                  </button>
+                  <button
+                    type="button"
                     onClick={toggleControlOnly}
                     className={`px-2 py-0.5 text-[11px] border rounded ${
                       controlOnly
@@ -9721,6 +9812,68 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                   </span>
                 }
               >
+                {/* 計画点を登録 パネル。 全 測点 の 横断計画 変化点 を 座標管理 に
+                    追加/更新 する。 名前 の 付け方 は 変化点 note が あれば それ +
+                    SP、 無ければ SP + 左右 の 離れ (幅杭 と 同じ 書式)。 */}
+                {planRegOpen && (
+                  <div className="border rounded bg-emerald-50 px-2 py-1.5 flex items-center gap-2 flex-wrap text-xs">
+                    <span className="text-slate-600">
+                      全 測点 の 横断計画 (
+                      <span className="font-mono">
+                        {stations.filter((s) => (s.plannedSectionRaw?.length ?? 0) > 0).length}
+                      </span>
+                      /{stations.length} 測点 に 計画あり) の 変化点 を 座標管理 に 登録
+                    </span>
+                    <label className="flex items-center gap-1 ml-auto">
+                      <span className="text-slate-500">点種</span>
+                      <select
+                        value={planRegType}
+                        onChange={(e) => setPlanRegType(e.target.value)}
+                        className="px-1 py-0.5 border rounded"
+                      >
+                        <option value="">選んで ください</option>
+                        {coordTypeOptions.map((o) => (
+                          <option key={o.code} value={o.code}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      onClick={async () => {
+                        if (planRegType === '') return
+                        setPlanRegBusy(true)
+                        setPlanRegMsg('')
+                        try {
+                          const r = await registerCrossPlanPoints(planRegType)
+                          setPlanRegMsg(
+                            r.added === 0 && r.updated === 0
+                              ? '登録 できる 計画点 が ありません でした (横断計画 未入力)'
+                              : `${r.added} 点 を 追加、 ${r.updated} 点 を 差し替え ました`,
+                          )
+                          if (r.added > 0 || r.updated > 0) setPlanRegOpen(false)
+                        } finally {
+                          setPlanRegBusy(false)
+                        }
+                      }}
+                      disabled={planRegBusy || planRegType === ''}
+                      className="px-3 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40"
+                    >
+                      {planRegBusy ? '登録中…' : '登録'}
+                    </button>
+                    <button
+                      onClick={() => setPlanRegOpen(false)}
+                      className="px-2 py-0.5 rounded border bg-white text-slate-600 hover:bg-slate-50"
+                    >
+                      閉じる
+                    </button>
+                  </div>
+                )}
+                {planRegMsg && !planRegOpen && (
+                  <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                    {planRegMsg}
+                  </div>
+                )}
                 <div className="flex items-center gap-1 flex-wrap">
                   {/* 編集対象 (現況 / 計画 / 出来形) の 切替 は 右下 横断図 の
                       上 の バー に 一本化 した。 ここ に は 出さない。 */}
