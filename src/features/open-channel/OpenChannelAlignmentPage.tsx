@@ -6659,23 +6659,8 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
   }
   const controlStationCount = stations.filter((s) => s.isControlStation).length
 
-  // 「横断を 切替中は 図面の 断面方向 (左右=画面 左右) が 水平に なる ように 地図を 回転」
-  // する 用の bearing (度)。 CoordinateMap の mapBearingDeg (setBearing 経由) に 渡す。
-  //   世界座標: x=北 / y=東 (JGD 平面直角)
-  //   選択測点の 接線 (t.x, t.y) を 画面上向きに 揃える compass bearing = atan2(t.y, t.x)
-  //   leaflet-rotate の setBearing は 反時計回り 正 なので 符号 反転。
-  //   選択測点 なし (=標準断面 モード) は 0 (北向き) に 戻す。
-  //
-  // 河川工事 (sideOrientation='reverse') の 場合、「左右」は EP→BP 方向を 見て
-  // 定義される (下流を 向いて 左岸/右岸)。 通常の tangent-up は BP→EP を 見る 向き
-  // なので、この モードでは 180° 足して 反対向き (EP→BP を 画面上に) にする。
-  const mapBearingDeg = useMemo(() => {
-    if (!selectedStation) return 0
-    const t = tangentAtDistance(segments, selectedStation.distance)
-    if (!t) return 0
-    const base = -Math.atan2(t.y, t.x) * (180 / Math.PI)
-    return selected?.sideOrientation === 'reverse' ? base + 180 : base
-  }, [selectedStation, segments, selected?.sideOrientation])
+  // mapBearingDeg は gridLineIdx / bottomTab に 依存 する ので、 それら の
+  // 宣言 後 に 定義 する (下方参照)。
 
   // 選択中の 測点の 地図上 位置 (LatLng)。 StationFocus に 渡して
   // その 点を 中央に パン+拡大 させる。 選択なし は null (地図は 触らない)。
@@ -6793,6 +6778,37 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
   const [gridCell, setGridCell] = useState<GridCellRef | null>(null)
   /** グリッド表 で 選んで いる 列。 下 の 縦断図 に その 線 を 出す */
   const [gridLineIdx, setGridLineIdx] = useState<number | null>(null)
+
+  // 「横断を 切替中は 図面の 断面方向 (左右=画面 左右) が 水平に なる ように 地図を 回転」
+  // する 用の bearing (度)。 CoordinateMap の mapBearingDeg (setBearing 経由) に 渡す。
+  //   世界座標: x=北 / y=東 (JGD 平面直角)
+  //   選択測点の 接線 (t.x, t.y) を 画面上向きに 揃える compass bearing = atan2(t.y, t.x)
+  //   leaflet-rotate の setBearing は 反時計回り 正 なので 符号 反転。
+  //   選択測点 なし (=標準断面 モード) は 0 (北向き) に 戻す。
+  //
+  // 河川工事 (sideOrientation='reverse') の 場合、「左右」は EP→BP 方向を 見て
+  // 定義される (下流を 向いて 左岸/右岸)。 通常の tangent-up は BP→EP を 見る 向き
+  // なので、この モードでは 180° 足して 反対向き (EP→BP を 画面上に) にする。
+  //
+  // 縦断図 タブ + 平行縦断 (gridLineIdx) を 見て いる 間 は 「進行方向 が 画面
+  // 右」 に する (=接線 を 水平 に)。 縦断図 の SP 軸 (左=BP → 右=EP) と 地図 の
+  // 左右 が 揃う ので、 現場 で 縦断 と 地図 を 対応 させ やすい。
+  // 横断 モード の +90° は 「接線 UP → 接線 RIGHT」 に 90° 追加 回転。
+  const mapBearingDeg = useMemo(() => {
+    // 平行縦断 (grid line profile) を 見て いる 間: 接線 を 水平 に する
+    if (bottomTab === 'profile' && gridLineIdx != null && segments.length > 0) {
+      const t = tangentAtDistance(segments, totalLen / 2)
+      if (t) {
+        const base = -Math.atan2(t.y, t.x) * (180 / Math.PI)
+        return base + 90
+      }
+    }
+    if (!selectedStation) return 0
+    const t = tangentAtDistance(segments, selectedStation.distance)
+    if (!t) return 0
+    const base = -Math.atan2(t.y, t.x) * (180 / Math.PI)
+    return selected?.sideOrientation === 'reverse' ? base + 180 : base
+  }, [selectedStation, segments, selected?.sideOrientation, bottomTab, gridLineIdx, totalLen])
   /** 任意測点 を 地図 から 拾って いる 最中 か */
   const [freePicking, setFreePicking] = useState(false)
   // 任意測点 の 取得 時 に 背景CAD の 端点 / 交点 / 頂点 / 辺 に スナップ するか。
@@ -11129,40 +11145,12 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
             <div className="flex-1 min-w-0 min-h-0 flex flex-col">
           {profileChartExpanded && bottomTab === 'profile' && (
             <div className="flex-1 min-h-0 flex flex-col px-2 pb-2 gap-1">
-              {gridProfile && (
-                <GradingExtrasBar
-                  spOffset={spOffset}
-                  extras={gridProfile.extras}
-                  onAdd={(sp, elevation, note) => {
-                    if (!selected || gridLineIdx == null) return
-                    const nextExtras = [
-                      ...(selected.gradingLineExtras ?? []),
-                      {
-                        id: `x-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                        lineIdx: gridLineIdx,
-                        sp,
-                        elevation,
-                        note,
-                      },
-                    ]
-                    updateChannel(selected.id, { gradingLineExtras: nextExtras })
-                  }}
-                  onEdit={(id, patch) => {
-                    if (!selected) return
-                    const nextExtras = (selected.gradingLineExtras ?? []).map((e) =>
-                      e.id === id ? { ...e, ...patch } : e,
-                    )
-                    updateChannel(selected.id, { gradingLineExtras: nextExtras })
-                  }}
-                  onRemove={(id) => {
-                    if (!selected) return
-                    const nextExtras = (selected.gradingLineExtras ?? []).filter(
-                      (e) => e.id !== id,
-                    )
-                    updateChannel(selected.id, { gradingLineExtras: nextExtras })
-                  }}
-                />
-              )}
+              {/* 中間点 (SP00/00m) の チップ バー は 廃止。
+                  縦断図 が 縦横 pan/zoom で 触れる ように なった ので、
+                  上端 に 常時 固定 表示 する 必要 性 が 薄い。
+                  中間点 の 追加/編集/削除 は 表 (aside 側 の 断面点 表 と
+                  同格 の UI が 今 は 無い) で 行う 想定。 必要 に なったら
+                  復活 させる。 */}
               {gridProfile && gridLineIdx != null && (
                 <GradingStakeBar
                   lineName={gridProfile.name}
@@ -11910,165 +11898,5 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
   )
 }
 
-// 整地 の 縦線 縦断図 の 上 に 出す 「中間点」 管理バー。
-// 表示 は チップ形式、 追加 は 右端 の インライン フォーム。
-function GradingExtrasBar({
-  spOffset,
-  extras,
-  onAdd,
-  onEdit,
-  onRemove,
-}: {
-  spOffset: number
-  extras: Array<{ id: string; sp: number; elevation: number; note?: string }>
-  onAdd: (sp: number, elevation: number, note?: string) => void
-  onEdit: (id: string, patch: { sp?: number; elevation?: number; note?: string }) => void
-  onRemove: (id: string) => void
-}) {
-  const [addSp, setAddSp] = useState('')
-  const [addEl, setAddEl] = useState('')
-  const [addNote, setAddNote] = useState('')
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editSp, setEditSp] = useState('')
-  const [editEl, setEditEl] = useState('')
-  const [editNote, setEditNote] = useState('')
-
-  const startEdit = (e: { id: string; sp: number; elevation: number; note?: string }) => {
-    setEditingId(e.id)
-    setEditSp(String(e.sp + spOffset))
-    setEditEl(String(e.elevation))
-    setEditNote(e.note ?? '')
-  }
-  const commitEdit = () => {
-    if (!editingId) return
-    const spNum = parseFloat(editSp)
-    const elNum = parseFloat(editEl)
-    if (!Number.isFinite(spNum) || !Number.isFinite(elNum)) {
-      setEditingId(null)
-      return
-    }
-    onEdit(editingId, {
-      sp: spNum - spOffset,
-      elevation: elNum,
-      note: editNote.trim() || undefined,
-    })
-    setEditingId(null)
-  }
-
-  const commitAdd = () => {
-    const spNum = parseFloat(addSp)
-    const elNum = parseFloat(addEl)
-    if (!Number.isFinite(spNum) || !Number.isFinite(elNum)) return
-    onAdd(spNum - spOffset, elNum, addNote.trim() || undefined)
-    setAddSp('')
-    setAddEl('')
-    setAddNote('')
-  }
-
-  const sorted = [...extras].sort((a, b) => a.sp - b.sp)
-
-  return (
-    <div className="flex flex-wrap items-center gap-1 border-b bg-slate-50 px-2 py-1 text-xs">
-      <span className="text-slate-500 mr-1">
-        中間点 <span className="font-mono">{sorted.length}</span> 件
-      </span>
-      {sorted.map((e) => (
-        <span
-          key={e.id}
-          className="flex items-center gap-1 rounded border border-slate-300 bg-white px-1.5 py-0.5"
-          title={e.note ?? ''}
-        >
-          {editingId === e.id ? (
-            <>
-              <input
-                type="number"
-                step="0.01"
-                value={editSp}
-                onChange={(ev) => setEditSp(ev.target.value)}
-                className="w-16 rounded border px-1 text-right tabular-nums"
-                placeholder="SP"
-              />
-              <input
-                type="number"
-                step="0.001"
-                value={editEl}
-                onChange={(ev) => setEditEl(ev.target.value)}
-                className="w-20 rounded border px-1 text-right tabular-nums"
-                placeholder="EL"
-              />
-              <input
-                type="text"
-                value={editNote}
-                onChange={(ev) => setEditNote(ev.target.value)}
-                className="w-20 rounded border px-1"
-                placeholder="メモ"
-              />
-              <button
-                onClick={commitEdit}
-                className="rounded border border-blue-400 bg-blue-500 px-1 text-white hover:bg-blue-600"
-              >
-                OK
-              </button>
-              <button
-                onClick={() => setEditingId(null)}
-                className="rounded border px-1 hover:bg-slate-100"
-              >
-                ×
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={() => startEdit(e)}
-                className="font-mono text-slate-700 hover:text-blue-600"
-                title="編集"
-              >
-                SP{(e.sp + spOffset).toFixed(2)} / {e.elevation.toFixed(3)}m
-              </button>
-              {e.note && <span className="text-slate-400 truncate max-w-[6rem]">{e.note}</span>}
-              <button
-                onClick={() => onRemove(e.id)}
-                className="ml-0.5 rounded border text-red-500 hover:bg-red-50 px-1"
-                title="削除"
-              >
-                <Trash2 className="h-3 w-3" />
-              </button>
-            </>
-          )}
-        </span>
-      ))}
-      <span className="mx-1 text-slate-300">|</span>
-      <span className="text-slate-500">追加</span>
-      <input
-        type="number"
-        step="0.01"
-        value={addSp}
-        onChange={(e) => setAddSp(e.target.value)}
-        className="w-16 rounded border px-1 text-right tabular-nums"
-        placeholder="SP"
-      />
-      <input
-        type="number"
-        step="0.001"
-        value={addEl}
-        onChange={(e) => setAddEl(e.target.value)}
-        className="w-20 rounded border px-1 text-right tabular-nums"
-        placeholder="標高"
-      />
-      <input
-        type="text"
-        value={addNote}
-        onChange={(e) => setAddNote(e.target.value)}
-        className="w-20 rounded border px-1"
-        placeholder="メモ"
-      />
-      <button
-        onClick={commitAdd}
-        disabled={!Number.isFinite(parseFloat(addSp)) || !Number.isFinite(parseFloat(addEl))}
-        className="rounded border border-emerald-400 bg-emerald-500 px-2 py-0.5 text-white hover:bg-emerald-600 disabled:opacity-40"
-      >
-        <Plus className="h-3 w-3 inline" /> 追加
-      </button>
-    </div>
-  )
-}
+// GradingExtrasBar は 廃止 (縦断図 上部 の SP チップ バー)。
+// 縦断図 が pan/zoom 対応 に なった の で 上端 常時 固定 UI は 撤去。
