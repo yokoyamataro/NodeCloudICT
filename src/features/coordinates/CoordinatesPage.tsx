@@ -2350,10 +2350,10 @@ export function CoordinatesPage() {
             checkedCoordIds={checkedIds}
             onPointToggleCheck={handlePointToggleCheck}
             farmMemos={memosForMap}
-            onMemoClick={() => navigate('/orthophoto')}
+            onMemoClick={() => navigate('/map')}
             farmPhotos={farmPhotosForMap}
             photoGetSignedUrl={getSignedUrl}
-            onMapLongPress={() => navigate('/orthophoto')}
+            onMapLongPress={() => navigate('/map')}
             route={route}
             showRoute={true}
             farmId={currentFarm?.id ?? null}
@@ -3310,10 +3310,10 @@ export function CoordinatesPage() {
             checkedCoordIds={checkedIds}
             onPointToggleCheck={handlePointToggleCheck}
             farmMemos={memosForMap}
-            onMemoClick={() => navigate('/orthophoto')}
+            onMemoClick={() => navigate('/map')}
             farmPhotos={farmPhotosForMap}
             photoGetSignedUrl={getSignedUrl}
-            onMapLongPress={() => navigate('/orthophoto')}
+            onMapLongPress={() => navigate('/map')}
               route={route}
               showRoute={true}
               farmId={currentFarm?.id ?? null}

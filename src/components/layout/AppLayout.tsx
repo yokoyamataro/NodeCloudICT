@@ -177,7 +177,7 @@ function NavNode({
 
 const navigation: NavGroup[] = [
   // 「工区選択に戻る」は サイドバー 上部 の 小型ボタン に 移動 済み (navigation には 入れない)
-  { name: '全体図', href: '/orthophoto', icon: ImageIcon },
+  { name: '全体図', href: '/map', icon: ImageIcon },
   {
     name: '座標管理',
     href: '/coordinates',

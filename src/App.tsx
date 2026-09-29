@@ -344,8 +344,9 @@ function AppRoutes() {
           {/* 立会カレンダー (旧 registry-visit-calendar を 統合) */}
           <Route path="visit-calendar" element={<VisitCalendarPage />} />
         </Route>
-        {/* オルソ画像 */}
-        <Route path="orthophoto" element={<OrthophotoPage />} />
+        {/* 全体図 (地図)。 旧 URL /orthophoto は 互換 の ため リダイレクト。 */}
+        <Route path="map" element={<OrthophotoPage />} />
+        <Route path="orthophoto" element={<Navigate to="/map" replace />} />
         {/* 暗渠工事 */}
         <Route path="underdrain">
           <Route path="work-area" element={<UnderdrainWorkAreaPage />} />
