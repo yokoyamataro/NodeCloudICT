@@ -18,7 +18,6 @@ import { AdminParcelMapsPage } from '@/features/admin/AdminParcelMapsPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { ProjectChooserPage } from '@/features/projects/ProjectChooserPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
-import { SiteMapWindowPage } from '@/features/coordinates/SiteMapWindowPage'
 import { FileViewPage } from '@/features/files/FileViewPage'
 // スマホ画面
 import { MobileTopPage } from '@/features/mobile/MobileTopPage'
@@ -268,15 +267,6 @@ function AppRoutes() {
         />
         {/* 公開共有ビュー: 認証不要・読み取り専用 */}
         <Route path="/share/farm/:farmId" element={<ShareFarmViewPage />} />
-        {/* 別ウィンドウ: 現場地図のみ全画面表示（AppLayout を介さない） */}
-        <Route
-          path="/site-map"
-          element={
-            <ProtectedRoute>
-              <SiteMapWindowPage />
-            </ProtectedRoute>
-          }
-        />
         {/* 別タブ: 図面 (DXF / SFC / P21) を 1 枚 で 見る */}
         <Route
           path="/file-view"
