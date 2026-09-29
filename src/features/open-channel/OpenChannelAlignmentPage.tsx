@@ -635,6 +635,7 @@ function ProfileChart({
   currentGroundPoints,
   stationTicks,
   stakes,
+  coordMarks,
 }: {
   points: ProfilePoint[]
   /**
@@ -668,6 +669,17 @@ function ProfileChart({
     ground?: number | null
     label: string[]
     kind: 'tombo' | 'batter'
+  }[]
+  /**
+   * 座標管理 に 登録 済み で、 中心線 の 近く に ある 点。 呼ぶ 側 で
+   * 「中心線 に 垂線 を 下ろした 距離 が 幅 以内」 に 絞って distance
+   * (BP から の 追加距離) と elevation (絶対 標高 [m]) を 渡す。
+   */
+  coordMarks?: {
+    id: string
+    distance: number
+    elevation: number
+    name: string
   }[]
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -767,6 +779,10 @@ function ProfileChart({
   for (const k of stakes ?? []) {
     if (Number.isFinite(k.elevation)) heightSamples.push(k.elevation)
     if (k.ground != null && Number.isFinite(k.ground)) heightSamples.push(k.ground)
+  }
+  // 座標管理 の マーカー も 枠 内 に 収まる ように 高さ レンジ に 入れる。
+  for (const m of coordMarks ?? []) {
+    if (Number.isFinite(m.elevation)) heightSamples.push(m.elevation)
   }
   const minH = Math.min(...heightSamples)
   const maxH = Math.max(...heightSamples)
@@ -1217,6 +1233,29 @@ function ProfileChart({
               >
                 {slope}
               </text>
+            )
+          })}
+
+          {/* 座標管理 の 点 (中心線 近傍)。 SP (distance + spOffset) と 標高 で 落とす。 */}
+          {(coordMarks ?? []).map((m) => {
+            const cxp = tx(m.distance)
+            const cyp = ty(m.elevation)
+            return (
+              <g key={`cm-${m.id}`} pointerEvents="none">
+                <circle cx={cxp} cy={cyp} r={3.5} fill="#10b981" stroke="#fff" strokeWidth={1} />
+                <text
+                  x={cxp + 5}
+                  y={cyp - 5}
+                  fontSize={10}
+                  fontWeight={600}
+                  fill="#065f46"
+                  stroke="#fff"
+                  strokeWidth={2.5}
+                  paintOrder="stroke"
+                >
+                  {m.name}
+                </text>
+              </g>
             )
           })}
 
@@ -2544,6 +2583,17 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
    * null / 空 なら 従来 の CL 1 本 だけ を 描く。
    */
   gridLines?: { offset: number; name: string }[]
+  /**
+   * 座標管理 に 登録 済み で、 断面線 の 近く に ある 点 を 図 に 重ねる。
+   * 呼ぶ 側 で 「断面 線 に 直交 して 一定 幅 (デフォルト 50cm) 以内」 に
+   * 絞り、 offset (中心 から の 離れ) と elevation (絶対 標高 [m]) を 渡す。
+   */
+  coordMarks?: {
+    id: string
+    offset: number
+    elevation: number
+    name: string
+  }[]
 }>(function CrossSectionView(
   {
     cs,
@@ -2566,6 +2616,7 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
     selectedPointId,
     onSelectPoint,
     gridLines,
+    coordMarks,
   },
   ref,
 ) {
@@ -2690,6 +2741,14 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
     kind: '現況' | '出来形' | '計画'
   } | null>(null)
 
+  /**
+   * マウス の 今 の 位置 を 世界 座標 (offset / 標高) に 直した もの。
+   * 図 の 右上 に 常時 表示 して、 「今 どの あたり を 見て いる か」 を
+   * 数値 で 拾える ように する。 計画高 が 決まって いない 場合 は 中心
+   * から の 相対高 (中心 基準 0m) を 出す。
+   */
+  const [mouseWorld, setMouseWorld] = useState<{ offset: number; elevation: number } | null>(null)
+
   // 世界 座標 → 画面 ピクセル (パン/ズーム 込み)。参照線 の 位置 決定 等 に 使う
   const vx = (x: number) => viewPan.x + viewZoom * tx(x)
   const vy = (y: number) => viewPan.y + viewZoom * ty(y)
@@ -2717,8 +2776,20 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
   }
   const onSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
-    const px = e.clientX - rect.left
-    const py = e.clientY - rect.top
+    // SVG は width/height 属性 で viewBox 相当 の 大きさ に 描いて いる が、
+    // 画面 で は CSS で 縮尺 され る 可能性 が ある。 attr の 数値 と 実寸 の
+    // 比率 で 正規化 して、 パン/ズーム 逆変換 と 座標系 を 揃える。
+    const svg = svgRef.current
+    let px = e.clientX - rect.left
+    let py = e.clientY - rect.top
+    if (svg) {
+      const attrW = svg.width?.baseVal?.value || rect.width || 1
+      const attrH = svg.height?.baseVal?.value || rect.height || 1
+      const sx = rect.width / attrW
+      const sy = rect.height / attrH
+      px = (e.clientX - rect.left) / (sx || 1)
+      py = (e.clientY - rect.top) / (sy || 1)
+    }
     // 左ボタン 押しっぱなし で 4px 以上 動いたら pan (以後 click は 抑止)
     if (panStartRef.current && (e.buttons & 1)) {
       const dx = px - panStartRef.current.px
@@ -2731,9 +2802,18 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
         })
       }
     }
+    // マウス の 今 の 世界 座標 を 追う (右上 の 表示 用)。
+    // vx/vy の 逆変換。 y は 中心 から の 相対高。
+    if (scale > 0 && Number.isFinite(px) && Number.isFinite(py)) {
+      const wx = ((px - viewPan.x) / viewZoom - offsetX) / scale
+      const wyDelta = (offsetY - (py - viewPan.y) / viewZoom) / scale
+      const wz = centerHeight != null ? centerHeight + wyDelta : wyDelta
+      setMouseWorld({ offset: wx, elevation: wz })
+    }
   }
   const onSvgMouseLeave = () => {
     panStartRef.current = null
+    setMouseWorld(null)
   }
   const onSvgMouseUp = () => {
     panStartRef.current = null
@@ -3525,7 +3605,54 @@ const CrossSectionView = forwardRef<CrossSectionViewHandle, {
               </g>
             )
           })()}
+
+          {/* 座標管理 に 登録 済み で 断面線 の 近く に ある 点。 呼び側 で
+              直交 距離 (デフォルト 50cm) 以内 に 絞って いる。 中心設計高 が
+              決まって いる とき は 相対高 に 直して 描く。 */}
+          {coordMarks && coordMarks.length > 0 && centerHeight !== undefined && (
+            <g>
+              {coordMarks.map((c) => {
+                const cxp = vx(c.offset)
+                const cyp = vy(c.elevation - centerHeight)
+                return (
+                  <g key={`cm-${c.id}`} pointerEvents="none">
+                    <circle
+                      cx={cxp}
+                      cy={cyp}
+                      r={4}
+                      fill="#10b981"
+                      stroke="#fff"
+                      strokeWidth={1.2}
+                    />
+                    <text
+                      x={cxp + 6}
+                      y={cyp - 6}
+                      fontSize={11}
+                      fontWeight={600}
+                      fill="#065f46"
+                      stroke="#fff"
+                      strokeWidth={3}
+                      paintOrder="stroke"
+                    >
+                      {c.name}
+                    </text>
+                  </g>
+                )
+              })}
+            </g>
+          )}
         </svg>
+
+        {/* マウス の 位置 を 世界 座標 (中心 から の 離れ / 標高) で 出す HUD。
+            右上 に 重ねる。 SVG の 外 に 置いた 方 が パン/ズーム で 動か ない。 */}
+        {mouseWorld && (
+          <div className="absolute top-1 right-1 pointer-events-none px-2 py-0.5 rounded bg-slate-900/85 text-white text-[11px] font-mono shadow">
+            {shiftText(mouseWorld.offset)} /{' '}
+            {centerHeight != null
+              ? `${mouseWorld.elevation.toFixed(3)}m`
+              : `Δ${mouseWorld.elevation >= 0 ? '+' : ''}${mouseWorld.elevation.toFixed(3)}m`}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -6599,6 +6726,23 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
     if (!freePicking) setSnapPreview(null)
   }, [freePicking])
 
+  // 座標管理 の 測点 を 縦断図 / 横断図 に 重ね て 出す 用 の 近傍 幅 [m]。
+  // 断面 の 中心線 に 対して 直交 方向 に この 幅 以内 の 座標 を マーク する。
+  // 現場 で 「杭 の 位置 を 断面 に 落とし込 みたい」 用途 で 使う ので、
+  // 一般 的 な 杭 の 位置 決 め の 誤差 (数十cm) を 拾える 0.5m を 既定 に。
+  // 工区 単位 で 好み を 覚える (localStorage)。
+  const coordProximityStorageKey = farmId ? `oc:coordProxM:${farmId}` : null
+  const [coordProximityM, setCoordProximityM] = useState<number>(() => {
+    if (!coordProximityStorageKey) return 0.5
+    const raw = localStorage.getItem(coordProximityStorageKey)
+    const n = raw != null ? parseFloat(raw) : NaN
+    return Number.isFinite(n) && n > 0 ? n : 0.5
+  })
+  useEffect(() => {
+    if (!coordProximityStorageKey) return
+    localStorage.setItem(coordProximityStorageKey, String(coordProximityM))
+  }, [coordProximityM, coordProximityStorageKey])
+
   /** 平面図 CAD の 配置 ダイアログ */
   const [planCadOpen, setPlanCadOpen] = useState(false)
   const [farmPlanCadOpen, setFarmPlanCadOpen] = useState(false)
@@ -6704,6 +6848,70 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
     // measuredPointsOnStation は 毎 レンダ 作り直される ので 依存 に 入れない
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isGrading, selected, gridLineIdx, stations])
+
+  /**
+   * 座標管理 に 登録 済み の 点 の うち、 いま 選ばれて いる 測点 の 断面線 に
+   * 近い もの (直交 距離 が coordProximityM 以下) を 抜き出して、 横断図 に
+   * 落とし込 む 用 の 配列 に 直す。 offset は 中心 から の 離れ (符号 は 表示
+   * 慣習 に 合わせて sideOrientation を 反映)、 elevation は 座標 の 標高 (Z)。
+   * Z が 入って いない 座標 は 描き 用 が ない ので 除外。
+   */
+  const crossSectionCoordMarks = useMemo(() => {
+    if (!selectedStation || !segments.length) return []
+    const center = pointAtDistance(segments, selectedStation.distance)
+    const tangent = tangentAtDistance(segments, selectedStation.distance)
+    if (!center || !tangent) return []
+    const sign = selected?.sideOrientation === 'reverse' ? -1 : 1
+    const perpX = -tangent.y * sign
+    const perpY = tangent.x * sign
+    const marks: { id: string; offset: number; elevation: number; name: string }[] = []
+    for (const c of coordinates as CoordinateRow[]) {
+      if (c.z == null || !Number.isFinite(c.z)) continue
+      const dx = c.x - center.x
+      const dy = c.y - center.y
+      // 中心線 に 沿った 方向 の 成分 (= 断面線 から の 前後 の ずれ)
+      const alongRoute = dx * tangent.x + dy * tangent.y
+      if (Math.abs(alongRoute) > coordProximityM) continue
+      // 中心線 に 直交 する 方向 の 成分 = 断面 上 の 離れ (offset)
+      const alongSection = dx * perpX + dy * perpY
+      marks.push({
+        id: c.id,
+        offset: alongSection,
+        elevation: c.z,
+        name: c.pointNumber ?? '',
+      })
+    }
+    return marks
+  }, [
+    coordinates,
+    selectedStation,
+    segments,
+    selected?.sideOrientation,
+    coordProximityM,
+  ])
+
+  /**
+   * 座標管理 に 登録 済み の 点 の うち、 中心線 に 直交 距離 が coordProximityM
+   * 以下 の もの を 抜き出して、 縦断図 に 落とし込 む 用 の 配列 に する。
+   * distance は BP から の 内部 累積距離 (spOffset を 足す のは ProfileChart 側)。
+   */
+  const profileCoordMarks = useMemo(() => {
+    if (!segments.length) return []
+    const marks: { id: string; distance: number; elevation: number; name: string }[] = []
+    for (const c of coordinates as CoordinateRow[]) {
+      if (c.z == null || !Number.isFinite(c.z)) continue
+      const r = projectPointToAlignment(segments, { x: c.x, y: c.y })
+      if (!r) continue
+      if (Math.abs(r.offset) > coordProximityM) continue
+      marks.push({
+        id: c.id,
+        distance: r.distance,
+        elevation: c.z,
+        name: c.pointNumber ?? '',
+      })
+    }
+    return marks
+  }, [coordinates, segments, coordProximityM])
 
   /**
    * 整地 の 路線 を まっさら に する。
@@ -10943,6 +11151,7 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                           .map((s) => ({ distance: s.distance, label: s.label }))
                       : undefined
                   }
+                  coordMarks={profileCoordMarks}
                 />
               </div>
             </div>
@@ -11173,6 +11382,7 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                               }))
                             : undefined
                         }
+                        coordMarks={crossSectionCoordMarks}
                       />
                       {/* 凡例 兼 表示切替。 図 の 右下 に 常駐 させる。
                           線 の 色 と 破線 は 本体 の 描画 と 同じ 値 を 使う。 */}
@@ -11214,6 +11424,29 @@ export function OpenChannelAlignmentPage({ kind = 'channel' }: { kind?: ChannelK
                             <span className="text-slate-700">{label}</span>
                           </label>
                         ))}
+                        {/* 座標管理 の 測点 を 断面 の 近傍 (中心線 直交 方向)
+                            に 何 m 以内 で 拾う か。 一般 的 な 杭 の 誤差
+                            (数十cm) を 拾える 0.5m を 既定。 */}
+                        <div className="border-t mt-0.5 pt-0.5 px-1.5 py-0.5 text-[11px] whitespace-nowrap">
+                          <div className="flex items-center gap-1">
+                            <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                            <span className="text-slate-700">座標近傍</span>
+                            <input
+                              type="number"
+                              min={0.05}
+                              max={5}
+                              step={0.05}
+                              value={coordProximityM}
+                              onChange={(e) => {
+                                const v = parseFloat(e.target.value)
+                                if (Number.isFinite(v) && v > 0)
+                                  setCoordProximityM(Math.round(v * 100) / 100)
+                              }}
+                              className="w-12 px-1 py-0 border rounded text-right font-mono text-[11px]"
+                            />
+                            <span className="text-slate-500">m 以内</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </>
