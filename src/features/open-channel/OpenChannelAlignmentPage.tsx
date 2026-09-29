@@ -520,21 +520,8 @@ function niceStep(rawStep: number): number {
   return step * magnitude
 }
 
-// 6 段階の 伸縮比率 (縦・横 共通)。単位は 倍率 (1.0 = 100%)。CrossSectionChart と 同系列。
-const PROFILE_SCALE_STEPS = [0.5, 1.0, 2.0, 3.0, 5.0, 8.0] as const
-type ProfileScale = (typeof PROFILE_SCALE_STEPS)[number]
-const nearestScaleIndex = (v: number): number => {
-  let best = 0
-  let bestDiff = Number.POSITIVE_INFINITY
-  for (let i = 0; i < PROFILE_SCALE_STEPS.length; i++) {
-    const d = Math.abs(PROFILE_SCALE_STEPS[i] - v)
-    if (d < bestDiff) {
-      bestDiff = d
-      best = i
-    }
-  }
-  return best
-}
+// PROFILE_SCALE_STEPS / ProfileScale / nearestScaleIndex は 縦横 の
+// スライダ 用 に あった が、 マウス ホイール ピンチ に 移行 した ので 廃止。
 
 // 縦断図（追加距離 vs 計画高）
 //  - ResizeObserver で 親要素の 寸法に 追従。
@@ -682,48 +669,78 @@ function ProfileChart({
     name: string
   }[]
 }) {
-  const scrollRef = useRef<HTMLDivElement | null>(null)
+  // 表示 領域 (SVG) の 参照 と 大きさ。 コンテナ サイズ に 常時 合わせる。
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const svgRef = useRef<SVGSVGElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 280, h: 140 })
-  const [heightScale, setHeightScale] = useState<ProfileScale>(1.0)
-  const [widthScale, setWidthScale] = useState<ProfileScale>(1.0)
   useEffect(() => {
-    const el = scrollRef.current
+    const el = containerRef.current
     if (!el) return
     const ro = new ResizeObserver((entries) => {
       const rect = entries[0].contentRect
       setSize({
-        w: Math.max(200, rect.width),
-        h: Math.max(80, rect.height),
+        w: Math.max(200, Math.floor(rect.width)),
+        h: Math.max(80, Math.floor(rect.height)),
       })
     })
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
 
-  const stepUp = (v: number): ProfileScale => {
-    for (const s of PROFILE_SCALE_STEPS) if (s > v + 1e-6) return s
-    return PROFILE_SCALE_STEPS[PROFILE_SCALE_STEPS.length - 1]
-  }
-  const stepDown = (v: number): ProfileScale => {
-    for (let i = PROFILE_SCALE_STEPS.length - 1; i >= 0; i--) {
-      if (PROFILE_SCALE_STEPS[i] < v - 1e-6) return PROFILE_SCALE_STEPS[i]
-    }
-    return PROFILE_SCALE_STEPS[0]
-  }
-  // Ctrl (or Meta) + ホイール: 縦スケール、 Shift + ホイール: 横スケール。
-  // 素の ホイールは スクロール に 任せる (混在すると 使いにくい)。
-  const handleWheel = (e: React.WheelEvent) => {
-    if (e.shiftKey) {
+  // 横断図 と 挙動 を 揃える: 素 の ホイール で カーソル 中心 の 拡縮、
+  // 左 ドラッグ で 平行移動。 Ctrl / Shift の 特殊 操作 は 廃止 (縦横 の
+  // スケール バー も 消した)。
+  const [viewPan, setViewPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [viewZoom, setViewZoom] = useState<number>(1)
+  // wheel の 中 で 最新値 を 参照 する ため の ref。 StrictMode 二重発火 対策。
+  const viewRef = useRef({ pan: { x: 0, y: 0 }, zoom: 1 })
+  useEffect(() => {
+    viewRef.current = { pan: viewPan, zoom: viewZoom }
+  }, [viewPan, viewZoom])
+  const wasDraggingRef = useRef<boolean>(false)
+  const panStartRef = useRef<
+    { px: number; py: number; panX: number; panY: number } | null
+  >(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
       e.preventDefault()
-      setWidthScale((prev) => (e.deltaY > 0 ? stepDown(prev) : stepUp(prev)))
-    } else if (e.ctrlKey || e.metaKey) {
-      e.preventDefault()
-      setHeightScale((prev) => (e.deltaY > 0 ? stepDown(prev) : stepUp(prev)))
+      let px: number, py: number
+      const svg = svgRef.current
+      if (svg) {
+        const rect = svg.getBoundingClientRect()
+        const attrW = svg.width?.baseVal?.value || rect.width || 1
+        const attrH = svg.height?.baseVal?.value || rect.height || 1
+        const sx = rect.width / attrW
+        const sy = rect.height / attrH
+        px = (e.clientX - rect.left) / (sx || 1)
+        py = (e.clientY - rect.top) / (sy || 1)
+      } else {
+        const rect = el.getBoundingClientRect()
+        px = e.clientX - rect.left
+        py = e.clientY - rect.top
+      }
+      const factor = e.deltaY > 0 ? 0.9 : 1.1
+      const oldZoom = viewRef.current.zoom
+      const oldPan = viewRef.current.pan
+      // 上限 60x / 下限 0.2x。 CrossSectionView と 合わせる。
+      const nz = Math.max(0.2, Math.min(60, oldZoom * factor))
+      const k = nz / oldZoom
+      setViewZoom(nz)
+      setViewPan({
+        x: px - (px - oldPan.x) * k,
+        y: py - (py - oldPan.y) * k,
+      })
     }
-  }
-  const resetScale = () => {
-    setHeightScale(1.0)
-    setWidthScale(1.0)
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  const resetView = () => {
+    setViewPan({ x: 0, y: 0 })
+    setViewZoom(1)
   }
 
   const padding = { top: 12, right: 20, bottom: 26, left: 48 }
@@ -735,7 +752,7 @@ function ProfileChart({
           変化点が 2 点以上で 縦断図を 表示
         </div>
         <div
-          ref={scrollRef}
+          ref={containerRef}
           className="flex-1 min-h-0 border rounded bg-slate-50 flex items-center justify-center text-xs text-slate-400"
         >
           変化点 を 追加してください
@@ -789,18 +806,21 @@ function ProfileChart({
   const rangeRaw = maxH - minH
   const range = rangeRaw < 1e-6 ? 1 : rangeRaw
 
-  // scale=1 で コンテナ に ぴったり 収まる base pxPerMeter を 算出。
-  const baseInnerW = Math.max(200, size.w - padding.left - padding.right)
-  const baseInnerH = Math.max(80, size.h - padding.top - padding.bottom)
-  const pxPerMeterX = (baseInnerW / distSpan) * widthScale
-  const pxPerMeterY = (baseInnerH / range) * heightScale
-  const innerW = distSpan * pxPerMeterX
-  const innerH = range * pxPerMeterY
-  const svgWidth = innerW + padding.left + padding.right
-  const svgHeight = innerH + padding.top + padding.bottom
+  // 「zoom=1 で コンテナ に ぴったり 収まる」 base pxPerMeter。
+  // pan/zoom は 描画 段階 で 掛けて base 変換 は 保つ。
+  const innerW = Math.max(200, size.w - padding.left - padding.right)
+  const innerH = Math.max(80, size.h - padding.top - padding.bottom)
+  const svgWidth = size.w
+  const svgHeight = size.h
+  const pxPerMeterX = innerW / distSpan
+  const pxPerMeterY = innerH / range
 
-  const tx = (d: number) => padding.left + (d - minDist) * pxPerMeterX
-  const ty = (h: number) => padding.top + (maxH - h) * pxPerMeterY
+  // 基本 座標 変換 (pan/zoom 適用 済み)。 renderer は これ を 使う ので、
+  // 各 SVG 要素 を 触ら ずに 拡縮 / 平行移動 が 全体 に 効く。
+  const tx = (d: number) =>
+    viewPan.x + viewZoom * (padding.left + (d - minDist) * pxPerMeterX)
+  const ty = (h: number) =>
+    viewPan.y + viewZoom * (padding.top + (maxH - h) * pxPerMeterY)
 
   // 縦断曲線 が ある 場合 は 放物線 の サンプル 点 を 挟んで パス を 組み立てる。
   const curveByPvi = new Map<number, VerticalCurve>()
@@ -822,8 +842,9 @@ function ProfileChart({
   })
 
   // 目盛間隔: 約 60px (X) / 40px (Y) 毎 に 1 目盛 になる ように niceStep で 丸める。
-  const xStep = niceStep(60 / pxPerMeterX)
-  const yStep = niceStep(40 / pxPerMeterY)
+  // viewZoom を 掛けて 拡縮 に 追従 (ズーム 中 でも 目盛 が 詰まり すぎない)。
+  const xStep = niceStep(60 / (pxPerMeterX * viewZoom))
+  const yStep = niceStep(40 / (pxPerMeterY * viewZoom))
 
   const xTicks: number[] = []
   for (let d = Math.ceil(minDist / xStep) * xStep; d <= maxDist + 1e-9; d += xStep) {
@@ -834,9 +855,41 @@ function ProfileChart({
     yTicks.push(h)
   }
 
+  const onSvgMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (e.button !== 0) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    wasDraggingRef.current = false
+    panStartRef.current = {
+      px: e.clientX - rect.left,
+      py: e.clientY - rect.top,
+      panX: viewPan.x,
+      panY: viewPan.y,
+    }
+  }
+  const onSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!panStartRef.current || !(e.buttons & 1)) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const dx = e.clientX - rect.left - panStartRef.current.px
+    const dy = e.clientY - rect.top - panStartRef.current.py
+    if (wasDraggingRef.current || Math.hypot(dx, dy) > 4) {
+      wasDraggingRef.current = true
+      setViewPan({
+        x: panStartRef.current.panX + dx,
+        y: panStartRef.current.panY + dy,
+      })
+    }
+  }
+  const onSvgMouseLeave = () => {
+    panStartRef.current = null
+  }
+  const onSvgMouseUp = () => {
+    panStartRef.current = null
+  }
+
   return (
     <div className="w-full h-full flex flex-col">
-      {/* スケール コントロール */}
+      {/* 凡例 + リセット (縦横 スケール バー は 廃止。 マウス ホイール で 拡縮、
+          ドラッグ で 平行移動。 横断図 と 同じ 使い勝手 に 揃えた) */}
       <div className="text-[11px] text-slate-500 flex items-center gap-2 shrink-0 px-1 py-0.5 flex-wrap">
         {extraLines.length > 0 && (
           <span className="flex items-center gap-2">
@@ -856,54 +909,32 @@ function ProfileChart({
             ))}
           </span>
         )}
-        <span className="flex items-center gap-1">
-          縦:
-          <input
-            type="range"
-            min={0}
-            max={PROFILE_SCALE_STEPS.length - 1}
-            step={1}
-            value={nearestScaleIndex(heightScale)}
-            onChange={(e) => setHeightScale(PROFILE_SCALE_STEPS[parseInt(e.target.value, 10)])}
-            className="w-20"
-          />
-          <span className="w-10 text-right tabular-nums">
-            {(heightScale * 100).toFixed(0)}%
-          </span>
-        </span>
-        <span className="flex items-center gap-1">
-          横:
-          <input
-            type="range"
-            min={0}
-            max={PROFILE_SCALE_STEPS.length - 1}
-            step={1}
-            value={nearestScaleIndex(widthScale)}
-            onChange={(e) => setWidthScale(PROFILE_SCALE_STEPS[parseInt(e.target.value, 10)])}
-            className="w-20"
-          />
-          <span className="w-10 text-right tabular-nums">
-            {(widthScale * 100).toFixed(0)}%
-          </span>
-        </span>
-        {(heightScale !== 1.0 || widthScale !== 1.0) && (
+        {(viewZoom !== 1 || viewPan.x !== 0 || viewPan.y !== 0) && (
           <button
-            onClick={resetScale}
+            onClick={resetView}
             className="px-1.5 py-0.5 text-[11px] rounded bg-slate-200 hover:bg-slate-300"
           >
-            リセット
+            表示リセット
           </button>
         )}
-        <span className="text-slate-400">Ctrl+ホイール: 縦 / Shift+ホイール: 横</span>
+        <span className="ml-auto text-slate-400">ホイール: 拡縮 / ドラッグ: 移動</span>
       </div>
 
-      {/* スクロール 可能 な SVG 領域 */}
       <div
-        ref={scrollRef}
-        onWheel={handleWheel}
-        className="flex-1 min-h-0 overflow-auto border rounded bg-slate-50"
+        ref={containerRef}
+        className="flex-1 min-h-0 border rounded bg-slate-50 relative overflow-hidden"
       >
-        <svg width={svgWidth} height={svgHeight} className="block">
+        <svg
+          ref={svgRef}
+          width={svgWidth}
+          height={svgHeight}
+          className="block"
+          onMouseDown={onSvgMouseDown}
+          onMouseMove={onSvgMouseMove}
+          onMouseLeave={onSvgMouseLeave}
+          onMouseUp={onSvgMouseUp}
+          style={{ cursor: wasDraggingRef.current ? 'grabbing' : 'grab' }}
+        >
           {/* 枠 */}
           <line
             x1={padding.left}
