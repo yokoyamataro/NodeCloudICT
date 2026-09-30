@@ -7,7 +7,7 @@
 // 直した 分 は frame.overlay に 溜まる。 元 の 並べ方 は 触らない ので、
 // 中身 (所在 や 求積 など) を 直せば その まま 追従 する。
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MousePointer2, Pencil, Trash2, Type, Undo2 } from 'lucide-react'
 import {
   SHEET,
@@ -49,11 +49,69 @@ export function FloorPlanSheetEditor({
   const [tool, setTool] = useState<Tool>('select')
   const [sel, setSel] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ id: string; x: number; y: number; dx: number; dy: number } | null>(null)
   const drawRef = useRef<{ x: number; y: number } | null>(null)
   const [rubber, setRubber] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(
     null,
   )
+
+  // 用紙 を マウス ホイール で 拡縮、 空き 領域 の ドラッグ で 平行移動 する。
+  // viewBox を 直接 変える 方式 に する と 中 の 要素 は そのまま で 拡縮/pan
+  // が 効き、 図形 の 選択 判定 (mm 単位) も 触ら ない で 済む。
+  const [view, setView] = useState<{ x: number; y: number; w: number; h: number }>({
+    x: 0,
+    y: 0,
+    w: SHEET.w,
+    h: SHEET.h,
+  })
+  const viewRef = useRef(view)
+  useEffect(() => {
+    viewRef.current = view
+  }, [view])
+  const panStartRef = useRef<
+    { px: number; py: number; vx: number; vy: number } | null
+  >(null)
+  const resetView = () =>
+    setView({ x: 0, y: 0, w: SHEET.w, h: SHEET.h })
+
+  // ホイール ズーム。 React の onWheel は passive で preventDefault が 効か ない ので
+  // 生 addEventListener で { passive: false } を 張る。 カーソル 位置 が 中心。
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const svg = svgRef.current
+      if (!svg) return
+      const r = svg.getBoundingClientRect()
+      // カーソル の 画面 座標 → 現在 viewBox 上 の mm 座標 に 直す。
+      // SHEET.w × SHEET.h の 用紙 を xMidYMid meet で フィット させて いる ので、
+      // まず 「用紙 が 実際 に 表示 されて いる 矩形」 を 出し、 その 中 で 比率 を 取る。
+      const cur = viewRef.current
+      const sx = r.width / cur.w
+      const sy = r.height / cur.h
+      const s = Math.min(sx, sy)
+      const fitW = cur.w * s
+      const fitH = cur.h * s
+      const padX = (r.width - fitW) / 2
+      const padY = (r.height - fitH) / 2
+      const px = (e.clientX - r.left - padX) / (s || 1)
+      const py = (e.clientY - r.top - padY) / (s || 1)
+      const mx = cur.x + px
+      const my = cur.y + py
+      // deltaY > 0 = 手前 に 回す (縮小)、 < 0 = 拡大
+      const k = e.deltaY > 0 ? 1.1 : 1 / 1.1
+      const nw = Math.max(SHEET.w / 60, Math.min(SHEET.w * 4, cur.w * k))
+      const nh = (nw / cur.w) * cur.h
+      // 拡縮 の 中心 が mx,my に 留まる ように x,y を 決める
+      const nx = mx - (mx - cur.x) * (nw / cur.w)
+      const ny = my - (my - cur.y) * (nh / cur.h)
+      setView({ x: nx, y: ny, w: nw, h: nh })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
 
   const shown = useMemo(() => applyOverlay(items, overlay), [items, overlay])
   const extras = overlay?.extras ?? []
@@ -70,15 +128,16 @@ export function FloorPlanSheetEditor({
       extras: extras.map((e) => (e.id === id ? ({ ...e, ...next } as DrawItem) : e)),
     })
 
-  /** 画面 の 座標 を 用紙 の mm に */
+  /** 画面 の 座標 を 用紙 の mm に (現在 の viewBox を 反映) */
   const toMm = (clientX: number, clientY: number) => {
     const el = svgRef.current
     if (!el) return { x: 0, y: 0 }
     const r = el.getBoundingClientRect()
-    const s = Math.min(r.width / SHEET.w, r.height / SHEET.h)
+    const cur = viewRef.current
+    const s = Math.min(r.width / cur.w, r.height / cur.h)
     return {
-      x: (clientX - r.left - (r.width - SHEET.w * s) / 2) / s,
-      y: (clientY - r.top - (r.height - SHEET.h * s) / 2) / s,
+      x: cur.x + (clientX - r.left - (r.width - cur.w * s) / 2) / s,
+      y: cur.y + (clientY - r.top - (r.height - cur.h * s) / 2) / s,
     }
   }
 
@@ -93,6 +152,20 @@ export function FloorPlanSheetEditor({
   }
 
   const onMove = (ev: React.PointerEvent<SVGSVGElement>) => {
+    // 空き 領域 の ドラッグ 中 は viewBox を 動かして 平行移動 する。
+    // 拡縮 で 内部 の mm 座標 と 画面 pixel の 比率 が 変わる ので、
+    // 画面 上 の 移動量 (pixel) を 現在 の 縮尺 で mm に 直して viewBox に 足す。
+    if (panStartRef.current) {
+      const svg = svgRef.current
+      if (!svg) return
+      const r = svg.getBoundingClientRect()
+      const cur = viewRef.current
+      const s = Math.min(r.width / cur.w, r.height / cur.h)
+      const dx = (ev.clientX - panStartRef.current.px) / (s || 1)
+      const dy = (ev.clientY - panStartRef.current.py) / (s || 1)
+      setView({ x: panStartRef.current.vx - dx, y: panStartRef.current.vy - dy, w: cur.w, h: cur.h })
+      return
+    }
     const p = toMm(ev.clientX, ev.clientY)
     if (drawRef.current) {
       setRubber({ x1: drawRef.current.x, y1: drawRef.current.y, x2: p.x, y2: p.y })
@@ -138,10 +211,20 @@ export function FloorPlanSheetEditor({
       setTool('select')
       return
     }
+    // 選択 モード で 空き 領域 を 押した ら 平行移動 モード に 入る。
+    // 要素 の 上 を 押した とき は startDrag が 先 に stopPropagation して
+    // ここ は 呼ばれ ない ので、 素直 に pan 開始 で 良い。
+    panStartRef.current = {
+      px: ev.clientX,
+      py: ev.clientY,
+      vx: viewRef.current.x,
+      vy: viewRef.current.y,
+    }
     setSel(null)
   }
 
   const onUp = () => {
+    panStartRef.current = null
     if (drawRef.current && rubber) {
       const len = Math.hypot(rubber.x2 - rubber.x1, rubber.y2 - rubber.y1)
       if (len > 1) {
@@ -315,13 +398,34 @@ export function FloorPlanSheetEditor({
         )}
       </div>
 
-      <div className="flex-1 min-h-0 border rounded bg-slate-100 p-3 overflow-auto">
+      <div
+        ref={containerRef}
+        className="flex-1 min-h-0 border rounded bg-slate-100 p-3 overflow-hidden relative"
+      >
+        {(view.x !== 0 || view.y !== 0 || view.w !== SHEET.w || view.h !== SHEET.h) && (
+          <button
+            type="button"
+            onClick={resetView}
+            className="absolute top-2 right-2 z-10 px-2 py-0.5 rounded bg-slate-700/85 text-white text-[11px] shadow hover:bg-slate-800"
+            title="拡縮/平行移動 を リセット"
+          >
+            表示リセット
+          </button>
+        )}
         <svg
           ref={svgRef}
-          viewBox={`0 0 ${SHEET.w} ${SHEET.h}`}
-          className="w-full h-auto bg-white shadow select-none"
+          viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
+          className="w-full h-full bg-white shadow select-none"
           preserveAspectRatio="xMidYMid meet"
-          style={{ cursor: tool === 'select' ? 'default' : 'crosshair', touchAction: 'none' }}
+          style={{
+            cursor:
+              tool === 'select'
+                ? panStartRef.current
+                  ? 'grabbing'
+                  : 'grab'
+                : 'crosshair',
+            touchAction: 'none',
+          }}
           onPointerDown={onDown}
           onPointerMove={onMove}
           onPointerUp={onUp}
