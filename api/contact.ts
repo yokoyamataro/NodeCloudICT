@@ -12,9 +12,11 @@
 //   4. 自動返信 テンプレ は api/_templates/auto-reply.{html,txt} を 使う
 //
 // 環境変数 (Vercel の プロジェクト 設定):
-//   SUPABASE_URL                 - Supabase プロジェクト URL (VITE_* と 同値)
+//   SUPABASE_URL                 - Supabase プロジェクト URL。 無ければ
+//                                   VITE_SUPABASE_URL (クライアント 公開 用) を 流用。
 //   SUPABASE_SERVICE_ROLE_KEY    - service role キー。 RLS を バイパス して 書き込む。
-//                                   未設定 なら DB 保存 は スキップ (メール だけ 送る)
+//                                   anon キー では ダメ (INSERT が RLS で 弾かれる)。
+//                                   未設定 なら DB 保存 は スキップ (メール だけ 送る)。
 //   RESEND_API_KEY               - Resend の API キー。 未設定 なら 送信 を スキップ
 //   CONTACT_FROM_EMAIL           - 送信元。 例: noreply@nodecloud.jp
 //   CONTACT_TO_EMAIL             - 社内 通知先。 例: support@nodecloud.jp
@@ -96,7 +98,9 @@ async function insertContactRow(args: {
   userAgent: string
   ipAddress: string
 }): Promise<boolean> {
-  const url = process.env.SUPABASE_URL
+  // VITE_SUPABASE_URL は クライアント ビルド 用 の 公開 変数 だが 値 は 同じ URL なので
+  // サーバ 側 でも フォールバック として 使う。 service role キー は 必ず 専用変数 を 要求。
+  const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) {
     console.log('[contact] SUPABASE_SERVICE_ROLE_KEY 未設定 のため DB 保存 を スキップ')
