@@ -8,29 +8,24 @@ import { Link, useLocation } from 'react-router-dom'
 import './marketing.css'
 
 /**
- * 業務アプリ (src/index.css) で html,body に overflow:hidden; height:100%; が
- * かかって いる ので、 マーケティング 画面 の 間 だけ 一時 的 に 外して
- * ページ全体 の スクロール を 許可 する。 unmount 時 に 元 の 値 に 戻す。
+ * 業務アプリ (src/index.css) で html,body に overflow:hidden; height:100%;
+ * (さらに overscroll-behavior:none) が かかって いる の で、 ホイール で
+ * ページ全体 を スクロール できない。 マーケティング 画面 の 間 だけ
+ * body 要素 に クラス を 付けて overflow / height / overscroll を 開放 する。
+ *
+ * CSS 側 で !important + 高 詳細度 (body.mkt-scroll-release) で 既存 の
+ * 「html,body」 ルール を 確実 に 上書き する。 unmount 時 に クラス を
+ * 剥がせば アプリ 用 の 設定 に 戻る。
  */
 function useReleasePageScroll() {
   useEffect(() => {
     const html = document.documentElement
     const body = document.body
-    const prev = {
-      htmlOverflow: html.style.overflow,
-      htmlHeight: html.style.height,
-      bodyOverflow: body.style.overflow,
-      bodyHeight: body.style.height,
-    }
-    html.style.overflow = 'auto'
-    html.style.height = 'auto'
-    body.style.overflow = 'auto'
-    body.style.height = 'auto'
+    html.classList.add('mkt-scroll-release')
+    body.classList.add('mkt-scroll-release')
     return () => {
-      html.style.overflow = prev.htmlOverflow
-      html.style.height = prev.htmlHeight
-      body.style.overflow = prev.bodyOverflow
-      body.style.height = prev.bodyHeight
+      html.classList.remove('mkt-scroll-release')
+      body.classList.remove('mkt-scroll-release')
     }
   }, [])
 }

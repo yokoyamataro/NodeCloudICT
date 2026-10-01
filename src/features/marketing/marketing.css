@@ -13,6 +13,19 @@
 @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;500;600&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
 
+/*
+ * マーケティング ページ の 間 だけ 「html, body」 の overflow:hidden; height:100%;
+ * を 外して ページ全体 スクロール を 許可 する。 src/index.css が 業務アプリ
+ * 用 に 画面全体 の スクロール を 塞いで いる の で、 !important で 上書き。
+ * MarketingLayout の useEffect で html / body に クラス を 付け外し する。
+ */
+html.mkt-scroll-release,
+body.mkt-scroll-release {
+  overflow: auto !important;
+  height: auto !important;
+  overscroll-behavior: auto !important;
+}
+
 .marketing-root {
   /* トークン */
   --mkt-bg: #f2f2f3;
