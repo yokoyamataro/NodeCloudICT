@@ -3,9 +3,37 @@
 // - ヘッダ (ロゴ + ナビ) と フッタ (© + ページ リンク) を まとめる
 // - ページ 個別 の ナビ 項目 は props で 差し替え可能
 
-import { type ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import './marketing.css'
+
+/**
+ * 業務アプリ (src/index.css) で html,body に overflow:hidden; height:100%; が
+ * かかって いる ので、 マーケティング 画面 の 間 だけ 一時 的 に 外して
+ * ページ全体 の スクロール を 許可 する。 unmount 時 に 元 の 値 に 戻す。
+ */
+function useReleasePageScroll() {
+  useEffect(() => {
+    const html = document.documentElement
+    const body = document.body
+    const prev = {
+      htmlOverflow: html.style.overflow,
+      htmlHeight: html.style.height,
+      bodyOverflow: body.style.overflow,
+      bodyHeight: body.style.height,
+    }
+    html.style.overflow = 'auto'
+    html.style.height = 'auto'
+    body.style.overflow = 'auto'
+    body.style.height = 'auto'
+    return () => {
+      html.style.overflow = prev.htmlOverflow
+      html.style.height = prev.htmlHeight
+      body.style.overflow = prev.bodyOverflow
+      body.style.height = prev.bodyHeight
+    }
+  }, [])
+}
 
 /** ヘッダ左端の NodeCloud ロゴ (アイコン 26px + ワードマーク)。 */
 function BrandLogo() {
@@ -59,6 +87,7 @@ interface Props {
 
 export function MarketingLayout({ tag, navItems, cta, children }: Props) {
   const loc = useLocation()
+  useReleasePageScroll()
 
   const renderNav = (item: NavItem) => {
     if (item.kind === 'route') {
