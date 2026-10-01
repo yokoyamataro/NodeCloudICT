@@ -13,6 +13,7 @@ import { ApplyPage } from '@/features/marketing/ApplyPage'
 import { TermsPage } from '@/features/marketing/TermsPage'
 import { PrivacyPage } from '@/features/marketing/PrivacyPage'
 import { AdminSignupsPage } from '@/features/admin/AdminSignupsPage'
+import { AdminContactsPage } from '@/features/admin/AdminContactsPage'
 import { AdminOrganizationsPage } from '@/features/admin/AdminOrganizationsPage'
 import { AdminAnnouncementsPage } from '@/features/admin/AdminAnnouncementsPage'
 import { AdminParcelMapsPage } from '@/features/admin/AdminParcelMapsPage'
@@ -218,6 +219,15 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <AdminSignupsPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* 管理者: サポート の お問い合わせ 一覧 */}
+        <Route
+          path="/admin/contacts"
+          element={
+            <ProtectedRoute>
+              <AdminContactsPage />
             </ProtectedRoute>
           }
         />

@@ -39,6 +39,7 @@ import {
   ShieldCheck,
   ClipboardList,
   Megaphone,
+  MessageSquare,
   Building2,
   LayoutTemplate,
   CalendarClock,
@@ -857,6 +858,7 @@ function SiteAdminMenu() {
   const items = [
     { to: '/admin/organizations', label: '組織・メンバー', icon: Users },
     { to: '/admin/signups', label: '申込', icon: ClipboardList },
+    { to: '/admin/contacts', label: 'お問合せ', icon: MessageSquare },
     { to: '/admin/announcements', label: 'お知らせ', icon: Megaphone },
     { to: '/admin/parcel-maps', label: '地番マップ', icon: LandPlot },
   ]
