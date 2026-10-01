@@ -1,129 +1,288 @@
-// プライバシーポリシー（公開・認証不要）。/privacy
-// ※ ドラフト雛形。実運用前に専門家のレビューを推奨。
+// nodecloud.jp プライバシーポリシー (/privacy).
+// App Store の プライバシー ポリシー URL。
+//
+// デザイン ソース: design_handoff_nodecloud_lp/design/LP Privacy.dc.html
+//
+// TODO(未確定、 公開前に 確定 必須):
+//   - 制定日 / 最終改定日
+//   - 外部 委託先 の 実名 (Supabase, Vercel, 地図, AI)
+//   - 保存 期間 (「○日 以内 に エクスポート の 機会」 の 日数)
+//   - 事務所 所在地、 窓口 メール アドレス
+//   - 車両 動態 の 送信 条件
+//   - アクセス 解析 ツール 名
+//   → 専門家 (弁護士 / 社内 法務) の レビュー を 受けて から ハイライト を 外す
+
 import { Link } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { MarketingLayout, type NavItem } from './MarketingLayout'
 
-const OPERATOR = '有限会社横山測量設計事務所'
-const SERVICE = 'NodeCloud'
-const EFFECTIVE_DATE = '2026年5月27日'
-const CONTACT = 'yokoyama1980@gmail.com'
-
-const SECTIONS: { title: string; body: string }[] = [
-  {
-    title: '1. 事業者情報',
-    body:
-      `事業者名: ${OPERATOR}\n` +
-      `本ポリシーは、当社が提供する「${SERVICE}」（以下「本サービス」）における個人情報の取扱いについて定めます。`,
-  },
-  {
-    title: '2. 取得する情報',
-    body:
-      `当社は、本サービスの提供にあたり次の情報を取得します。\n` +
-      `（1）申込・アカウント情報: 会社名・事務所名、業種、住所、郵便番号、担当者名、メールアドレス、電話番号等\n` +
-      `（2）利用者が本サービスに入力・登録・アップロードするデータ（座標、図面、写真、測量成果、地番・地権者情報等。以下「利用者データ」）\n` +
-      `（3）利用状況に関する情報: アクセスログ、IPアドレス、端末・ブラウザ情報、Cookie 等の技術的情報`,
-  },
-  {
-    title: '3. 利用目的',
-    body:
-      `当社は、取得した情報を次の目的で利用します。\n` +
-      `（1）本サービスの提供・運営・本人確認・契約管理\n` +
-      `（2）お問い合わせ・申し込みへの対応、連絡\n` +
-      `（3）本サービスの保守、不具合対応、品質・機能の改善\n` +
-      `（4）利用状況の分析（個人を特定できない統計情報への加工を含む）\n` +
-      `（5）法令に基づく対応`,
-  },
-  {
-    title: '4. 利用者データ（お客様が扱う個人情報）の取扱い',
-    body:
-      `利用者データに含まれる個人情報（地権者情報等）について、その管理者は利用者であり、当社はその取扱いを受託する立場で、本サービスの提供に必要な範囲で処理します。利用者は、利用者データに含まれる個人情報を、個人情報の保護に関する法律その他の法令に従い適法に取得・利用・管理する責任を負います。`,
-  },
-  {
-    title: '5. 第三者提供',
-    body:
-      `当社は、次の場合を除き、取得した個人情報を本人の同意なく第三者に提供しません。\n` +
-      `（1）法令に基づく場合\n` +
-      `（2）人の生命・身体・財産の保護に必要で、本人の同意取得が困難な場合\n` +
-      `（3）次条に定める業務委託に伴い提供する場合`,
-  },
-  {
-    title: '6. 業務委託・外部サービスの利用',
-    body:
-      `当社は、本サービスの提供のため、以下のクラウド事業者に情報の保存・処理を委託します。委託先には適切な監督を行います。\n` +
-      `（1）データベース・ストレージ・認証基盤（Supabase。東京リージョンに保存）\n` +
-      `（2）アプリケーションのホスティング（Vercel。東京リージョンで処理）\n` +
-      `いずれも日本国内（東京リージョン）でデータを保存・処理します。`,
-  },
-  {
-    title: '7. 安全管理措置',
-    body:
-      `当社は、個人情報の漏えい、滅失または毀損の防止その他の安全管理のために、アクセス制御（権限管理）、通信の暗号化、アクセス権限を持つ者の限定等、合理的な安全管理措置を講じます。`,
-  },
-  {
-    title: '8. 保有期間',
-    body:
-      `当社は、利用目的の達成に必要な期間、または法令で定められた期間、個人情報を保有し、不要となった場合は適切な方法で消去します。利用契約終了後の利用者データの取扱い・消去については、別途利用者の指示または当社の定めによります。`,
-  },
-  {
-    title: '9. 開示・訂正・利用停止等の請求',
-    body:
-      `本人は、当社が保有する自己の個人情報について、開示、訂正、追加、削除、利用停止等を請求できます。請求は下記のお問い合わせ窓口までご連絡ください。本人確認のうえ、法令に従い対応します。なお、利用者データに含まれる第三者（地権者等）の個人情報に関する請求については、原則として管理者である利用者が対応するものとします。`,
-  },
-  {
-    title: '10. Cookie 等の利用',
-    body:
-      `本サービスは、ログイン状態の保持や利用状況の把握のために Cookie 等の技術を使用することがあります。ブラウザの設定により Cookie を無効化できますが、その場合本サービスの一部が利用できないことがあります。`,
-  },
-  {
-    title: '11. お問い合わせ窓口',
-    body: `本ポリシーに関するお問い合わせは、次の窓口までご連絡ください。\n${OPERATOR}　${CONTACT}`,
-  },
-  {
-    title: '12. 改定',
-    body:
-      `当社は、本ポリシーを必要に応じて変更することがあります。変更後の内容は本サービス上に掲示した時点から効力を生じます。`,
-  },
+const NAV: NavItem[] = [
+  { kind: 'route', to: '/', label: 'トップ' },
+  { kind: 'route', to: '/support', label: 'サポート' },
 ]
+
+/** 未確定箇所 を 示す ハイライト。 公開前 に 文言 を 差し替える。 */
+function TODO({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="mkt-todo" title="未確定: 公開前に確定させる">
+      {children}
+    </span>
+  )
+}
 
 export function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="bg-white border-b">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
-          <Link to="/lp" className="text-slate-500 hover:text-slate-800" title="紹介ページ">
-            <ArrowLeft className="h-5 w-5" />
-          </Link>
-          <h1 className="font-bold">プライバシーポリシー</h1>
+    <MarketingLayout tag="プライバシーポリシー" navItems={NAV}>
+      <section className="mkt-wrap" style={{ paddingTop: 48, paddingBottom: 40 }}>
+        <div className="mkt-kicker" style={{ fontSize: 12, marginBottom: 14 }}>
+          Privacy Policy
         </div>
-      </div>
+        <h1 style={{ fontSize: 'clamp(32px, 4vw, 52px)' }}>プライバシーポリシー</h1>
+        <p className="mkt-muted" style={{ fontSize: 14, margin: '14px 0 0' }}>
+          制定日：<TODO>2026年10月1日</TODO>　最終改定日：<TODO>-</TODO>
+        </p>
+      </section>
 
-      <div className="max-w-3xl mx-auto px-4 py-8">
-        <div className="bg-white border rounded-lg p-6 sm:p-8">
-          <p className="text-sm text-slate-600 mb-6">
-            {OPERATOR}（以下「当社」）は、「{SERVICE}」における個人情報を以下のとおり取り扱います。
+      <div className="mkt-wrap" style={{ paddingBottom: 80 }}>
+        <div className="mkt-doc">
+          <p style={{ marginLeft: 0 }}>
+            有限会社横山測量設計事務所（以下「当社」）は、クラウドサービス「NodeCloud」（Webアプリケーションおよび iOS / Android アプリを含み、以下「本サービス」）における利用者の個人情報を、個人情報の保護に関する法律その他の関係法令を遵守し、以下のとおり取り扱います。
           </p>
 
-          <div className="space-y-6">
-            {SECTIONS.map((s) => (
-              <section key={s.title}>
-                <h2 className="font-bold text-slate-800 mb-1">{s.title}</h2>
-                <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{s.body}</p>
-              </section>
-            ))}
-          </div>
+          <section>
+            <h2>
+              <span>01</span>取得する情報
+            </h2>
+            <p>当社は、本サービスの提供にあたり次の情報を取得します。</p>
+            <table>
+              <tbody>
+                <tr>
+                  <th>アカウント情報</th>
+                  <td>氏名、メールアドレス、所属組織名、電話番号、ログイン認証情報</td>
+                </tr>
+                <tr>
+                  <th>位置情報</th>
+                  <td>
+                    GNSS受信機（Drogger等）および端末から取得する測位座標・時刻。車両動態管理機能を利用する場合は、アプリがバックグラウンドで取得する車両の位置・移動履歴
+                  </td>
+                </tr>
+                <tr>
+                  <th>写真・カメラ</th>
+                  <td>利用者が撮影・選択した写真（境界杭・施工箇所等）と、撮影日時・撮影位置</td>
+                </tr>
+                <tr>
+                  <th>業務データ</th>
+                  <td>
+                    利用者が登録する座標、図面（SIMA・DXF・SXF等）、地番、登記情報、地権者・立会人に関する情報、調査報告書、メモ・チャット
+                  </td>
+                </tr>
+                <tr>
+                  <th>端末・利用情報</th>
+                  <td>
+                    端末の種類、OS、アプリのバージョン、IPアドレス、アクセス日時、操作ログ、エラー情報
+                  </td>
+                </tr>
+                <tr>
+                  <th>お問い合わせ情報</th>
+                  <td>お問い合わせフォーム・電話・メールでいただいた内容</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
 
-          <div className="mt-8 pt-4 border-t text-sm text-slate-500">
-            <div>制定日: {EFFECTIVE_DATE}</div>
-            <div>{OPERATOR}</div>
-          </div>
-        </div>
+          <section>
+            <h2>
+              <span>02</span>利用目的
+            </h2>
+            <ol>
+              <li>本サービスの提供、本人確認、アカウント管理のため</li>
+              <li>
+                測位・杭打ち誘導、写真と座標の紐付け、チーム内でのデータ共有など、本サービスの機能を実現するため
+              </li>
+              <li>料金の請求、契約の管理のため</li>
+              <li>お問い合わせへの対応、デモの実施、重要なお知らせの連絡のため</li>
+              <li>不具合の調査、不正利用の防止、セキュリティの確保のため</li>
+              <li>
+                個人を特定できない形に加工した統計情報を作成し、本サービスの改善・新機能の開発に利用するため
+              </li>
+            </ol>
+          </section>
 
-        <div className="text-center mt-6">
-          <Link to="/terms" className="text-blue-600 hover:underline text-sm">
-            利用規約を見る
-          </Link>
+          <section>
+            <h2>
+              <span>03</span>業務データに含まれる第三者の個人情報
+            </h2>
+            <p>
+              利用者が本サービスに登録する登記情報や地権者・立会人の氏名・住所等は、利用者が自らの業務のために取り扱う情報です。当社は、利用者の委託を受けてこれらを保管・処理するにとどまり、本サービスの提供以外の目的で利用、閲覧、分析することはありません。
+            </p>
+            <p>
+              利用者は、これらの情報を関係法令および各士業の職務上の規律に従って適切に取得・登録するものとします。
+            </p>
+          </section>
+
+          <section>
+            <h2>
+              <span>04</span>位置情報・カメラの利用について
+            </h2>
+            <ul>
+              <li>
+                位置情報・カメラ・写真へのアクセスは、端末の設定で利用者が許可した場合に限り行います。許可はいつでも端末の設定から取り消せます
+              </li>
+              <li>
+                バックグラウンドでの位置情報の取得は、車両動態管理機能を有効にした場合に限り行います
+              </li>
+              <li>
+                位置情報を広告目的に利用したり、第三者に提供したりすることはありません
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h2>
+              <span>05</span>第三者への提供
+            </h2>
+            <p>
+              当社は、次の場合を除き、あらかじめ本人の同意を得ることなく個人情報を第三者に提供しません。
+            </p>
+            <ul>
+              <li>法令に基づく場合</li>
+              <li>人の生命・身体・財産の保護のために必要で、本人の同意を得ることが困難な場合</li>
+              <li>
+                国の機関・地方公共団体等が法令の定める事務を遂行することに協力する必要がある場合
+              </li>
+              <li>
+                利用者自身が、本サービスの共有機能によりプロジェクトのメンバーや協力会社にデータを共有した場合
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h2>
+              <span>06</span>外部サービスの利用・業務委託
+            </h2>
+            <p>
+              当社は、本サービスの運営のため次の外部事業者のサービスを利用し、その範囲で情報の取扱いを委託することがあります。委託先に対しては、適切な管理を求め監督します。
+            </p>
+            <table>
+              <tbody>
+                <tr>
+                  <th>データ保管・認証</th>
+                  <td>
+                    <TODO>Supabase, Inc.（東京リージョン）</TODO>
+                  </td>
+                </tr>
+                <tr>
+                  <th>ホスティング</th>
+                  <td>
+                    <TODO>Vercel Inc. 等 —（東京リージョン）</TODO>
+                  </td>
+                </tr>
+                <tr>
+                  <th>地図表示</th>
+                  <td>
+                    <TODO>国土地理院、OpenStreetMap 等 — 要確認</TODO>
+                  </td>
+                </tr>
+                <tr>
+                  <th>AIによる文書解析</th>
+                  <td>
+                    <TODO>利用する事業者名 — 要確認</TODO>（登記情報・図面の自動認識機能で送信する画像・PDF）
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              外国にある事業者に個人情報を提供する場合は、個人情報保護法に従い、当該国の名称および個人情報保護制度に関する情報を提供します。
+            </p>
+          </section>
+
+          <section>
+            <h2>
+              <span>07</span>安全管理措置
+            </h2>
+            <p>
+              当社は、通信の暗号化（TLS）、アクセス権限の管理、組織単位でのデータ分離、アクセスログの記録など、個人情報の漏えい・滅失・毀損を防ぐための必要かつ適切な措置を講じます。
+            </p>
+          </section>
+
+          <section>
+            <h2>
+              <span>08</span>保存期間と削除
+            </h2>
+            <p>
+              個人情報は、利用目的の達成に必要な期間保存します。契約終了後の業務データは、
+              <TODO>○日</TODO>
+              以内にエクスポートの機会を設けたうえで削除します。
+            </p>
+            <p>
+              アカウントの削除は、アプリ内の設定画面またはお問い合わせ窓口から申請できます。削除後、法令上保存が必要な情報を除き、関連する情報を速やかに削除します。
+            </p>
+          </section>
+
+          <section>
+            <h2>
+              <span>09</span>開示・訂正・利用停止等の請求
+            </h2>
+            <p>
+              本人から、保有個人データの利用目的の通知、開示、訂正・追加・削除、利用停止・消去、第三者提供の停止の請求があった場合は、本人確認のうえ、法令に従い遅滞なく対応します。下記の窓口までご連絡ください。
+            </p>
+          </section>
+
+          <section>
+            <h2>
+              <span>10</span>Cookie 等の利用
+            </h2>
+            <p>
+              本サービスのWebサイトでは、ログイン状態の維持や利用状況の把握のため Cookie およびこれに類する技術を利用します。ブラウザの設定で無効にできますが、一部機能が利用できなくなる場合があります。
+              <TODO>アクセス解析ツールを使う場合は名称を追記</TODO>
+            </p>
+          </section>
+
+          <section>
+            <h2>
+              <span>11</span>改定
+            </h2>
+            <p>
+              当社は、法令の変更やサービス内容の変更に応じて本ポリシーを改定することがあります。重要な変更は、本サービス上での掲示またはメールでお知らせします。
+            </p>
+          </section>
+
+          <section>
+            <h2>
+              <span>12</span>お問い合わせ窓口
+            </h2>
+            <table>
+              <tbody>
+                <tr>
+                  <th>事業者</th>
+                  <td>有限会社横山測量設計事務所</td>
+                </tr>
+                <tr>
+                  <th>代表者</th>
+                  <td>横山太郎</td>
+                </tr>
+                <tr>
+                  <th>所在地</th>
+                  <td>
+                    <TODO>北海道斜里郡斜里町青葉町9番地13</TODO>
+                  </td>
+                </tr>
+                <tr>
+                  <th>メール</th>
+                  <td>
+                    <TODO>privacy@nodecloud.jp</TODO>
+                  </td>
+                </tr>
+                <tr>
+                  <th>フォーム</th>
+                  <td>
+                    <Link to="/support#contact">サポートページのお問い合わせフォーム</Link>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
         </div>
       </div>
-    </div>
+    </MarketingLayout>
   )
 }

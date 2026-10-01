@@ -1,4 +1,16 @@
 {
+  "redirects": [
+    {
+      "source": "/lp",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/lp/(.*)",
+      "destination": "/",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     {
       "source": "/m",
@@ -17,7 +29,7 @@
       "destination": "https://nodecloud-manual.vercel.app/manual/$1"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ]

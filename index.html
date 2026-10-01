@@ -1,8 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <!-- maximum-scale / user-scalable=no は 必須。
          iOS は フォントサイズ 16px 未満の 入力欄に フォーカスすると ページ全体を
          自動拡大し、フォーカスが 外れても 元の倍率に 戻さない。設定モーダル等は
@@ -17,7 +19,32 @@
     <!-- iOS Safari 等が数字列を電話番号 / 住所 / 日付として自動判定して
          下線付きリンクに変えるのを抑止する。座標値 (X/Y/Z) が誤検出されるのを防ぐ。 -->
     <meta name="format-detection" content="telephone=no,email=no,address=no,date=no" />
-    <title>NodeCloud</title>
+    <title>NodeCloud — 地籍測量・土木工事をPCとスマホで一元管理</title>
+    <meta
+      name="description"
+      content="NodeCloud は 地籍測量・農業土木工事の 作業を PC と スマホ で 一元管理する クラウドサービス。 法務省地図XML・SIMA・DXF の取込、 Drogger RTK による cm 精度測位、 93条調査報告書・LandXML の 出力に 対応。"
+    />
+    <link rel="canonical" href="https://nodecloud.jp/" />
+    <!-- OGP (Open Graph) — SNS / チャット で シェア された とき の カード 表示 -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="NodeCloud" />
+    <meta property="og:title" content="NodeCloud — 地籍測量・土木工事をPCとスマホで一元管理" />
+    <meta
+      property="og:description"
+      content="法務省地図XML・SIMA・DXF 取込、 Drogger RTK による cm 精度測位、 93条調査報告書・LandXML 出力。 地籍測量・農業土木工事 を 1 ページ で 統合。"
+    />
+    <meta property="og:url" content="https://nodecloud.jp/" />
+    <meta property="og:locale" content="ja_JP" />
+    <!-- TODO(未確定): OGP 画像 (1200×630 推奨) を 用意 して /og-image.png に 置く。
+         暫定 で ヒーロー の 地積測量図 スクショ を 使う。 -->
+    <meta property="og:image" content="/marketing/screen-cadastral-drawing.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="NodeCloud — 地籍測量・土木工事をPCとスマホで一元管理" />
+    <meta
+      name="twitter:description"
+      content="法務省地図XML・SIMA・DXF 取込、 Drogger RTK による cm 精度測位、 93条調査報告書・LandXML 出力。"
+    />
+    <meta name="twitter:image" content="/marketing/screen-cadastral-drawing.png" />
     <!-- Google Analytics (GA4) — 測定 ID: G-99NCXWNVGD。
          SPA 用に初期の自動 page_view は無効化し、React ルーター側から
          明示的に page_view を送る（src/App.tsx の GATracker）。 -->

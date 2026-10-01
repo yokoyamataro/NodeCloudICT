@@ -1,0 +1,453 @@
+/*
+ * NodeCloud マーケティング ページ (/ · /support · /privacy) 専用 の トークン と
+ * コンポーネント CSS。 業務アプリ (Tailwind 中心) と 世界観 を 混ぜ ない ため、
+ * ここ に 閉じ込めて .marketing-root スコープ で 適用する。
+ *
+ * デザイン ソース:
+ *   design_handoff_nodecloud_lp/tokens/industry.css
+ *   design_handoff_nodecloud_lp/design/*.dc.html
+ *
+ * TODO(未確定): 電話番号・所在地・メール・料金の税表記・所有アクセス解析ツール名。
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
+
+.marketing-root {
+  /* トークン */
+  --mkt-bg: #f2f2f3;
+  --mkt-surface: #e9e9ea;
+  --mkt-text: #1d1f20;
+  --mkt-accent: #5980a6;
+  --mkt-divider: color-mix(in srgb, #1d1f20 16%, transparent);
+
+  --mkt-neutral-100: #f5f5f8;
+  --mkt-neutral-400: #b7b7ba;
+  --mkt-neutral-700: #5d5d60;
+  --mkt-neutral-800: #424244;
+
+  --mkt-accent-100: #eef6ff;
+  --mkt-accent-300: #b5d9fd;
+  --mkt-accent-600: #597ea3;
+  --mkt-accent-700: #416180;
+  --mkt-accent-800: #2c455d;
+  --mkt-accent-900: #1d2d3d;
+
+  --mkt-shadow-sm: 0 1px 2px color-mix(in srgb, #2b2b2d 14%, transparent);
+  --mkt-shadow-lg: 0 12px 32px color-mix(in srgb, #2b2b2d 22%, transparent);
+
+  background: var(--mkt-bg);
+  color: var(--mkt-text);
+  font-family: 'Barlow', 'Noto Sans JP', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  min-height: 100vh;
+}
+
+.marketing-root * {
+  box-sizing: border-box;
+}
+
+.marketing-root h1,
+.marketing-root h2,
+.marketing-root h3,
+.marketing-root h4 {
+  font-family: 'Barlow Condensed', 'Noto Sans JP', system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  margin: 0;
+}
+
+.marketing-root h1 {
+  text-wrap: balance;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.marketing-root a:not(.btn) {
+  color: var(--mkt-accent-700);
+}
+.marketing-root a:not(.btn):hover {
+  color: var(--mkt-accent-800);
+}
+.marketing-root :focus-visible {
+  outline: 2px solid var(--mkt-accent);
+  outline-offset: 2px;
+}
+
+/* — レイアウト — */
+.mkt-wrap {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding-left: clamp(20px, 4vw, 56px);
+  padding-right: clamp(20px, 4vw, 56px);
+}
+
+.mkt-two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 32px;
+}
+
+.mkt-step {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 12px;
+}
+.mkt-num {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 22px;
+  color: var(--mkt-accent-700);
+}
+
+.mkt-kicker {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mkt-accent);
+  margin-bottom: 8px;
+}
+
+.mkt-muted {
+  color: var(--mkt-neutral-700);
+}
+
+/* — ボタン — */
+.marketing-root .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  text-decoration: none;
+  font-family: 'Barlow Condensed', 'Noto Sans JP', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.2;
+  color: var(--mkt-text);
+  background: transparent;
+  border: 1px solid var(--mkt-divider);
+  padding: 8px 14px;
+  border-radius: 0;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.marketing-root .btn:disabled,
+.marketing-root .btn[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.marketing-root .btn-primary {
+  background: var(--mkt-accent);
+  color: var(--mkt-bg);
+  border-color: var(--mkt-accent);
+}
+.marketing-root .btn-primary:hover {
+  background: var(--mkt-accent-600);
+}
+.marketing-root .btn-secondary:hover {
+  background: color-mix(in srgb, var(--mkt-text) 7%, transparent);
+}
+.marketing-root .btn-ghost {
+  border-color: transparent;
+  color: var(--mkt-accent);
+}
+.marketing-root .btn-ghost:hover {
+  background: color-mix(in srgb, var(--mkt-accent) 10%, transparent);
+}
+
+/* — blueprint 枠 (四隅 の 十字 マーク) — */
+.mkt-blueprint {
+  position: relative;
+  border: 1px solid var(--mkt-divider);
+  border-radius: 0;
+}
+.mkt-blueprint > .corner {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  color: color-mix(in srgb, var(--mkt-text) 55%, transparent);
+  pointer-events: none;
+}
+.mkt-blueprint > .corner::before,
+.mkt-blueprint > .corner::after {
+  content: '';
+  position: absolute;
+  background: currentColor;
+}
+.mkt-blueprint > .corner::before {
+  left: 5px;
+  top: 0;
+  width: 1px;
+  height: 100%;
+}
+.mkt-blueprint > .corner::after {
+  top: 5px;
+  left: 0;
+  width: 100%;
+  height: 1px;
+}
+.mkt-blueprint > .corner.tl {
+  top: -6px;
+  left: -6px;
+}
+.mkt-blueprint > .corner.tr {
+  top: -6px;
+  right: -6px;
+}
+.mkt-blueprint > .corner.bl {
+  bottom: -6px;
+  left: -6px;
+}
+.mkt-blueprint > .corner.br {
+  bottom: -6px;
+  right: -6px;
+}
+.mkt-elev-lg {
+  box-shadow: var(--mkt-shadow-lg);
+}
+
+/* — 写真 の 鉄青 モノトーン — */
+.mkt-duotone {
+  position: relative;
+  overflow: hidden;
+}
+.mkt-duotone::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--mkt-accent);
+  mix-blend-mode: color;
+}
+
+/* — セグメント (地籍 | 土木) — */
+.mkt-seg {
+  display: inline-flex;
+  border: 1px solid var(--mkt-neutral-400);
+}
+.mkt-seg-opt {
+  font-family: 'Barlow Condensed', 'Noto Sans JP', sans-serif;
+  font-size: 16px;
+  padding: 10px 22px;
+  background: transparent;
+  border: 0;
+  color: var(--mkt-text);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.mkt-seg-opt:hover {
+  background: var(--mkt-accent-100);
+}
+.mkt-seg-opt.on {
+  background: var(--mkt-accent);
+  color: var(--mkt-bg);
+}
+
+/* — タグ (料金 カード の 見出し 下 の ラベル) — */
+.mkt-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 3px 10px;
+  border-radius: 0;
+  align-self: flex-start;
+}
+.mkt-tag-accent {
+  background: var(--mkt-accent-100);
+  color: var(--mkt-accent-800);
+}
+.mkt-tag-neutral {
+  background: var(--mkt-neutral-100);
+  color: var(--mkt-neutral-800);
+}
+
+/* — ナビ — */
+.mkt-navlink {
+  font-size: 14px;
+  color: var(--mkt-text);
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.mkt-navlink:hover {
+  color: var(--mkt-accent);
+}
+
+/* — FAQ 行 — */
+.mkt-faq {
+  padding: 18px 0;
+  border-top: 1px solid var(--mkt-divider);
+}
+.mkt-faq h4 {
+  font-size: 16px;
+}
+.mkt-faq p {
+  font-size: 14px;
+  margin: 6px 0 0;
+}
+.mkt-faq-support {
+  padding: 20px 0;
+  border-top: 1px solid var(--mkt-divider);
+}
+.mkt-faq-support h4 {
+  font-size: 17px;
+}
+.mkt-faq-support p {
+  font-size: 14px;
+  margin: 8px 0 0;
+  line-height: 1.7;
+}
+.mkt-faq-support:last-child {
+  border-bottom: 1px solid var(--mkt-divider);
+}
+
+/* — サポート の 目次 / 対応機器 表 / フォーム — */
+.mkt-sublink {
+  display: block;
+  padding: 10px 0;
+  font-size: 14px;
+  text-decoration: none;
+  border-top: 1px solid var(--mkt-divider);
+}
+.mkt-sublink:last-child {
+  border-bottom: 1px solid var(--mkt-divider);
+}
+
+.mkt-spec {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 0;
+  font-size: 14px;
+}
+.mkt-spec > div {
+  padding: 12px 16px;
+  border-top: 1px solid var(--mkt-divider);
+}
+.mkt-spec > div:nth-child(odd) {
+  color: var(--mkt-neutral-700);
+}
+.mkt-spec > div:nth-child(even) {
+  border-left: 1px solid var(--mkt-divider);
+}
+
+.mkt-field {
+  display: grid;
+  gap: 6px;
+}
+.mkt-field label {
+  font-size: 13px;
+  color: var(--mkt-neutral-700);
+}
+.mkt-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  background: var(--mkt-bg);
+  border: 1px solid var(--mkt-neutral-400);
+  color: var(--mkt-text);
+  border-radius: 0;
+}
+.mkt-input:focus {
+  outline: 2px solid var(--mkt-accent);
+  outline-offset: 2px;
+}
+textarea.mkt-input {
+  min-height: 120px;
+  resize: vertical;
+}
+
+/* — プライバシー 本文 — */
+.mkt-doc {
+  max-width: 760px;
+  font-size: 15px;
+  line-height: 1.85;
+}
+.mkt-doc section {
+  padding: 28px 0;
+  border-top: 1px solid var(--mkt-divider);
+}
+.mkt-doc h2 {
+  font-size: 22px;
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 8px;
+  line-height: 1.3;
+}
+.mkt-doc h2 span {
+  color: var(--mkt-accent-700);
+}
+.mkt-doc p,
+.mkt-doc ul,
+.mkt-doc ol {
+  margin: 12px 0 0 52px;
+}
+.mkt-doc ul,
+.mkt-doc ol {
+  padding-left: 1.2em;
+}
+.mkt-doc li {
+  margin: 4px 0;
+}
+.mkt-doc table {
+  margin: 14px 0 0 52px;
+  border-collapse: collapse;
+  font-size: 14px;
+  width: calc(100% - 52px);
+}
+.mkt-doc td,
+.mkt-doc th {
+  border-top: 1px solid var(--mkt-divider);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.mkt-doc th {
+  font-weight: 500;
+  color: var(--mkt-neutral-700);
+  white-space: nowrap;
+}
+.mkt-todo {
+  background: var(--mkt-accent-100);
+  color: var(--mkt-accent-900);
+  padding: 0 4px;
+}
+@media (max-width: 600px) {
+  .mkt-doc p,
+  .mkt-doc ul,
+  .mkt-doc ol,
+  .mkt-doc table {
+    margin-left: 0;
+  }
+  .mkt-doc table {
+    width: 100%;
+  }
+  .mkt-doc h2 {
+    grid-template-columns: 36px 1fr;
+  }
+}
+
+/* — ヒーロー のフェードアニメーション。 prefers-reduced-motion 尊重 — */
+@keyframes mkt-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.mkt-fade {
+  animation: mkt-fade-in 0.5s ease both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mkt-fade {
+    animation: none;
+  }
+}

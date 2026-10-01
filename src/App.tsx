@@ -8,6 +8,7 @@ import { ResetPasswordPage } from '@/features/auth/ResetPasswordPage'
 import { AcceptInvitePage } from '@/features/auth/AcceptInvitePage'
 import { ShareFarmViewPage } from '@/features/share/ShareFarmViewPage'
 import { LandingPage } from '@/features/marketing/LandingPage'
+import { SupportPage } from '@/features/marketing/SupportPage'
 import { ApplyPage } from '@/features/marketing/ApplyPage'
 import { TermsPage } from '@/features/marketing/TermsPage'
 import { PrivacyPage } from '@/features/marketing/PrivacyPage'
@@ -188,10 +189,10 @@ function HomeGate() {
     )
   }
   if (!user) {
-    // ルート含む全ての保護パスはログインへ (自動ログイン: セッションが残っていれば
-    // useAuth() が user を返し、ここには到達せずアプリ本体が表示される)。
-    // 製品紹介 (LandingPage) は /lp で引き続きアクセス可能。
-    return <Navigate to="/login" replace />
+    // 未ログイン は 公開 LP (/) を 見せる。 App Store の 審査要件 (マーケティング
+    // URL が 認証 不要 で 閲覧 できる こと) を 満たす ため、 /login への 自動
+    // リダイレクト は やめ て LandingPage を そのまま 表示 する。
+    return <LandingPage />
   }
   return <AppLayout />
 }
@@ -205,7 +206,9 @@ function AppRoutes() {
         {/* パスワード再設定のコールバック (メールリンククリック後) */}
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         {/* 公開: 紹介・申し込みページ（認証不要） */}
-        <Route path="/lp" element={<LandingPage />} />
+        {/* /lp は 旧 URL。 新 LP は / に 移した の で / へ 恒久 リダイレクト。 */}
+        <Route path="/lp" element={<Navigate to="/" replace />} />
+        <Route path="/support" element={<SupportPage />} />
         <Route path="/apply" element={<ApplyPage />} />
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
