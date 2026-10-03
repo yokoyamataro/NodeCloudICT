@@ -4131,7 +4131,12 @@ export function MobileStakingPage() {
         alert(OFFLINE_FULL_MESSAGE)
         return
       }
-      if (result.status === 'error') return
+      if (result.status === 'error') {
+        // 以前 は silent return。 精密測定 の 座標 が 保存 されない のに
+        // 原因 が 見えない 事象 の 診断 の ため エラー を 可視化。
+        alert('測定の保存に失敗しました: ' + (result.message ?? '不明なエラー'))
+        return
+      }
       if (result.status === 'queued') {
         // 圏外: 座標管理への 登録は 送信時に まとめて 行う。
         // 写真は オフラインでは 一切扱わないので 結果モーダルも 出さない。
@@ -4243,7 +4248,10 @@ export function MobileStakingPage() {
       alert(OFFLINE_FULL_MESSAGE)
       return
     }
-    if (result.status === 'error') return
+    if (result.status === 'error') {
+      alert('新点の保存に失敗しました: ' + (result.message ?? '不明なエラー'))
+      return
+    }
     if (result.status === 'queued') {
       // 圏外: 座標管理登録は 送信時。写真は オフラインでは 扱わない (openPhoto は 無視)
       setShareToast(`新点 ${name} を 端末に保存 (未送信 ${useStakingStore.getState().pendingCount} 件)`)
