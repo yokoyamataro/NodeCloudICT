@@ -17,7 +17,7 @@ import './marketing.css'
  * 「html,body」 ルール を 確実 に 上書き する。 unmount 時 に クラス を
  * 剥がせば アプリ 用 の 設定 に 戻る。
  */
-function useReleasePageScroll() {
+export function useReleasePageScroll() {
   useEffect(() => {
     const html = document.documentElement
     const body = document.body

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Loader2, CheckCircle2, ArrowLeft } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { useReleasePageScroll } from './MarketingLayout'
 
 interface FormState {
   companyName: string
@@ -57,6 +58,10 @@ const INDUSTRY_OPTIONS = [
 ]
 
 export function ApplyPage() {
+  // 業務アプリ の html,body overflow:hidden を 一時解除 して ホイール で
+  // ページ全体 を 縦スクロール できる ように する。 他 の マーケティング
+  // ページ と 同じ 仕組み (unmount で 自動解除)。
+  useReleasePageScroll()
   const [form, setForm] = useState<FormState>(EMPTY)
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
@@ -151,7 +156,7 @@ export function ApplyPage() {
             下記をご記入ください。担当者より折り返しご連絡します。
           </p>
           <div className="mt-3 p-2.5 bg-emerald-50 border border-emerald-200 rounded text-sm text-emerald-800">
-            🎁 <b>2026年11月30日まで実証実験のため無償提供</b>（先着30ユーザー限定）。
+            🎁 <b>2026年12月31日まで無償提供</b> ＋ <b>60日間無料体験</b>。
           </div>
 
           {error && (
