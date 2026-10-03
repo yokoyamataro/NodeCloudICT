@@ -430,6 +430,7 @@ export function LandingPage() {
             price="¥3,300"
             priceUnit=" 〜 /月"
             body="座標地番管理、スマホのRTK現地調査まであらゆる機能を利用可能。地籍測量・土木工事の両業務に対応。"
+            freeTrial="60日間無料。期間内に解約した場合は料金は一切かかりません。"
           />
           <PriceCard
             tag="機器"
@@ -788,6 +789,7 @@ function PriceCard({
   price,
   priceUnit,
   body,
+  freeTrial,
 }: {
   tag: string
   title: string
@@ -795,6 +797,7 @@ function PriceCard({
   price: string
   priceUnit: string
   body: string
+  freeTrial?: string
 }) {
   return (
     <div className="mkt-blueprint" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -827,6 +830,22 @@ function PriceCard({
             </span>
           </div>
         </div>
+        {freeTrial && (
+          <div
+            style={{
+              padding: '10px 12px',
+              borderRadius: 6,
+              background: 'var(--mkt-accent-100)',
+              border: '1px solid var(--mkt-accent-300)',
+              color: 'var(--mkt-accent-900)',
+              fontSize: 13,
+              lineHeight: 1.6,
+              fontWeight: 600,
+            }}
+          >
+            {freeTrial}
+          </div>
+        )}
         <p className="mkt-muted" style={{ fontSize: 14, margin: 0, lineHeight: 1.7 }}>
           {body}
         </p>
