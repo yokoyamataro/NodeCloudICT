@@ -3800,9 +3800,17 @@ export function MobileStakingPage() {
     if (recording) return
     // セッション は 工区 を 開いた とき に 自動 で 用意 して ある (下 の
     // useEffect 参照)。 万一 まだ 決まって いない 場合 だけ 保険 で 用意 する。
+    // ここで null が 返る と ボタン が 無反応 に 見える ので エラー を 出す。
     if (!sessionSetId) {
       const id = await ensureSessionSetId()
-      if (!id) return
+      if (!id) {
+        const storeErr = useSurveySetStore.getState().error
+        alert(
+          '記録セットの準備ができませんでした。' +
+            (storeErr ? '\n詳細: ' + storeErr : ''),
+        )
+        return
+      }
     }
     startRecordingNow(opts)
   }
@@ -3812,7 +3820,10 @@ export function MobileStakingPage() {
       alert('Geolocation が利用できません')
       return
     }
-    if (!farmId) return
+    if (!farmId) {
+      alert('工区が特定できません。一度画面を閉じて開き直してください。')
+      return
+    }
     recSamplesRef.current = []
     setRejectedCount(0)
     recForceFreeRef.current = !!opts.forceFreePoint
