@@ -418,7 +418,7 @@ export function LandingPage() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
             gap: 24,
             alignItems: 'stretch',
           }}
@@ -432,15 +432,7 @@ export function LandingPage() {
             body="座標地番管理、スマホのRTK現地調査まであらゆる機能を利用可能。地籍測量・土木工事の両業務に対応。"
             freeTrial="60日間無料。期間内に解約した場合は料金は一切かかりません。"
           />
-          <PriceCard
-            tag="機器"
-            title="Drogger Gパッケージ"
-            unit="1台"
-            price="¥220,000"
-            priceUnit=" （買い切り）"
-            body="BLEカスタマイズ済。iPhone・Androidのどちらでもすぐに接続できます。"
-          />
-          {/* TODO(未確定): 下段 2 つ の 内容 説明 と 税表記 は 仮 */}
+          {/* TODO(未確定): 下 2 つ の 内容 説明 と 税表記 は 仮 */}
           <PriceCard
             tag="地籍測量"
             title="地図作成作業パッケージ"
@@ -457,6 +449,31 @@ export function LandingPage() {
             priceUnit=" （1年間限り）"
             body="土木工事の現場向けパッケージです。"
           />
+        </div>
+
+        {/* 別売り オプション: 機器 は 任意 購入 なので 下 に 独立 させる */}
+        <div style={{ marginTop: 32 }}>
+          <div className="mkt-kicker" style={{ marginBottom: 12 }}>
+            Optional
+          </div>
+          <h3 style={{ fontSize: 20, marginBottom: 16 }}>別売りオプション</h3>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+              gap: 24,
+              alignItems: 'stretch',
+            }}
+          >
+            <PriceCard
+              tag="機器"
+              title="Drogger Gパッケージ"
+              unit="1台"
+              price="¥220,000"
+              priceUnit=" （買い切り）"
+              body="BLEカスタマイズ済。iPhone・Androidのどちらでもすぐに接続できます。"
+            />
+          </div>
         </div>
       </section>
 
