@@ -86,7 +86,7 @@ export function LandingPage() {
   return (
     <MarketingLayout
       navItems={NAV}
-      cta={{ href: '#demo', label: 'デモを予約', kind: 'anchor' }}
+      cta={{ href: '/apply', label: '会員登録', kind: 'route' }}
     >
       {/* ヒーロー */}
       <section
@@ -152,14 +152,24 @@ export function LandingPage() {
 
           {/* CTA */}
           <div style={{ display: 'flex', gap: 12, marginTop: 32, flexWrap: 'wrap' }}>
-            <a
+            <Link
               className="btn btn-primary mkt-blueprint"
-              href="#demo"
-              style={{ padding: '13px 26px', fontSize: 16 }}
+              to="/apply"
+              style={{
+                padding: '13px 26px',
+                fontSize: 16,
+                display: 'inline-flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                lineHeight: 1.2,
+              }}
             >
               <BlueprintCorners />
-              デモを予約する
-            </a>
+              <span>会員登録</span>
+              <span style={{ fontSize: 11, fontWeight: 400, marginTop: 2, opacity: 0.9 }}>
+                60日間無料
+              </span>
+            </Link>
             <a className="btn btn-ghost" href="#workflow" style={{ padding: '13px 16px', fontSize: 16 }}>
               機能を見る →
             </a>
@@ -608,16 +618,23 @@ export function LandingPage() {
           </div>
           <Link
             className="btn"
-            to="/support#contact"
+            to="/apply"
             style={{
               padding: '13px 28px',
               fontSize: 16,
               background: 'var(--mkt-bg)',
               color: 'var(--mkt-accent-900)',
               borderColor: 'var(--mkt-bg)',
+              display: 'inline-flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              lineHeight: 1.2,
             }}
           >
-            デモを予約する
+            <span>会員登録</span>
+            <span style={{ fontSize: 11, fontWeight: 400, marginTop: 2, opacity: 0.75 }}>
+              60日間無料
+            </span>
           </Link>
         </div>
       </section>
