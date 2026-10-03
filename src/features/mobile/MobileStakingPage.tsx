@@ -919,8 +919,6 @@ export function MobileStakingPage() {
   const surveySets = useSurveySetStore((s) => s.sets)
   const createSurveySet = useSurveySetStore((s) => s.createSet)
   // dx/dy/dz スライド 補正 は 廃止 のため farmSlide の 読み書き は しない。
-  // 初回 測定 の セッション 自動判定 が 進行中 か。 二重 起動 を 防ぐ フラグ。
-  const ensureSessionRef = useRef(false)
   const touchSurveySet = useSurveySetStore((s) => s.touchSet)
   const fetchSurveySets = useSurveySetStore((s) => s.fetchByFarm)
   useEffect(() => {
@@ -3759,40 +3757,39 @@ export function MobileStakingPage() {
   const ensureSessionSetId = async (): Promise<string | null> => {
     if (sessionSetId) return sessionSetId
     if (!farmId) return null
-    if (ensureSessionRef.current) return null
-    ensureSessionRef.current = true
-    try {
-      const today = jstTodayIso()
-      const uid = user?.id ?? null
-      const currentBase: string | null = null // 端末 で 自動 取得 して いない
-      const matches = surveySets
-        .filter((s) => s.farmId === farmId)
-        .filter((s) => s.measuredOn === today)
-        .filter((s) => (s.baseStation ?? null) === currentBase)
-        .filter((s) => uid == null || s.createdBy == null || s.createdBy === uid)
-        .sort((a, b) => {
-          const at = a.endedAt ?? a.startedAt ?? a.createdAt
-          const bt = b.endedAt ?? b.startedAt ?? b.createdAt
-          return bt.localeCompare(at)
-        })
-      const hit = matches[0]
-      if (hit) {
-        setSessionSetId(hit.id)
-        void touchSurveySet(hit.id, { start: true })
-        return hit.id
-      }
-      // 新規 セッション を 作成
-      const row = await createSurveySet(farmId, {
-        measuredOn: today,
-        name: generateDefaultSessionName(surveySets),
+    // 二重 起動 ガード は 外す。 createSurveySet が ハング した 場合 に ref が
+    // 戻らず ボタン が 完全 に 無反応 に なる 事象 を 防ぐ。 UNIQUE 制約 は
+    // ない の で 多重 作成 で も 深刻 な 害 は ない。
+    const today = jstTodayIso()
+    const uid = user?.id ?? null
+    const currentBase: string | null = null // 端末 で 自動 取得 して いない
+    const matches = surveySets
+      .filter((s) => s.farmId === farmId)
+      .filter((s) => s.measuredOn === today)
+      .filter((s) => (s.baseStation ?? null) === currentBase)
+      .filter((s) => uid == null || s.createdBy == null || s.createdBy === uid)
+      .sort((a, b) => {
+        const at = a.endedAt ?? a.startedAt ?? a.createdAt
+        const bt = b.endedAt ?? b.startedAt ?? b.createdAt
+        return bt.localeCompare(at)
       })
-      if (!row) return null
-      setSessionSetId(row.id)
-      void touchSurveySet(row.id, { start: true })
-      return row.id
-    } finally {
-      ensureSessionRef.current = false
+    const hit = matches[0]
+    if (hit) {
+      setSessionSetId(hit.id)
+      void touchSurveySet(hit.id, { start: true })
+      return hit.id
     }
+    // 新規 セッション を 作成。 ストア の error は 事前 に クリア して、
+    // 失敗 時 に 新鮮 な 原因 だけ が 残る ように する。
+    useSurveySetStore.setState({ error: null })
+    const row = await createSurveySet(farmId, {
+      measuredOn: today,
+      name: generateDefaultSessionName(surveySets),
+    })
+    if (!row) return null
+    setSessionSetId(row.id)
+    void touchSurveySet(row.id, { start: true })
+    return row.id
   }
 
   // 記録開始
