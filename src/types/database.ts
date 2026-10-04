@@ -327,6 +327,9 @@ export interface Organization {
   note: string | null
   postal_code: string | null
   phone: string | null
+  /** 都道府県 (例: 「北海道」)。 郵便番号 自動入力 の address1 に 相当 */
+  prefecture: string | null
+  /** 都道府県 以外 の 住所 (「区郡市町村以下」) */
   address: string | null
   representative: string | null
   /** 契約窓口 に なる 管理者 の 連絡先。 admin_user_id (アプリ上の ユーザー) とは 別 */

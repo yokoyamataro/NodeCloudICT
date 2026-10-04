@@ -40,6 +40,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
+import { PREFECTURE_NAME_LIST, lookupPostalCode } from '@/lib/prefectures'
 import type { Organization, OrgProduct } from '@/types/database'
 import { SiteUsageView } from './SiteUsageView'
 import { OrgMembersView } from './OrgMembersView'
@@ -50,6 +51,9 @@ interface OrgDraft {
   name_kana: string
   postal_code: string
   phone: string
+  /** 都道府県 (郵便番号 自動入力 で 埋まる) */
+  prefecture: string
+  /** 都道府県 以外 (区郡市町村以下) */
   address: string
   representative: string
   admin_name: string
@@ -68,6 +72,7 @@ const EMPTY_ORG_DRAFT: OrgDraft = {
   name_kana: '',
   postal_code: '',
   phone: '',
+  prefecture: '',
   address: '',
   representative: '',
   admin_name: '',
@@ -86,6 +91,7 @@ function toDraft(o: Organization): OrgDraft {
     name_kana: o.name_kana ?? '',
     postal_code: o.postal_code ?? '',
     phone: o.phone ?? '',
+    prefecture: o.prefecture ?? '',
     address: o.address ?? '',
     representative: o.representative ?? '',
     admin_name: o.admin_name ?? '',
@@ -124,6 +130,7 @@ function toPayload(d: OrgDraft) {
     name_kana: d.name_kana.trim() || null,
     postal_code: d.postal_code.trim() || null,
     phone: d.phone.trim() || null,
+    prefecture: d.prefecture.trim() || null,
     address: d.address.trim() || null,
     representative: d.representative.trim() || null,
     admin_name: d.admin_name.trim() || null,
@@ -231,7 +238,7 @@ function SiteOwnerUnifiedView() {
     const q = search.trim().toLowerCase()
     if (!q) return orgs
     return orgs.filter((o) =>
-      [o.name, o.representative, o.address, o.note]
+      [o.name, o.representative, o.prefecture, o.address, o.note]
         .filter((s): s is string => typeof s === 'string')
         .some((s) => s.toLowerCase().includes(q)),
     )
@@ -811,14 +818,47 @@ function OrgInfoForm({
           <input
             type="text"
             value={draft.postal_code}
+            onChange={(e) => {
+              const v = e.target.value
+              setDraft((d) => ({ ...d, postal_code: v }))
+              // 7 桁 揃った 瞬間 に zipcloud を 叩いて 都道府県 と
+              // 区郡市町村以下 を 埋める。 既存 値 が 入って いる 場合 は
+              // 上書き (申込 → 承認 で 内容 が 変わる こと は あまり ない)
+              const digits = v.replace(/[^0-9]/g, '')
+              if (digits.length === 7) {
+                void lookupPostalCode(digits).then((r) => {
+                  if (!r) return
+                  setDraft((d) => ({
+                    ...d,
+                    prefecture: r.prefecture,
+                    address: r.rest,
+                  }))
+                })
+              }
+            }}
+            disabled={!editable}
+            className={inputClass}
+            placeholder="例: 099-4113"
+          />
+        </FormField>
+        <FormField label="都道府県">
+          <select
+            value={draft.prefecture}
             onChange={(e) =>
-              setDraft((d) => ({ ...d, postal_code: e.target.value }))
+              setDraft((d) => ({ ...d, prefecture: e.target.value }))
             }
             disabled={!editable}
             className={inputClass}
-          />
+          >
+            <option value="">（未選択）</option>
+            {PREFECTURE_NAME_LIST.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
         </FormField>
-        <FormField label="住所">
+        <FormField label="住所（区郡市町村以下）">
           <input
             type="text"
             value={draft.address}
@@ -827,6 +867,7 @@ function OrgInfoForm({
             }
             disabled={!editable}
             className={inputClass}
+            placeholder="例: 斜里郡斜里町青葉町9-13"
           />
         </FormField>
         <FormField label="電話番号">
@@ -1146,7 +1187,46 @@ function NewOrgDialog({
               className={inputClass}
             />
           </FormField>
-          <FormField label="住所">
+          <FormField label="郵便番号">
+            <input
+              type="text"
+              value={draft.postal_code}
+              onChange={(e) => {
+                const v = e.target.value
+                setDraft((d) => ({ ...d, postal_code: v }))
+                const digits = v.replace(/[^0-9]/g, '')
+                if (digits.length === 7) {
+                  void lookupPostalCode(digits).then((r) => {
+                    if (!r) return
+                    setDraft((d) => ({
+                      ...d,
+                      prefecture: r.prefecture,
+                      address: r.rest,
+                    }))
+                  })
+                }
+              }}
+              className={inputClass}
+              placeholder="例: 099-4113"
+            />
+          </FormField>
+          <FormField label="都道府県">
+            <select
+              value={draft.prefecture}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, prefecture: e.target.value }))
+              }
+              className={inputClass}
+            >
+              <option value="">（未選択）</option>
+              {PREFECTURE_NAME_LIST.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="住所（区郡市町村以下）">
             <input
               type="text"
               value={draft.address}
@@ -1154,6 +1234,7 @@ function NewOrgDialog({
                 setDraft((d) => ({ ...d, address: e.target.value }))
               }
               className={inputClass}
+              placeholder="例: 斜里郡斜里町青葉町9-13"
             />
           </FormField>
           <FormField label="プラン">

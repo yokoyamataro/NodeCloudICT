@@ -1,6 +1,49 @@
 // 全国 47 都道府県コード → 表示名 (総務省 全国地方公共団体コードの 2 桁 prefecture code)。
 // parcel_map_datasets.prefecture_code / touki.or.jp の 都道府県 select value と同じ。
 
+/** コード (「01」等) を 持たない 単純 な 名前 配列。 select の option や
+ *  組織台帳 / 申込 フォーム の 都道府県 選択 で 使う。 */
+export const PREFECTURE_NAME_LIST: readonly string[] = [
+  '北海道',
+  '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県',
+  '茨城県', '栃木県', '群馬県', '埼玉県', '千葉県', '東京都', '神奈川県',
+  '新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県',
+  '岐阜県', '静岡県', '愛知県', '三重県',
+  '滋賀県', '京都府', '大阪府', '兵庫県', '奈良県', '和歌山県',
+  '鳥取県', '島根県', '岡山県', '広島県', '山口県',
+  '徳島県', '香川県', '愛媛県', '高知県',
+  '福岡県', '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県',
+  '沖縄県',
+]
+
+export interface ZipLookupResult {
+  prefecture: string
+  rest: string
+}
+
+/**
+ * 郵便番号 (7 桁) から 都道府県 と 「区郡市町村以下」 を 引く (zipcloud 無料 API)。
+ * 失敗時 は null を 返す ので 呼び出し元 で 手入力 を 促す。
+ */
+export async function lookupPostalCode(zip: string): Promise<ZipLookupResult | null> {
+  const digits = zip.replace(/[^0-9]/g, '')
+  if (digits.length !== 7) return null
+  try {
+    const res = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${digits}`)
+    const json = (await res.json()) as {
+      results?: Array<{ address1: string; address2: string; address3: string }> | null
+    }
+    const r = json?.results?.[0]
+    if (!r) return null
+    return {
+      prefecture: r.address1,
+      rest: `${r.address2}${r.address3}`,
+    }
+  } catch {
+    return null
+  }
+}
+
 export const PREFECTURE_NAMES: Record<string, string> = {
   '01': '北海道', '02': '青森県', '03': '岩手県', '04': '宮城県', '05': '秋田県',
   '06': '山形県', '07': '福島県', '08': '茨城県', '09': '栃木県', '10': '群馬県',

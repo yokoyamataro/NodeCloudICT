@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Loader2, CheckCircle2, ArrowLeft } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { PREFECTURE_NAME_LIST, lookupPostalCode } from '@/lib/prefectures'
 import { useReleasePageScroll } from './MarketingLayout'
 
 interface FormState {
@@ -10,6 +11,7 @@ interface FormState {
   industry: string
   industryOther: string
   postalCode: string
+  prefecture: string
   address: string
   contactName: string
   email: string
@@ -29,6 +31,7 @@ const EMPTY: FormState = {
   industry: '',
   industryOther: '',
   postalCode: '',
+  prefecture: '',
   address: '',
   contactName: '',
   email: '',
@@ -70,21 +73,11 @@ export function ApplyPage() {
 
   const update = (k: keyof FormState, v: string) => setForm((p) => ({ ...p, [k]: v }))
 
-  // 郵便番号(7桁)から住所を自動入力（zipcloud・無料API）
+  // 郵便番号(7桁)から 都道府県 と 「区郡市町村以下」 を 分けて 自動入力
   const lookupAddress = async (zip: string) => {
-    const digits = zip.replace(/[^0-9]/g, '')
-    if (digits.length !== 7) return
-    try {
-      const res = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${digits}`)
-      const json = await res.json()
-      const r = json?.results?.[0]
-      if (r) {
-        const addr = `${r.address1}${r.address2}${r.address3}`
-        setForm((p) => ({ ...p, address: addr }))
-      }
-    } catch {
-      /* 取得失敗時は手入力のまま */
-    }
+    const r = await lookupPostalCode(zip)
+    if (!r) return
+    setForm((p) => ({ ...p, prefecture: r.prefecture, address: r.rest }))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -99,6 +92,7 @@ export function ApplyPage() {
           (form.industry === 'その他' ? form.industryOther.trim() || 'その他' : form.industry) ||
           null,
         postal_code: form.postalCode.trim() || null,
+        prefecture: form.prefecture.trim() || null,
         address: form.address.trim() || null,
         contact_name: form.contactName.trim(),
         email: form.email.trim(),
@@ -208,22 +202,36 @@ export function ApplyPage() {
                   onChange={(e) => {
                     const v = e.target.value
                     update('postalCode', v)
-                    if (v.replace(/[^0-9]/g, '').length === 7) lookupAddress(v)
+                    if (v.replace(/[^0-9]/g, '').length === 7) void lookupAddress(v)
                   }}
                   className="form-input"
                   placeholder="123-4567"
                 />
               </Field>
-              <Field label="住所（郵便番号で自動入力）">
-                <input
-                  type="text"
-                  value={form.address}
-                  onChange={(e) => update('address', e.target.value)}
+              <Field label="都道府県">
+                <select
+                  value={form.prefecture}
+                  onChange={(e) => update('prefecture', e.target.value)}
                   className="form-input"
-                  placeholder="都道府県市区町村〜"
-                />
+                >
+                  <option value="">（未選択）</option>
+                  {PREFECTURE_NAME_LIST.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
               </Field>
             </div>
+            <Field label="住所（区郡市町村以下。郵便番号で自動入力）">
+              <input
+                type="text"
+                value={form.address}
+                onChange={(e) => update('address', e.target.value)}
+                className="form-input"
+                placeholder="例: 斜里郡斜里町青葉町9-13"
+              />
+            </Field>
             <Field label="ご担当者名" required>
               <input
                 type="text"
