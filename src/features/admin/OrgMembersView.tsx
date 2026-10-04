@@ -413,7 +413,7 @@ export function OrgMembersView({
         <table className="w-full text-sm">
           <thead className="bg-slate-100 text-slate-600 text-xs sticky top-0">
             <tr>
-              <th className="text-left px-3 py-2">メール</th>
+              <th className="text-left px-3 py-2 min-w-[14rem]">メール</th>
               <th className="text-left px-3 py-2 w-40">氏名</th>
               <th className="text-left px-3 py-2 w-36">電話番号</th>
               <th className="text-left px-3 py-2 w-24">役割</th>
@@ -445,8 +445,10 @@ export function OrgMembersView({
                 phoneDraft.trim() !== (m.phone ?? '').trim()
               return (
                 <tr key={m.user_id} className="border-b hover:bg-slate-50/50">
-                  <td className="px-3 py-2 align-top">
-                    <div className="font-medium break-all">{m.email}</div>
+                  <td className="px-3 py-2 align-top min-w-[14rem]">
+                    <div className="font-medium break-words whitespace-normal">
+                      {m.email}
+                    </div>
                     {isSelf && (
                       <div className="text-[10px] text-blue-600 mt-0.5">
                         あなた

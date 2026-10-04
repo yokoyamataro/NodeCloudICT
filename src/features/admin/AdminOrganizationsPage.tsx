@@ -403,7 +403,7 @@ function SiteOwnerUnifiedView() {
             <SiteUsageView />
           ) : selectedOrg ? (
             <>
-              <div className="w-[42rem] max-w-[50%] shrink-0 overflow-auto border-r">
+              <div className="w-[28rem] max-w-[40%] shrink-0 overflow-auto border-r">
                 <OrgInfoForm
                   key={selectedOrg.id}
                   org={selectedOrg}
@@ -507,7 +507,7 @@ function OrgAdminUnifiedView({ adminOrgs }: { adminOrgs: AdminOrgRow[] }) {
           </div>
         ) : (
           <>
-            <div className="w-[42rem] max-w-[50%] shrink-0 overflow-auto border-r">
+            <div className="w-[28rem] max-w-[40%] shrink-0 overflow-auto border-r">
               <OrgInfoForm org={org} editable={false} />
             </div>
             <div className="flex-1 min-w-0 min-h-0 overflow-hidden bg-white flex flex-col">
