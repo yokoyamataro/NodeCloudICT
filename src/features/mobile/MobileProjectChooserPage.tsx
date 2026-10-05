@@ -4,14 +4,15 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, Car, Check, ChevronRight, Folder, Loader2, LogOut, MapPin, Pencil, Plus, X } from 'lucide-react'
+import { AlertCircle, Check, Folder, Loader2, LogOut, MapPin, Pencil, Plus, X } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useOfflineListFallback } from '@/lib/useOfflineListFallback'
 import { getAllProjectRecency, sortByRecency } from '@/lib/recentProjects'
 import { useFarmStore } from '@/stores/farmStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDroggerConnection } from '@/stores/droggerConnectionStore'
-import { useCanUseMobility } from '@/lib/useCanUseMobility'
+// モビリティ タイル を 一時 非表示 に したため 未使用。 再表示 時 に 戻す。
+// import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
 import { JGD2011_ZONES } from '@/lib/coordinates'
@@ -54,7 +55,7 @@ export function MobileProjectChooserPage() {
     [rawProjects, projectRecency],
   )
   const { farms, fetchFarms } = useFarmStore()
-  const canUseMobility = useCanUseMobility()
+  // const canUseMobility = useCanUseMobility()
 
   useEffect(() => {
     fetchProjects()
@@ -275,8 +276,10 @@ export function MobileProjectChooserPage() {
             )}
           </>
         )}
-        {/* モビリティ (準備中): サイトオーナーだけに表示。モバイルはドライバー地図画面へ */}
-        {canUseMobility && (
+        {/* モビリティ の セクション は 一時 非表示 (2026-10)。
+            /m/drive 自体 は 残す ので、 URL 直打ち で は 入れる 想定。
+            再表示 する なら 下 の コメント を 外す。 */}
+        {/* {canUseMobility && (
           <section>
             <div className="flex items-center gap-2 mb-1.5">
               <div className="w-1 h-4 rounded bg-indigo-500" />
@@ -285,9 +288,6 @@ export function MobileProjectChooserPage() {
                 開発中
               </span>
             </div>
-            {/* モビリティは 別エントリ (mobility.html / basename '/m')。
-                同一オリジンなので ログインは 維持される。SPA 内遷移では
-                届かないため location.href で 移動する。 */}
             <button
               type="button"
               onClick={() => { window.location.href = '/m/drive' }}
@@ -307,7 +307,7 @@ export function MobileProjectChooserPage() {
               <ChevronRight className="h-4 w-4 text-slate-400" />
             </button>
           </section>
-        )}
+        )} */}
       </div>
 
       {/* 編集モーダル */}
