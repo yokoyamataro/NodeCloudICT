@@ -2,6 +2,7 @@
 // ※ ドラフト雛形。実運用前に専門家のレビューを推奨。
 import { Link } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
+import { useReleasePageScroll } from './MarketingLayout'
 
 const OPERATOR = '有限会社横山測量設計事務所'
 const SERVICE = 'NodeCloud'
@@ -103,6 +104,9 @@ const SECTIONS: { title: string; body: string }[] = [
 ]
 
 export function TermsPage() {
+  // 業務アプリ の html,body overflow:hidden を 一時解除 して マウスホイール で
+  // 縦スクロール できる ように する (他 の マーケティング ページ と 同じ 仕組み)
+  useReleasePageScroll()
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="bg-white border-b">
@@ -132,6 +136,9 @@ export function TermsPage() {
           <div className="mt-8 pt-4 border-t text-sm text-slate-500">
             <div>制定日: {EFFECTIVE_DATE}</div>
             <div>{OPERATOR}</div>
+            {/* アプリ の バージョン情報 (ビルド日時)。 以前 は ヘッダ の
+                タイトル 下 に 常時 出して いた が、 画面 を 広く 使う 為 こちら に 移動 */}
+            <div className="mt-2 text-xs">バージョン: {__BUILD_TIME__}</div>
           </div>
         </div>
 

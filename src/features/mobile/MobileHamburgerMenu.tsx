@@ -7,8 +7,8 @@
 // シンプル表示に留める。touki.or.jp 認証情報等の細かい設定は PC 表示で。
 
 import { useState } from 'react'
-import { Menu, X, LogOut, Settings2, Monitor } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Menu, X, LogOut, Settings2, Monitor, FileText } from 'lucide-react'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { setDisplayModeOverride } from '@/lib/displayMode'
 
@@ -126,11 +126,19 @@ export function MobileHamburgerMenu(_props: Props) {
             <button
               type="button"
               onClick={handleSettings}
-              className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm hover:bg-slate-50"
+              className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm hover:bg-slate-50 border-b"
             >
               <Settings2 className="h-4 w-4 text-slate-500" />
               設定（ログイン情報）
             </button>
+            <Link
+              to="/terms"
+              onClick={() => setDrawerOpen(false)}
+              className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm hover:bg-slate-50"
+            >
+              <FileText className="h-4 w-4 text-slate-500" />
+              利用規約
+            </Link>
           </div>
         </div>
       )}

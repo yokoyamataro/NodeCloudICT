@@ -614,7 +614,8 @@ export function AppLayout() {
             )}
             <div className="flex flex-col leading-none">
               <h1 className="text-xl font-bold">NodeCloud</h1>
-              <span className="text-[10px] text-slate-500 mt-0.5">{__BUILD_TIME__}</span>
+              {/* 以前 は ここ に __BUILD_TIME__ を 常時 出して いた。
+                  利用規約 ページ の バージョン欄 に 移動 済み (ユーザーメニュー から 開く) */}
             </div>
             {/* スマホ画面へ切替（タイトル直右） */}
             <button
@@ -933,6 +934,14 @@ function UserMenu({ onSignOut, isSiteOwner }: { onSignOut: () => void; isSiteOwn
               登記情報 (touki.or.jp)
             </Link>
           )}
+          <Link
+            to="/terms"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50"
+          >
+            <FileText className="h-4 w-4 text-slate-500" />
+            利用規約
+          </Link>
           <Link
             to="/settings/password"
             onClick={() => setOpen(false)}
