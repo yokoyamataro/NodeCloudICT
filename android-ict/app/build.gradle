@@ -1,11 +1,26 @@
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
+// 署名鍵 の 設定。 android-ict/key.properties に 置く (コミット し ない)。
+//   storeFile=C:/path/to/nodecloud-ict-upload.jks
+//   storePassword=...
+//   keyAlias=upload
+//   keyPassword=...
+// 無い 場合 は 署名 し ない (デバッグ や 他 の 人 の 手元 で も ビルド は 通る)。
+def keystorePropertiesFile = rootProject.file("key.properties")
+def keystoreProperties = new Properties()
+def hasKeystore = keystorePropertiesFile.exists()
+if (hasKeystore) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace = "net.nodecloud.ict"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "net.nodecloud.ict"
+        // Play / App Store で 共通 の ID。 Kotlin の package (namespace) は
+        // net.nodecloud.ict の まま で 問題 ない (applicationId と は 別物)
+        applicationId "jp.nodecloud.ict"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -17,8 +32,23 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (hasKeystore) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
     buildTypes {
         release {
+            // key.properties が 有る ときだけ 署名 する。
+            // 無い まま 作った 成果物 は Play に 上げ られ ない (未署名)。
+            if (hasKeystore) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
