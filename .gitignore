@@ -77,3 +77,6 @@ android-mobility/local.properties
 android-mobility/app/src/main/assets/public/
 ios/build/
 ios-mobility/build/
+
+# ランディングページ の 元資料 (ハンドオフ 用、 バイナリ 多数)
+design_handoff_nodecloud_lp/
