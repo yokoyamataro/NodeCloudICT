@@ -40,6 +40,7 @@ import {
   ClipboardList,
   Megaphone,
   MessageSquare,
+  UserX,
   Building2,
   LayoutTemplate,
   CalendarClock,
@@ -49,6 +50,7 @@ import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
 import { setDisplayModeOverride } from '@/lib/displayMode'
+import { useOrgAdminContact } from '@/lib/useOrgAdminContact'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
@@ -685,27 +687,18 @@ export function AppLayout() {
               </div>
             )}
 
+            {/* ヘッダ 右端 は 表示名 のみ。 所属組織 と 管理者 バッジ は
+                UserMenu の 中 (ユーザー情報 欄) に 移動 (2026-10)。 */}
             <div className="flex items-center gap-2">
               <User className="h-4 w-4 text-slate-400" />
-              {organizationName && (
-                <span
-                  className="text-sm text-slate-300"
-                  title={`所属: ${organizationName}`}
-                >
-                  {organizationName}
-                </span>
-              )}
-              {isOrgAdmin && (
-                <span
-                  className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-amber-500/20 text-amber-300 border border-amber-400/40"
-                  title="この組織の管理者"
-                >
-                  管理者
-                </span>
-              )}
               <span className="text-sm text-slate-300" title={user?.email ?? ''}>{displayName}</span>
             </div>
-            <UserMenu onSignOut={handleSignOut} isSiteOwner={isAdmin(user?.email)} />
+            <UserMenu
+              onSignOut={handleSignOut}
+              isSiteOwner={isAdmin(user?.email)}
+              organizationName={organizationName}
+              isOrgAdmin={isOrgAdmin}
+            />
             {/* ヘッダ を 折りたたむ (縦 領域 を 広く 使いたい とき) */}
             <button
               onClick={toggleHeader}
@@ -896,10 +889,23 @@ function SiteAdminMenu() {
 }
 
 /** ヘッダ右端のユーザーメニュー。個人設定 (登記情報、パスワード変更) と
- *  ログアウトをドロップダウンに集約する。 */
-function UserMenu({ onSignOut, isSiteOwner }: { onSignOut: () => void; isSiteOwner: boolean }) {
+ *  ログアウトをドロップダウンに集約する。
+ *  組織名 / 管理者 情報 も ここ に 出す (以前 は ヘッダ 直書き だった が
+ *  本人以外 が ゴチャつく 原因 に なる ので ユーザー情報 欄 に 集約)。 */
+function UserMenu({
+  onSignOut,
+  isSiteOwner,
+  organizationName,
+  isOrgAdmin,
+}: {
+  onSignOut: () => void
+  isSiteOwner: boolean
+  organizationName: string | null
+  isOrgAdmin: boolean
+}) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const { contact: adminContact } = useOrgAdminContact()
 
   // 外側クリックで閉じる
   useEffect(() => {
@@ -923,7 +929,41 @@ function UserMenu({ onSignOut, isSiteOwner }: { onSignOut: () => void; isSiteOwn
         <ChevronDown className="h-3.5 w-3.5" />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-48 bg-white text-slate-800 border border-slate-200 rounded-md shadow-lg z-[5000] overflow-hidden">
+        <div className="absolute right-0 top-full mt-1 w-64 bg-white text-slate-800 border border-slate-200 rounded-md shadow-lg z-[5000] overflow-hidden">
+          {/* ユーザー情報 ヘッダ: 組織 と 管理者 を 常時 表示 */}
+          {(organizationName || adminContact) && (
+            <div className="px-3 py-2 bg-slate-50 border-b text-xs space-y-0.5">
+              {organizationName && (
+                <div>
+                  <span className="text-slate-500 mr-1">組織:</span>
+                  <span className="font-medium">{organizationName}</span>
+                  {isOrgAdmin && (
+                    <span className="ml-1.5 px-1 py-0.5 text-[9px] font-medium rounded bg-amber-100 text-amber-800 border border-amber-300">
+                      管理者
+                    </span>
+                  )}
+                </div>
+              )}
+              {!isOrgAdmin && !isSiteOwner && adminContact?.adminName && (
+                <div>
+                  <span className="text-slate-500 mr-1">管理者:</span>
+                  <span className="font-medium">{adminContact.adminName}</span>
+                  {adminContact.adminEmail && (
+                    <>
+                      {' '}
+                      <a
+                        href={`mailto:${adminContact.adminEmail}`}
+                        className="text-blue-600 hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        ({adminContact.adminEmail})
+                      </a>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {isSiteOwner && (
             <Link
               to="/settings/registry"
@@ -949,6 +989,14 @@ function UserMenu({ onSignOut, isSiteOwner }: { onSignOut: () => void; isSiteOwn
           >
             <KeyRound className="h-4 w-4 text-slate-500" />
             パスワード変更
+          </Link>
+          <Link
+            to="/settings/account"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50"
+          >
+            <UserX className="h-4 w-4 text-slate-500" />
+            契約変更・退会
           </Link>
           <div className="border-t" />
           <button

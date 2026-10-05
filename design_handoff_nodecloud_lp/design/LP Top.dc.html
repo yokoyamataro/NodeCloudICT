@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><link rel="icon" type="image/svg+xml" href="icon-export/web/favicon.svg"><link rel="apple-touch-icon" href="icon-export/web/apple-touch-icon-180.png"><link rel="stylesheet" href="_ds/industry-97e3fa0b-aeaa-4318-b224-279db3cdcc1d/styles.css"><script src="_ds/industry-97e3fa0b-aeaa-4318-b224-279db3cdcc1d/_ds_bundle.js"></script><script src="./image-slot.js"></script><link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&amp;display=swap" rel="stylesheet"><style>body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:"Barlow","Noto Sans JP",system-ui,sans-serif}h1,h2,h3,h4{font-family:"Barlow Condensed","Noto Sans JP",system-ui,sans-serif;font-weight:600;letter-spacing:-.01em;line-height:1.15;margin:0}h1{text-wrap:balance;word-break:keep-all;overflow-wrap:anywhere}.btn{font-family:"Barlow Condensed","Noto Sans JP",system-ui,sans-serif}a:not(.btn){color:var(--color-accent-700)}a:not(.btn):hover{color:var(--color-accent-800)}.btn-primary{color:var(--color-bg)}.ph{background:repeating-linear-gradient(135deg,#e2e6ea 0 6px,#eceef1 6px 12px);display:flex;align-items:center;justify-content:center;font:12px ui-monospace,Menlo,monospace;color:var(--color-neutral-700);text-align:center;padding:12px}.lucide{width:22px;height:22px;stroke:currentColor;stroke-width:1.5;fill:none;stroke-linecap:round;stroke-linejoin:round}.wrap{max-width:1200px;margin:0 auto;padding-left:clamp(20px,4vw,56px);padding-right:clamp(20px,4vw,56px)}.navlink{font-size:14px;color:var(--color-text)!important;text-decoration:none}.navlink:hover{color:var(--color-accent)!important}.kicker{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent);margin-bottom:8px}.muted{color:var(--color-neutral-700)}.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:32px}.three{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:24px}.step{display:grid;grid-template-columns:32px 1fr;gap:12px}.num{font-family:"Barlow Condensed",sans-serif;font-size:22px;color:var(--color-accent-700)}.faq{padding:18px 0;border-top:1px solid var(--color-divider)}.faq h4{font-size:16px}.faq p{font-size:14px;margin:6px 0 0}.seg{display:inline-flex;border:1px solid var(--color-neutral-400)}.seg-opt{font-family:"Barlow Condensed","Noto Sans JP",sans-serif;font-size:16px;padding:10px 22px;background:transparent;border:0;color:var(--color-text);cursor:pointer}.seg-opt:hover{background:var(--color-accent-100)}.seg-opt.on{background:var(--color-accent);color:var(--color-bg)}.seg-opt:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}.pipe{display:flex;align-items:center;flex-wrap:wrap}.pipe>div{flex:1;min-width:150px;padding:14px 16px;border:1px solid var(--color-divider);font-size:13px}.pipe>div b{display:block;font-family:"Barlow Condensed","Noto Sans JP",sans-serif;font-size:17px;margin-bottom:4px}.pipe>span{padding:0 10px;color:var(--color-accent)}@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}.fade{animation:fadeIn .5s ease both}/*nowrap-fix*/.btn,.seg-opt,.navlink{white-space:nowrap;flex-shrink:0}header.wrap{row-gap:10px;column-gap:clamp(12px,2vw,24px)!important}</style></helmet>
+
+<header class="wrap" data-screen-label="Top" style="display:flex;align-items:center;gap:24px;padding-top:18px;padding-bottom:18px;flex-wrap:wrap">
+<a href="LP Top.dc.html" style="font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:22px;letter-spacing:.02em;margin-right:auto;text-decoration:none;color:var(--color-text)!important;display:inline-flex;align-items:center;gap:10px"><svg width="26" height="26" viewBox="0 0 100 100" aria-hidden="true" style="display:block;border-radius:22%"><rect width="100" height="100" style="fill:var(--color-accent-900)"></rect><g style="fill:none;stroke:var(--color-bg);stroke-width:5"><circle cx="50" cy="50" r="24"></circle><path d="M50 13V33M50 67V87M13 50H33M67 50H87"></path></g><circle cx="50" cy="50" r="7" style="fill:var(--color-accent-300)"></circle></svg>NodeCloud</a>
+<a class="navlink" href="#workflow">機能</a><a class="navlink" href="#solutions">業務別</a><a class="navlink" href="#pricing">料金</a><a class="navlink" href="#faq">FAQ</a><a class="navlink" href="LP Support.dc.html">サポート</a><a class="navlink" href="#">ログイン</a>
+<a class="btn btn-primary" href="#demo" style="padding:9px 18px">デモを予約</a>
+</header>
+
+<section class="wrap two" style="padding-top:48px;padding-bottom:72px;align-items:center">
+<div>
+<div class="seg" style="margin-bottom:18px"><button class="seg-opt {{ heroCadOn }}" onClick="{{ heroShowCad }}" style="font-size:13px;padding:6px 14px">地籍測量</button><button class="seg-opt {{ heroCivOn }}" onClick="{{ heroShowCiv }}" style="font-size:13px;padding:6px 14px">土木工事</button></div>
+<div style="display:grid"><div class="fade" style="grid-area:1/1;visibility:{{ cadVis }}"><div class="kicker" style="font-size:12px;margin-bottom:14px">土地家屋調査士・測量設計会社のために</div>
+<h1 style="font-size:clamp(28px,3.4vw,44px);white-space:nowrap">最新データを全員で共有<br>オフィスでも現場でも</h1>
+<p class="muted" style="font-size:17px;line-height:1.7;margin:22px 0 0;max-width:520px;color:var(--color-neutral-800)">数千筆の境界点設置や地権者との立会——NodeCloudは一筆地測量から地図作成作業まで、データ交換やチーム間の整合性チェックに要する時間とストレスから解放します。</p></div>
+<div class="fade" style="grid-area:1/1;visibility:{{ civVis }}"><div class="kicker" style="font-size:12px;margin-bottom:14px">農業土木の施工業者・設計コンサルのために</div>
+<h1 style="font-size:clamp(28px,3.4vw,44px);white-space:nowrap">CAD図面からLandXMLまで<br>三次元施工データを自動で</h1>
+<p class="muted" style="font-size:17px;line-height:1.7;margin:22px 0 0;max-width:520px;color:var(--color-neutral-800)">道路・河川・農業土木の図面を読み込み、RTKで起工測量。<br>丁張・トンボの設置からICT施工のためのLandXML作成まで対応。<br>最新の図面・工事測量データを元請業者・協力業者と共有することで、生産性向上を実現します。</p></div></div>
+<div style="display:flex;gap:12px;margin-top:32px;flex-wrap:wrap"><a class="btn btn-primary blueprint" href="#demo" style="padding:13px 26px;font-size:16px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>デモを予約する</a><a class="btn btn-ghost" href="#workflow" style="padding:13px 16px;font-size:16px">機能を見る →</a></div>
+<div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap;align-items:center">
+<a class="btn btn-secondary" href="#" aria-disabled="true" style="padding:8px 14px;display:inline-flex;align-items:center;gap:10px;opacity:.75;cursor:default"><svg class="lucide" style="width:20px;height:20px" viewBox="0 0 24 24"><path d="M12 20.94c1.5 0 2.75 1.06 4 1.06 3 0 6-8 6-12.22A4.91 4.91 0 0 0 17 5c-2.22 0-4 1.44-5 2-1-.56-2.78-2-5-2a4.9 4.9 0 0 0-5 4.78C2 14 5 22 8 22c1.25 0 2.5-1.06 4-1.06Z"/><path d="M10 2c1 .5 2 2 2 5"/></svg><span style="display:grid;line-height:1.1;text-align:left"><span style="font-size:10px">App Store</span><span style="font-size:14px">準備中</span></span></a>
+<a class="btn btn-secondary" href="#" aria-disabled="true" style="padding:8px 14px;display:inline-flex;align-items:center;gap:10px;opacity:.75;cursor:default"><svg class="lucide" style="width:20px;height:20px" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg><span style="display:grid;line-height:1.1;text-align:left"><span style="font-size:10px">Google Play</span><span style="font-size:14px">準備中</span></span></a>
+</div>
+<div class="muted" style="margin-top:36px;padding-top:20px;border-top:1px solid var(--color-divider);display:flex;gap:32px;font-size:13px;flex-wrap:wrap"><div><b style="color:var(--color-text)">2026.12.31まで</b> 無償提供</div><div><b style="color:var(--color-text)">自動課金なし</b></div></div>
+</div>
+<div style="position:relative;aspect-ratio:1/1;max-height:520px">
+<div class="blueprint" style="position:absolute;left:0;top:0;width:78%;aspect-ratio:16/10"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div style="position:absolute;inset:0;overflow:hidden;background:#fff;visibility:{{ cadVis }}"><img src="assets/screen-cadastral-drawing.png" alt="NodeCloudの地積測量図作成画面：求積表と図面、P21・TIF出力" style="position:absolute;bottom:0;left:-7.5%;width:115%;height:auto;display:block"></div><div style="position:absolute;inset:0;overflow:hidden;background:#fff;visibility:{{ civVis }}"><img src="assets/screen-civil-cross.png" alt="NodeCloudの施工計画画面：測点表・平面図・横断図と丁張計算" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center top;display:block"></div></div>
+<div class="blueprint elev-lg" style="position:absolute;right:0;bottom:0;width:34%;aspect-ratio:9/19"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div style="position:absolute;inset:0;visibility:{{ cadVis }}"><img src="assets/screen-phone-photo.png?v=2" alt="NodeCloudアプリの測点画面：地図上の境界点と点情報・遠景近景写真" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center top;display:block"></div><div style="position:absolute;inset:0;overflow:hidden;visibility:{{ civVis }}"><img src="assets/screen-phone-civil.png" alt="NodeCloudアプリのRTK誘導画面：線形上の測点と横断ビュー" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center top;display:block"></div></div>
+</div>
+</section>
+
+<section id="workflow" class="wrap" style="padding-top:80px;padding-bottom:80px">
+<div style="text-align:center;margin-bottom:48px"><div class="kicker">Workflow</div><h2 style="font-size:clamp(30px,3.5vw,40px)">全員が同じプロジェクトを、PCとスマホで。</h2></div>
+<div class="two">
+<div class="blueprint" style="padding:32px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div class="kicker">内業 — PC</div><h3 style="font-size:26px">調査・管理・帳票</h3>
+<div style="display:grid;gap:18px;margin-top:22px">
+<div class="step"><div class="num">01</div><div><b>座標地番管理</b><div class="muted" style="font-size:14px;margin-top:4px">地図XMLから地番情報の取得、地積測量図の座標や登記情報の自動認識（開発中）、立入通知書の作成。</div></div></div>
+<div class="step"><div class="num">02</div><div><b>工程管理・作図</b><div class="muted" style="font-size:14px;margin-top:4px">立会の日程調整、GISベースでの作図・計算。</div></div></div>
+<div class="step"><div class="num">03</div><div><b>帳票・データ出力</b><div class="muted" style="font-size:14px;margin-top:4px">93条調査報告書、Excel写真帳、LandXML・SIMAの出力。</div></div></div>
+</div></div>
+<div class="blueprint" style="padding:32px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div class="kicker">現場 — スマホ</div><h3 style="font-size:26px">誘導・記録・撮影</h3>
+<div style="display:grid;gap:18px;margin-top:22px">
+<div class="step"><div class="num">04</div><div><b>RTK精密測位（iPhone / Android対応）</b><div class="muted" style="font-size:14px;margin-top:4px">Droggerを接続し、cm精度で現地調査・測点誘導。</div></div></div>
+<div class="step"><div class="num">05</div><div><b>測点情報・写真管理</b><div class="muted" style="font-size:14px;margin-top:4px">設置した杭の種類や遠景・近景写真を撮影してその場で登録。</div></div></div>
+<div class="step"><div class="num">06</div><div><b>チーム・協力会社と共有</b><div class="muted" style="font-size:14px;margin-top:4px">メモやチャットが可能。オフライン記録対応。</div></div></div>
+</div></div>
+</div>
+</section>
+
+<section id="solutions" style="background:var(--color-surface);padding:72px 0"><div class="wrap">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap;margin-bottom:40px"><div><div class="kicker">Solutions</div><h2 style="font-size:clamp(30px,3.5vw,40px)">業務別の機能</h2><p class="muted" style="font-size:14px;margin:10px 0 0">同じ座標基盤の上に、業務別の設計・帳票機能。ひとつの契約で両方使えます。</p></div>
+<div class="seg" role="tablist"><button class="seg-opt {{ cadOn }}" role="tab" onClick="{{ showCad }}">地籍測量</button><button class="seg-opt {{ civOn }}" role="tab" onClick="{{ showCiv }}">土木工事</button></div></div>
+
+<sc-if value="{{ isCad }}" hint-placeholder-val="{{ true }}">
+<div class="two" style="align-items:start">
+<div><div class="kicker">土地家屋調査士・測量設計会社のために</div><h3 style="font-size:clamp(26px,3vw,34px)">境界確認から調査報告書まで、現地とデスクをひとつに。</h3><p style="font-size:15px;line-height:1.7;margin:16px 0 0;color:var(--color-neutral-800)">法務省地番マップを背景に地番・地権者を管理。現地では境界杭をスマホで撮影、写真は座標に自動で紐づき、93条調査報告書と写真帳をExcelで出力します。</p>
+<div style="display:grid;gap:16px;margin-top:28px">
+<div class="step"><div class="num">01</div><div><b>地番管理（法務省地番マップ）</b><div class="muted" style="font-size:14px;margin-top:4px">全国の地番マップを背景に所在・地番・地目・地積を管理。地図クリックで表の行へ。</div></div></div>
+<div class="step"><div class="num">02</div><div><b>登記情報の自動認識・地権者管理</b><div class="muted" style="font-size:14px;margin-top:4px">登記情報PDFから所在・地番・所有者を抽出（開発中）。申請人／隣接者・立会人を記録。</div></div></div>
+<div class="step"><div class="num">03</div><div><b>不動産調査報告書を「取込」で作成</b><div class="muted" style="font-size:14px;margin-top:4px">所有者は地権者台帳から、写真は連携座標から。定型句・履歴取込・報告書番号の自動採番。</div></div></div>
+<div class="step"><div class="num">04</div><div><b>写真管理を座標に紐づけて一元化</b><div class="muted" style="font-size:14px;margin-top:4px">境界杭ごとに遠景・近景を撮影。ファイル名の付け直しもフォルダ整理も不要。</div></div></div>
+<div class="step"><div class="num">05</div><div><b>地積測量図・各階平面図作成</b><div class="muted" style="font-size:14px;margin-top:4px">地番データや建物の形状から登記図面を作成。TIF・PDF・P21に対応。</div></div></div>
+</div></div>
+<div style="display:grid;gap:24px">
+<div class="blueprint" style="aspect-ratio:16/10"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div style="position:absolute;inset:0;overflow:hidden;background:#fff"><img src="assets/screen-cad-coords.png" alt="NodeCloudの座標管理画面：点番号・XY座標の一覧と地番マップ上の境界点" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:left top;display:block"></div></div>
+<div class="blueprint" style="aspect-ratio:16/10"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div style="position:absolute;inset:0;overflow:hidden;background:#fff"><img src="assets/screen-report-93.png" alt="NodeCloudで出力した不動産調査報告書（93条ただし書）" style="position:absolute;top:4%;left:-3.5%;width:104.2%;height:auto;display:block"></div></div>
+<div class="blueprint" style="aspect-ratio:16/10"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div style="position:absolute;inset:0;overflow:hidden;background:#fff"><img src="assets/screen-photo-album.png" alt="NodeCloudで出力した写真帳（境界点ごとの遠景・近景）" style="position:absolute;top:2%;left:-2.2%;width:106%;height:auto;display:block"></div></div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isCiv }}" hint-placeholder-val="{{ false }}">
+<div class="two" style="align-items:start">
+<div><div class="kicker">農業土木の施工業者・設計コンサルのために</div><h3 style="font-size:clamp(26px,3vw,34px)">CAD図面からLandXMLまで。三次元施工データを自動で。</h3><p style="font-size:15px;line-height:1.7;margin:16px 0 0;color:var(--color-neutral-800)">道路・河川・農業土木の図面を読み込み、RTKで起工測量。<br>丁張・トンボの設置からICT施工のためのLandXML作成まで対応。<br>最新の図面・工事測量データを元請業者・協力業者と共有することで、生産性向上を実現します。</p>
+<div style="display:grid;gap:16px;margin-top:28px">
+<div class="step"><div class="num">01</div><div><b>道路・河川の施工管理</b><div class="muted" style="font-size:14px;margin-top:4px">道路・河川等の線形物の施工管理に。単純な排水路から単曲線やクロソイドカーブ、バーチカルカーブなどの複雑な線形データ、丁張計算まで幅広く対応します。</div></div></div>
+<div class="step"><div class="num">02</div><div><b>暗渠や整地などの農業土木工事</b><div class="muted" style="font-size:14px;margin-top:4px">複雑な系統の暗渠排水や農地の大規模化に伴う整地工事に対応。水理計算や床掘データのLandXML作成にも対応。</div></div></div>
+<div class="step"><div class="num">03</div><div><b>RTK精密誘導で起工・出来形測量</b><div class="muted" style="font-size:14px;margin-top:4px">測点の杭打ちはもちろん、線形データを元に横断測量やLandXMLの表示が可能。<br>起工測量から出来形測量まで幅広く対応します。</div></div></div>
+<div class="step"><div class="num">04</div><div><b>工区別チャットで情報共有を円滑化</b><div class="muted" style="font-size:14px;margin-top:4px">複数工区が同時並行する現場でも情報は工区ごとに整理され、コミュニケーションが円滑化。手戻りを防ぎます。</div></div></div>
+</div></div>
+<div style="display:grid;gap:24px">
+<div class="blueprint" style="aspect-ratio:16/10"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div style="position:absolute;inset:0;overflow:hidden;background:#fff"><img src="assets/screen-civil-cross.png" alt="NodeCloudの施工計画画面：測点表・平面図・横断図と丁張計算" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center top;display:block"></div></div>
+<div class="blueprint" style="aspect-ratio:16/10"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div style="position:absolute;inset:0;overflow:hidden;background:#fff"><img src="assets/screen-civil-drain.png" alt="NodeCloudの施工計画画面：暗渠排水の系統表と管路マップ" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:left top;display:block"></div></div>
+<div class="blueprint" style="aspect-ratio:16/10"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div style="position:absolute;inset:0;overflow:hidden;background:#fff"><img src="assets/screen-civil-map.png" alt="NodeCloudの工区マップ：工種別に色分けした現場の一覧" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;display:block"></div></div>
+</div>
+</div>
+</sc-if>
+</div></section>
+
+<section id="pricing" class="wrap" style="padding-top:80px;padding-bottom:80px">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:36px;flex-wrap:wrap;gap:16px"><div><div class="kicker">Pricing</div><h2 style="font-size:clamp(30px,3.5vw,40px)">料金</h2></div><p class="muted" style="max-width:460px;font-size:13px;margin:0">実証期間中は無償、有償プランへの自動移行はありません。</p></div>
+<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:stretch">
+<div class="blueprint" style="display:flex;flex-direction:column"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div style="padding:28px 24px;display:flex;flex-direction:column;gap:14px;height:100%;box-sizing:border-box"><span class="tag tag-accent" style="align-self:flex-start">基本料金</span><h3 style="font-size:22px">基本プラン</h3><div><div class="muted" style="font-size:12px">1ユーザー</div><div style="font-family:'Barlow Condensed',sans-serif;font-size:40px;line-height:1.1">¥3,300<span class="muted" style="font-size:14px;font-weight:400"> 〜 /月</span></div></div><p class="muted" style="font-size:14px;margin:0;line-height:1.7">座標地番管理、スマホのRTK現地調査まであらゆる機能を利用可能。地籍測量・土木工事の両業務に対応。</p></div></div>
+<div class="blueprint" style="display:flex;flex-direction:column"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div style="padding:28px 24px;display:flex;flex-direction:column;gap:14px;height:100%;box-sizing:border-box"><span class="tag tag-accent" style="align-self:flex-start">機器</span><h3 style="font-size:22px">Drogger Gパッケージ</h3><div><div class="muted" style="font-size:12px">1台</div><div style="font-family:'Barlow Condensed',sans-serif;font-size:40px;line-height:1.1">¥220,000<span class="muted" style="font-size:14px;font-weight:400"> （買い切り）</span></div></div><p class="muted" style="font-size:14px;margin:0;line-height:1.7">BLEカスタマイズ済。iPhone・Androidのどちらでもすぐに接続できます。</p></div></div>
+<div class="blueprint" style="display:flex;flex-direction:column"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div style="padding:28px 24px;display:flex;flex-direction:column;gap:14px;height:100%;box-sizing:border-box"><span class="tag tag-accent" style="align-self:flex-start">地籍測量</span><h3 style="font-size:22px">地図作成作業パッケージ</h3><div><div class="muted" style="font-size:12px">1現場あたり</div><div style="font-family:'Barlow Condensed',sans-serif;font-size:40px;line-height:1.1">¥220,000<span class="muted" style="font-size:14px;font-weight:400"> （1年間限り）</span></div></div><p class="muted" style="font-size:14px;margin:0;line-height:1.7">地籍測量の現場向けパッケージです。</p></div></div>
+<div class="blueprint" style="display:flex;flex-direction:column"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div style="padding:28px 24px;display:flex;flex-direction:column;gap:14px;height:100%;box-sizing:border-box"><span class="tag tag-accent" style="align-self:flex-start">土木工事</span><h3 style="font-size:22px">ICT施工パッケージ</h3><div><div class="muted" style="font-size:12px">1現場あたり</div><div style="font-family:'Barlow Condensed',sans-serif;font-size:40px;line-height:1.1">¥220,000<span class="muted" style="font-size:14px;font-weight:400"> （1年間限り）</span></div></div><p class="muted" style="font-size:14px;margin:0;line-height:1.7">土木工事の現場向けパッケージです。</p></div></div>
+</div>
+</section>
+
+<section class="wrap two" style="padding-bottom:72px;align-items:start">
+<div><div class="kicker">Company</div><h2 style="font-size:clamp(28px,3vw,36px)">測量士・土地家屋調査士が現場の問題解決のために開発しました</h2><p style="font-size:15px;line-height:1.7;margin-top:16px;color:var(--color-neutral-800)">慢性的な技術者不足、年間の3分の1が積雪期という制約の中で、「チームでの生産性を最大化させる」という課題からAIで開発。<br>機能開発は一線で活躍する技術者からのフィードバックを最優先に進めています。</p></div>
+<div class="blueprint" style="aspect-ratio:4/3"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div class="duotone" style="position:absolute;inset:0;overflow:hidden"><img src="assets/photo-developer-v5.png" alt="NodeCloudで地番管理の作業をする開発者" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;display:block"></div></div>
+<div style="grid-column:1/-1;padding-top:16px;border-top:1px solid var(--color-divider);display:grid;grid-template-columns:auto 1fr;gap:8px 20px;font-size:14px"><div class="muted">開発・運用</div><div>有限会社横山測量設計事務所（北海道）</div><div class="muted">代表</div><div>横山太郎<br>（測量士・土地家屋調査士・司法書士・行政書士・経営学修士）</div><div class="muted">開発協力</div><div>一般社団法人不動産調査技術研究所</div></div>
+</section>
+
+<section id="faq" class="wrap" style="padding-bottom:80px"><div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:24px"><div><div class="kicker">FAQ</div><h2 style="font-size:clamp(28px,3vw,36px)">よくある質問</h2></div><a href="LP Support.dc.html#faq" style="font-size:14px">すべての質問を見る →</a></div>
+<div class="two" style="gap:0 48px">
+<div class="faq"><h4>RTK測量機はどの機種が使えますか？</h4><p class="muted">Drogger（株式会社ビズステーション）の各機種をサポートしております。（iPhoneはBluetoothの通信方式をBLE方式に変更する必要があります）</p></div>
+<div class="faq"><h4>既存CADと連携できますか？</h4><p class="muted">SIMA入出力、SXF(p21.sfc)、dxfに表示対応します。LandXMLの出力に対応。</p></div>
+<div class="faq"><h4>地籍測量と土木工事、両方の機能を使えますか？</h4><p class="muted">はい。ひとつの契約で両業務の機能を利用できます。</p></div>
+<div class="faq"><h4>無償期間後は自動で有償になりますか？</h4><p class="muted">なりません。2026年12月31日まで無償、その後の継続は改めてお申し込みいただきます。</p></div>
+</div></section>
+
+<section id="demo" style="background:var(--color-accent-900);color:var(--color-bg);padding:64px 0"><div class="wrap" style="display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap"><div><h2 style="font-size:clamp(28px,3vw,36px);color:var(--color-bg)">御社の画地SIMAやDXF図面で、30分デモ。</h2><p style="font-size:14px;color:var(--color-accent-300);margin:10px 0 0">その場で取り込み、実際の現場データで操作いただけます。</p></div><a class="btn" href="LP Support.dc.html#contact" style="padding:13px 28px;font-size:16px;background:var(--color-bg);color:var(--color-accent-900);border-color:var(--color-bg)">デモを予約する</a></div></section>
+<footer class="wrap muted" style="padding-top:28px;padding-bottom:28px;display:flex;justify-content:space-between;font-size:12px;flex-wrap:wrap;gap:12px"><div>© NodeCloud / 有限会社横山測量設計事務所</div><div style="display:flex;gap:20px"><a href="LP Support.dc.html" style="color:var(--color-neutral-700)!important">サポート</a><a href="#" style="color:var(--color-neutral-700)!important">利用規約</a><a href="LP Privacy.dc.html" style="color:var(--color-neutral-700)!important">プライバシーポリシー</a></div></footer>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;heroAutoplay&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;ヒーロー&quot;},&quot;heroInterval&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:6,&quot;min&quot;:3,&quot;max&quot;:15,&quot;step&quot;:1,&quot;unit&quot;:&quot;s&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;ヒーロー&quot;}}">
+const HERO = {
+  cad: { kicker: '土地家屋調査士・測量設計会社のために', t1: '最新データを全員で共有', t2: 'オフィスでも現場でも', body: '数千筆の境界点設置や地権者との立会——NodeCloudは一筆地測量から地図作成作業まで、データ交換やチーム間の整合性チェックに要する時間とストレスから解放します。', pc: '[ PC screenshot ] 93条調査報告書・座標地番管理', phone: '[ phone ] 境界杭の撮影・座標紐付け' },
+  civ: { kicker: '農業土木の施工業者・設計コンサルのために', t1: 'CAD図面からLandXMLまで', t2: '三次元施工データを自動で', body: '暗渠排水・道路のDXF図面を読み込み、配管系統・計画高・勾配・水理計算を経て、LandXML三次元施工データと水理計算書を出力。現場ではスマホでRTK杭打ちと施工記録。', pc: '[ PC screenshot ] 施工計画：表＋平面図＋縦断図', phone: '[ phone ] RTK杭打ちナビ' },
+};
+class Component extends DCLogic {
+  state = { tab: 'cad', hero: 'cad', paused: false };
+  componentDidMount() {
+    const ms = (this.props.heroInterval ?? 6) * 1000;
+    this._timer = setInterval(() => { if (!this.state.paused && (this.props.heroAutoplay ?? true)) this.setState(s => ({ hero: s.hero === 'cad' ? 'civ' : 'cad' })); }, ms);
+  }
+  componentWillUnmount() { clearInterval(this._timer); }
+  pickHero(h) { this.setState({ hero: h, paused: true }); }
+  renderVals() {
+    const t = this.state.tab, h = this.state.hero;
+    return {
+      cadVis: h === 'cad' ? 'visible' : 'hidden', civVis: h === 'civ' ? 'visible' : 'hidden',
+      heroCadOn: h === 'cad' ? 'on' : '', heroCivOn: h === 'civ' ? 'on' : '',
+      heroShowCad: () => this.pickHero('cad'), heroShowCiv: () => this.pickHero('civ'),
+      isCad: t === 'cad', isCiv: t === 'civ',
+      cadOn: t === 'cad' ? 'on' : '', civOn: t === 'civ' ? 'on' : '',
+      showCad: () => this.setState({ tab: 'cad' }),
+      showCiv: () => this.setState({ tab: 'civ' }),
+    };
+  }
+}
+</script>
+</body>
+</html>

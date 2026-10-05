@@ -188,6 +188,14 @@ export function OrgMembersView({
       )
       return
     }
+    // 「組織管理者 は 1 人」 の 運用 ルール (2026-10)。 member → admin 昇格 時 に
+    // 既存 の admin が いる 場合 は 「先 に 現 admin を 降格 して ください」 と 促す。
+    if (m.role === 'member' && newRole === 'admin' && adminCount >= 1) {
+      alert(
+        '組織の管理者は 1 人までです。\n先に現在の管理者を一般に降格してから、別のメンバーを管理者に昇格してください。',
+      )
+      return
+    }
     void withSaving(m.user_id, async () => {
       const { error } = await callRpc('org_change_member_role', {
         p_org_id: organizationId,
@@ -293,6 +301,7 @@ export function OrgMembersView({
         <InviteMemberModal
           organizationId={organizationId}
           organizationName={organizationName}
+          adminAlreadyExists={adminCount >= 1}
           onClose={() => setInviteOpen(false)}
           onInvited={() => {
             setInviteOpen(false)
@@ -618,11 +627,14 @@ export function OrgMembersView({
 function InviteMemberModal({
   organizationId,
   organizationName,
+  adminAlreadyExists,
   onClose,
   onInvited,
 }: {
   organizationId: string
   organizationName: string
+  /** 既 に 組織管理者 が 居る 場合 true。 「管理者」 role の 選択 を 無効化 する */
+  adminAlreadyExists: boolean
   onClose: () => void
   onInvited: () => void
 }) {
@@ -731,9 +743,17 @@ function InviteMemberModal({
               className="flex-1 min-w-0 px-3 py-2 text-sm border rounded bg-white"
             >
               <option value="member">一般</option>
-              <option value="admin">管理者</option>
+              <option value="admin" disabled={adminAlreadyExists}>
+                管理者{adminAlreadyExists ? ' (既に1人います)' : ''}
+              </option>
             </select>
           </div>
+          {adminAlreadyExists && (
+            <div className="text-[11px] text-slate-500 pl-24">
+              組織の管理者は 1 人までです。 管理者 を 変更 する 場合 は 現 管理者 を
+              先 に 「一般」 に 降格 して ください。
+            </div>
+          )}
           {error && (
             <div className="flex items-center gap-2 p-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded">
               <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />

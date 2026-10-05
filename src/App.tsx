@@ -62,6 +62,7 @@ import { TrashPage } from '@/features/trash/TrashPage'
 // 個人設定
 import { RegistryCredentialsPage } from '@/features/settings/RegistryCredentialsPage'
 import { PasswordSettingsPage } from '@/features/settings/PasswordSettingsPage'
+import { AccountSettingsPage } from '@/features/settings/AccountSettingsPage'
 import { FarmSettingsPage } from '@/features/settings/FarmSettingsPage'
 import { SurveyorSettingsPage } from '@/features/settings/SurveyorSettingsPage'
 import { FarmFilesPage } from '@/features/files/FarmFilesPage'
@@ -275,6 +276,15 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <PasswordSettingsPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* 個人設定: 契約変更 / 退会 申請 */}
+        <Route
+          path="/settings/account"
+          element={
+            <ProtectedRoute>
+              <AccountSettingsPage />
             </ProtectedRoute>
           }
         />

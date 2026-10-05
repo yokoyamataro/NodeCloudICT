@@ -7,10 +7,12 @@
 // シンプル表示に留める。touki.or.jp 認証情報等の細かい設定は PC 表示で。
 
 import { useState } from 'react'
-import { Menu, X, LogOut, Settings2, Monitor, FileText } from 'lucide-react'
+import { Menu, X, LogOut, Settings2, Monitor, FileText, UserX } from 'lucide-react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { setDisplayModeOverride } from '@/lib/displayMode'
+import { useOrgAdminContact } from '@/lib/useOrgAdminContact'
+import { isAdmin } from '@/lib/admin'
 
 interface Props {
   /** 従来は 「座標一覧」項目 用の props だったが、メニュー項目が 削除されたので
@@ -23,6 +25,8 @@ export function MobileHamburgerMenu(_props: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const { user, displayName, organizationName, isOrgAdmin, signOut } = useAuth()
+  const { contact: adminContact } = useOrgAdminContact()
+  const siteOwner = isAdmin(user?.email)
   const navigate = useNavigate()
 
   const handleSettings = () => {
@@ -134,10 +138,18 @@ export function MobileHamburgerMenu(_props: Props) {
             <Link
               to="/terms"
               onClick={() => setDrawerOpen(false)}
-              className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm hover:bg-slate-50"
+              className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm hover:bg-slate-50 border-b"
             >
               <FileText className="h-4 w-4 text-slate-500" />
               利用規約
+            </Link>
+            <Link
+              to="/settings/account"
+              onClick={() => setDrawerOpen(false)}
+              className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm hover:bg-slate-50"
+            >
+              <UserX className="h-4 w-4 text-slate-500" />
+              契約変更・退会
             </Link>
           </div>
         </div>
@@ -195,6 +207,24 @@ export function MobileHamburgerMenu(_props: Props) {
                   )}
                 </div>
               </div>
+              {/* 一般 メンバー 向け: 契約変更 / 退会 は 組織管理者 経由 と なる ので、
+                  連絡先 を 常時 ここ に 出して おく */}
+              {!siteOwner && !isOrgAdmin && adminContact && (
+                <div>
+                  <div className="text-[11px] text-slate-500">組織管理者</div>
+                  <div className="text-sm text-slate-800">
+                    {adminContact.adminName ?? '(未登録)'}
+                  </div>
+                  {adminContact.adminEmail && (
+                    <a
+                      href={`mailto:${adminContact.adminEmail}`}
+                      className="text-xs text-blue-600 hover:underline break-all"
+                    >
+                      {adminContact.adminEmail}
+                    </a>
+                  )}
+                </div>
+              )}
               <div className="text-[11px] text-slate-500 leading-relaxed border-t pt-3">
                 touki.or.jp 認証情報等の詳細設定は PC 表示から
                 「設定 → 登記情報」で行えます。
