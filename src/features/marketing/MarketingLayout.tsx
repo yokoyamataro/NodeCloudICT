@@ -165,10 +165,11 @@ export function MarketingLayout({ tag, navItems, cta, children }: Props) {
               サポート
             </Link>
           )}
-          {/* TODO: 利用規約 ページ は 未作成 */}
-          <a href="#" style={{ color: 'var(--mkt-neutral-700)' }}>
-            利用規約
-          </a>
+          {loc.pathname !== '/terms' && (
+            <Link to="/terms" style={{ color: 'var(--mkt-neutral-700)' }}>
+              利用規約
+            </Link>
+          )}
           {loc.pathname !== '/privacy' && (
             <Link to="/privacy" style={{ color: 'var(--mkt-neutral-700)' }}>
               プライバシーポリシー
