@@ -153,9 +153,15 @@ function MobileAutoRedirect() {
       path === '/apply' ||
       path === '/terms' ||
       path === '/privacy' ||
+      path === '/support' ||
       path === '/accept-invite' ||
       path.startsWith('/admin') ||
       path.startsWith('/mobile') ||
+      // /settings/password, /settings/account, /settings/registry 等 の
+      // 個人設定 ページ は PC レイアウト を 共用 する ので 自動 リダイレクト
+      // 対象外。 これ を 外さない と スマホ の ハンバーガー から 開いた
+      // 瞬間 に /mobile に 戻されて リンク が 効かない 見た目 に なる。
+      path.startsWith('/settings') ||
       // モビリティは PC/モバイル共通で /mobility 配下を使うので自動リダイレクト対象外。
       //   注意: '/mobility'.startsWith('/mobile') は false (7 文字目が 'i' vs 'e')
       //   なので '/mobile' 検査で誤って包含されない
