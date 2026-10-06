@@ -136,9 +136,7 @@ export function TermsPage() {
           <div className="mt-8 pt-4 border-t text-sm text-slate-500">
             <div>制定日: {EFFECTIVE_DATE}</div>
             <div>{OPERATOR}</div>
-            {/* アプリ の バージョン情報 (ビルド日時)。 以前 は ヘッダ の
-                タイトル 下 に 常時 出して いた が、 画面 を 広く 使う 為 こちら に 移動 */}
-            <div className="mt-2 text-xs">バージョン: {__BUILD_TIME__}</div>
+            {/* アプリ の バージョン情報 は ユーザーメニュー の 利用規約 の 下 に 移動 (2026-10) */}
           </div>
         </div>
 

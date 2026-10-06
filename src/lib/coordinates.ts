@@ -90,6 +90,7 @@ export type CoordinateType =
   | 'tombo'              // トンボ (土木 の 丁張 用 目印)
   | 'chohari'            // 丁張 (法面 の 目印。 幅杭 の 位置)
   | 'width_stake'        // 幅杭 (中心線 から の 離れ を 示す 杭)
+  | 'underdrain'         // 暗渠 (暗渠工事 の 配線 から 生成 した 測点)
 
 export const COORDINATE_TYPE_NAMES: Record<CoordinateType, string> = {
   control: '基準点',
@@ -104,4 +105,5 @@ export const COORDINATE_TYPE_NAMES: Record<CoordinateType, string> = {
   tombo: 'トンボ',
   chohari: '丁張',
   width_stake: '幅杭',
+  underdrain: '暗渠',
 }

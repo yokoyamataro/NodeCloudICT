@@ -1,12 +1,14 @@
 import { useState, useMemo, useEffect } from 'react'
-import { MapPin, Settings, Hash, Navigation, Target, Square, Map, FileText, MousePointer, X, ArrowUp, ArrowDown, Route, Plus, Table, Save, FolderOpen } from 'lucide-react'
+import { MapPin, Settings, Hash, Navigation, Target, Square, Map, MousePointer, Route, Table } from 'lucide-react'
 import ExcelJS from 'exceljs'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
+import type { CoordinateType } from '@/types/database'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
-import { useExportRouteStore } from '@/stores/exportRouteStore'
+// useExportRouteStore は 「順路 の サーバ保存」 で 使って いた が、 その 機能 は
+// 「座標管理 → 測設」 ページ に 移設 したため ここ では 不要。
 import { PipeMap, type SurveyPointData, type BaseLayerType } from '@/components/map/PipeMap'
 import { ResizableSplit } from '@/components/layout/ResizableSplit'
 
@@ -67,14 +69,9 @@ const MERGE_THRESHOLD = 0.1 // 10cm
 
 export function PipeCoordinateCalcPage() {
   const { pipes, fetchPipes } = useUnderdrainStore()
-  const { coordinates, fetchCoordinates, zone } = useCoordinateStore()
+  const { coordinates, fetchCoordinates, zone, importCoordinates } = useCoordinateStore()
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
-
-  const fetchRoute = useExportRouteStore((s) => s.fetchRoute)
-  const fetchRoutes = useExportRouteStore((s) => s.fetchRoutes)
-  const saveRouteToDb = useExportRouteStore((s) => s.saveRoute)
-  const savingRoute = useExportRouteStore((s) => s.saving)
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
@@ -86,14 +83,8 @@ export function PipeCoordinateCalcPage() {
       }
       fetchPipes(currentFarm.id)
       fetchCoordinates(currentFarm.id)
-      // サーバ保存済みの順路を取得して反映
-      fetchRoute(currentFarm.id).then((points) => {
-        if (points && points.length > 0) {
-          setExportPoints(points)
-        }
-      })
     }
-  }, [currentFarm, projects, fetchPipes, fetchCoordinates, fetchRoute])
+  }, [currentFarm, projects, fetchPipes, fetchCoordinates])
 
   // 命名設定
   const [namingSettings, setNamingSettings] = useState<NamingSettings>({
@@ -120,10 +111,13 @@ export function PipeCoordinateCalcPage() {
   const [showSelectedRoute, setShowSelectedRoute] = useState(true)
   const [baseLayer, setBaseLayer] = useState<BaseLayerType>('osm')
 
-  // 出力点選択モード
-  const [isSelectMode, setIsSelectMode] = useState(false)
-  const [exportPoints, setExportPoints] = useState<ExportPoint[]>([])
-  const [insertIndex, setInsertIndex] = useState<number | null>(null)  // 挿入位置（nullの場合は末尾に追加）
+  // 出力点選択モード (順路選択) は 「座標管理 → 測設」 に 移設 (2026-10)。
+  // ここ では 残置 状態 を 使う 箇所 (地図 の 選択表示 など) を 無害化 した 残骸 のみ 残す。
+  const isSelectMode = false
+  const exportPoints: ExportPoint[] = []
+
+  // 「座標管理に登録」 ボタン の 実行中 フラグ
+  const [registering, setRegistering] = useState(false)
 
   // 測点を生成
   const surveyPoints = useMemo(() => {
@@ -281,188 +275,69 @@ export function PipeCoordinateCalcPage() {
     })
   }, [exportPoints, zone])
 
-  // 点をクリックして出力リストに追加（挿入位置指定対応）
+  // 地図 の 点 を クリック した 時 の 挙動。 「出力点選択」 機能 は 測設 ページ に
+  // 移設 した の で、 ここ では 単に ハイライト 用 の 選択点 を 更新 する だけ。
   const handlePointClick = (pointId: string) => {
-    if (!isSelectMode) {
-      setSelectedPointId(pointId)
+    setSelectedPointId(pointId)
+  }
+
+  /**
+   * 座標計算 の 結果 (集約後 の 測点) を 座標管理 (design_coordinates) に 新規 登録 する。
+   *
+   * 既存 の 同名 座標 が ある 場合 は 自動 で 「-2」「-3」… を 付けて 衝突 回避。
+   * 「順路 の 選択」 は 座標管理 → 測設 ページ で、 ここ で 登録 した 点 を 対象 に 行う。
+   */
+  const handleRegisterToCoordinates = async () => {
+    if (!currentFarm) {
+      alert('工区が選択されていません')
       return
     }
-
-    // 管路測点から探す
-    const pipePoint = mergedPoints.find(p => p.id === pointId)
-    if (pipePoint) {
-      // 既に追加済みか確認
-      if (exportPoints.some(p => p.id === pointId)) {
-        return
-      }
-      const newPoint: ExportPoint = {
-        id: pipePoint.id,
-        name: pipePoint.mergedName,
-        x: pipePoint.x,
-        y: pipePoint.y,
-        z: pipePoint.z,
-        source: 'pipe',
-      }
-      if (insertIndex !== null) {
-        // 指定位置に挿入
-        setExportPoints(prev => [
-          ...prev.slice(0, insertIndex),
-          newPoint,
-          ...prev.slice(insertIndex)
-        ])
-        setInsertIndex(insertIndex + 1)  // 次の挿入位置を更新
-      } else {
-        // 末尾に追加
-        setExportPoints(prev => [...prev, newPoint])
-      }
+    if (mergedPoints.length === 0) {
+      alert('登録する測点がありません。 管路から測点を生成してください。')
       return
     }
-
-    // 座標管理から探す
-    const coordPoint = coordinatePoints.find(p => p.id === pointId)
-    if (coordPoint) {
-      // 既に追加済みか確認
-      if (exportPoints.some(p => p.id === pointId)) {
-        return
+    const existingNames = new Set(coordinates.map((c) => c.pointNumber))
+    // 既存 の 点名 と 衝突 する 場合 は 連番 を 振る (-2, -3, ...)
+    const makeUnique = (name: string): string => {
+      if (!existingNames.has(name)) return name
+      for (let i = 2; i < 1000; i += 1) {
+        const cand = `${name}-${i}`
+        if (!existingNames.has(cand)) return cand
       }
-      const newPoint: ExportPoint = {
-        id: coordPoint.id,
-        name: coordPoint.pointNumber,
-        x: coordPoint.x,
-        y: coordPoint.y,
-        z: coordPoint.z,
-        source: 'coordinate',
-        type: coordPoint.type,
-      }
-      if (insertIndex !== null) {
-        // 指定位置に挿入
-        setExportPoints(prev => [
-          ...prev.slice(0, insertIndex),
-          newPoint,
-          ...prev.slice(insertIndex)
-        ])
-        setInsertIndex(insertIndex + 1)  // 次の挿入位置を更新
-      } else {
-        // 末尾に追加
-        setExportPoints(prev => [...prev, newPoint])
-      }
+      return `${name}-${Date.now()}`
     }
-  }
-
-  // 出力点の順序変更
-  const moveExportPoint = (index: number, direction: 'up' | 'down') => {
-    const newIndex = direction === 'up' ? index - 1 : index + 1
-    if (newIndex < 0 || newIndex >= exportPoints.length) return
-
-    const newPoints = [...exportPoints]
-    const temp = newPoints[index]
-    newPoints[index] = newPoints[newIndex]
-    newPoints[newIndex] = temp
-    setExportPoints(newPoints)
-  }
-
-  // 出力点の削除
-  const removeExportPoint = (index: number) => {
-    setExportPoints(prev => prev.filter((_, i) => i !== index))
-  }
-
-  // 出力点のクリア
-  const clearExportPoints = () => {
-    setExportPoints([])
-  }
-
-  // 出力点の保存（JSONファイルとしてダウンロード）
-  const saveExportPoints = () => {
-    if (exportPoints.length === 0) return
-
-    const name = currentFarm?.name || 'NoName'
-    const data = {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      projectName: name,
-      points: exportPoints,
-    }
-
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${name}_出力点選択.json`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  // 出力点の読み込み（JSONファイルから）
-  const loadExportPoints = () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.json'
-    input.onchange = (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0]
-      if (!file) return
-
-      const reader = new FileReader()
-      reader.onload = (event) => {
-        try {
-          const data = JSON.parse(event.target?.result as string)
-          if (data.points && Array.isArray(data.points)) {
-            setExportPoints(data.points as ExportPoint[])
-          }
-        } catch {
-          alert('ファイルの読み込みに失敗しました')
-        }
+    const toInsert = mergedPoints.map((p) => {
+      const name = makeUnique(p.mergedName)
+      existingNames.add(name) // 同一 バッチ内 で も 衝突 を 避ける
+      return {
+        pointNumber: name,
+        x: p.x,
+        y: p.y,
+        z: p.z ?? null,
+        // 暗渠 として 登録。 座標管理 で は 種別 「暗渠」 と 表示 される。
+        type: 'underdrain' as unknown as CoordinateType,
       }
-      reader.readAsText(file)
-    }
-    input.click()
-  }
-
-  // SIMAエクスポート
-  const handleExportSIMA = () => {
-    const pointsToExport = exportPoints.length > 0 ? exportPoints : mergedPoints.map(p => ({
-      name: p.mergedName,
-      x: p.x,
-      y: p.y,
-      z: p.z,
-    }))
-
-    const projectName = currentFarm?.name || 'NoName'
-
-    // SIMA形式の行を生成
-    const lines: string[] = []
-    lines.push(`G00,04,${projectName},`)
-    lines.push('Z00, /* 座標データ */,')
-    lines.push('Z01,2,')
-    lines.push('A00,')
-
-    pointsToExport.forEach((point, index) => {
-      // 点名は20文字固定幅（左詰め、スペース埋め）
-      const paddedName = point.name.padEnd(20, ' ')
-      // 座標は10桁固定幅（小数点以下3桁）
-      const xStr = point.x.toFixed(3).padStart(10, ' ')
-      const yStr = point.y.toFixed(3).padStart(10, ' ')
-      const zStr = point.z !== null ? point.z.toFixed(3).padStart(10, ' ') : ''
-      const numStr = (index + 1).toString().padStart(5, ' ')
-
-      lines.push(`A01,${numStr},${paddedName},${xStr},${yStr},${zStr},`)
     })
-
-    lines.push('A99,')
-
-    // Shift_JISでエンコード
-    const content = lines.join('\r\n')
-
-    // TextEncoderでShift_JISにエンコード（ブラウザ対応のため）
-    // 注: 完全なShift_JIS対応にはライブラリが必要だが、ここでは簡易的にUTF-8で出力
-    // 本格的な対応が必要な場合はencoding.jsなどを使用
-    const blob = new Blob([content], { type: 'text/plain;charset=shift_jis' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${projectName}_coordinates.sim`
-    a.click()
-    URL.revokeObjectURL(url)
+    const confirmed = window.confirm(
+      `${toInsert.length} 点を 座標管理 に 登録 します。 よろしい ですか？\n` +
+        '順路の選択 は 「座標管理 → 測設」 で 行います。',
+    )
+    if (!confirmed) return
+    setRegistering(true)
+    try {
+      const inserted = await importCoordinates(toInsert)
+      if (inserted.length > 0) {
+        alert(`${inserted.length} 点 を 座標管理 に 登録 しました。`)
+      } else {
+        const err = useCoordinateStore.getState().error ?? '不明なエラー'
+        alert(`登録 に 失敗 しました: ${err}`)
+      }
+    } finally {
+      setRegistering(false)
+    }
   }
+
+  // SIMA 出力 は 「座標管理 → 測設」 ページ に 移設 (順路 の 並び順 で 出力 する ため)
 
   // 点種の日本語名マップ
   const TYPE_NAMES: Record<string, string> = {
@@ -665,16 +540,17 @@ export function PipeCoordinateCalcPage() {
                 命名設定
               </button>
               <button
-                onClick={handleExportSIMA}
-                disabled={mergedPoints.length === 0 && exportPoints.length === 0}
-                className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleRegisterToCoordinates}
+                disabled={registering || mergedPoints.length === 0}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 text-white border-blue-700 hover:bg-blue-700"
+                title="計算結果の測点を座標管理に新規登録 (順路は「座標管理 → 測設」で選ぶ)"
               >
-                <FileText className="h-4 w-4" />
-                SIMA出力
+                <Map className="h-4 w-4" />
+                {registering ? '登録中…' : '座標管理に登録'}
               </button>
               <button
                 onClick={handleExportExcel}
-                disabled={mergedPoints.length === 0 && exportPoints.length === 0 && coordinatePoints.length === 0}
+                disabled={mergedPoints.length === 0 && coordinatePoints.length === 0}
                 className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed bg-green-50 border-green-300 text-green-700"
               >
                 <Table className="h-4 w-4" />
@@ -737,185 +613,11 @@ export function PipeCoordinateCalcPage() {
             </div>
           )}
 
-          {/* 出力点選択パネル */}
-          <div className="p-3 bg-green-50 border-b">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium flex items-center gap-1">
-                <MousePointer className="h-4 w-4" />
-                出力点選択
-                {isSelectMode && <span className="text-green-600 ml-2">（選択中）</span>}
-              </h3>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setIsSelectMode(!isSelectMode)
-                    if (isSelectMode) {
-                      setInsertIndex(null)  // 選択終了時に挿入位置をリセット
-                    }
-                  }}
-                  className={`px-3 py-1 text-sm rounded ${
-                    isSelectMode
-                      ? 'bg-green-600 text-white'
-                      : 'border border-green-600 text-green-600 hover:bg-green-50'
-                  }`}
-                >
-                  {isSelectMode ? '選択終了' : '地図から選択'}
-                </button>
-                {exportPoints.length > 0 && (
-                  <>
-                    <button
-                      onClick={async () => {
-                        if (!currentFarm) {
-                          alert('工区が選択されていません')
-                          return
-                        }
-                        // 既存ルートを取得して重複チェックに使う
-                        const existing = await fetchRoutes(currentFarm.id)
-                        // 名前入力 (前回名を初期値。無ければ空文字)
-                        const rawName = window.prompt(
-                          '保存するルート名を入力してください',
-                          existing[0]?.name ?? '',
-                        )
-                        if (rawName == null) return // キャンセル
-                        const name = rawName.trim()
-                        if (!name) {
-                          alert('ルート名を入力してください')
-                          return
-                        }
-                        const dup = existing.find((r) => r.name === name)
-                        if (dup) {
-                          const ok = window.confirm(
-                            `ルート「${name}」は既に存在します。上書き保存しますか?`,
-                          )
-                          if (!ok) return
-                        }
-                        const saved = await saveRouteToDb(
-                          currentFarm.id,
-                          name,
-                          exportPoints,
-                          dup?.id,
-                        )
-                        if (saved) {
-                          alert(
-                            `順路「${name}」をサーバに保存しました（スマホ起工測量で利用されます）`,
-                          )
-                        }
-                      }}
-                      disabled={savingRoute || !currentFarm}
-                      className="flex items-center gap-1 px-2 py-1 text-sm border border-emerald-400 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
-                      title="順路をサーバに保存（スマホ起工測量で利用）"
-                    >
-                      <Save className="h-3 w-3" />
-                      {savingRoute ? '保存中…' : 'サーバ保存'}
-                    </button>
-                    <button
-                      onClick={saveExportPoints}
-                      className="flex items-center gap-1 px-2 py-1 text-sm border border-blue-300 text-blue-600 rounded hover:bg-blue-50"
-                      title="JSONファイルとしてダウンロード"
-                    >
-                      <Save className="h-3 w-3" />
-                      JSON
-                    </button>
-                    <button
-                      onClick={clearExportPoints}
-                      className="px-3 py-1 text-sm border border-red-300 text-red-600 rounded hover:bg-red-50"
-                    >
-                      クリア
-                    </button>
-                  </>
-                )}
-                <button
-                  onClick={loadExportPoints}
-                  className="flex items-center gap-1 px-2 py-1 text-sm border border-slate-300 text-slate-600 rounded hover:bg-slate-50"
-                  title="JSONファイルから読み込み"
-                >
-                  <FolderOpen className="h-3 w-3" />
-                  読込
-                </button>
-              </div>
-            </div>
-            {isSelectMode && (
-              <p className="text-xs text-green-700 mb-2">
-                地図上の測点または座標管理の点をクリックして出力順序を指定してください
-              </p>
-            )}
-            {exportPoints.length > 0 && (
-              <div className="bg-white rounded border max-h-40 overflow-auto">
-                <table className="w-full text-xs">
-                  <thead className="bg-slate-50 sticky top-0">
-                    <tr>
-                      <th className="px-2 py-1 text-left w-8">#</th>
-                      <th className="px-2 py-1 text-left">点名</th>
-                      <th className="px-2 py-1 text-left w-16">種別</th>
-                      <th className="px-2 py-1 w-20"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {exportPoints.map((point, index) => (
-                      <tr
-                        key={`${point.id}-${index}`}
-                        className={`${insertIndex === index ? 'bg-yellow-100' : 'hover:bg-slate-50'}`}
-                      >
-                        <td className="px-2 py-1 font-mono">{index + 1}</td>
-                        <td className="px-2 py-1 font-mono">{point.name}</td>
-                        <td className="px-2 py-1">
-                          <span className={`px-1.5 py-0.5 rounded text-xs ${
-                            point.source === 'pipe' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
-                          }`}>
-                            {point.source === 'pipe' ? '測点' : '座標'}
-                          </span>
-                        </td>
-                        <td className="px-2 py-1">
-                          <div className="flex items-center gap-1">
-                            {isSelectMode && (
-                              <button
-                                onClick={() => setInsertIndex(insertIndex === index ? null : index)}
-                                className={`p-0.5 rounded text-xs ${
-                                  insertIndex === index
-                                    ? 'bg-yellow-200 text-yellow-800'
-                                    : 'hover:bg-slate-200 text-slate-500'
-                                }`}
-                                title="この行の上に挿入"
-                              >
-                                <Plus className="h-3 w-3" />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => moveExportPoint(index, 'up')}
-                              disabled={index === 0}
-                              className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30"
-                            >
-                              <ArrowUp className="h-3 w-3" />
-                            </button>
-                            <button
-                              onClick={() => moveExportPoint(index, 'down')}
-                              disabled={index === exportPoints.length - 1}
-                              className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30"
-                            >
-                              <ArrowDown className="h-3 w-3" />
-                            </button>
-                            <button
-                              onClick={() => removeExportPoint(index)}
-                              className="p-0.5 hover:bg-red-100 rounded text-red-500"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {exportPoints.length === 0 && !isSelectMode && (
-              <p className="text-xs text-slate-500">
-                出力点を選択しない場合、全ての測点が表の順序で出力されます
-              </p>
-            )}
-          </div>
+          {/* 出力点選択 (順路) / SIMA 出力 / JSON / サーバ保存 は
+              「座標管理 → 測設」 ページ に 移設 (2026-10)。
+              この ページ は 管路 からの 測点生成 + 命名 + 座標管理 に 登録 まで。 */}
 
-          {/* テーブル */}
+          {/* 測点一覧 テーブル */}
           <div className="flex-1 overflow-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-100 sticky top-0 z-10">

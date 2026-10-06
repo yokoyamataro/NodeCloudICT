@@ -31,6 +31,7 @@ import { MobileUnderdrainConstructionPage } from '@/features/mobile/MobileUnderd
 import { UnderdrainWorkAreaPage } from '@/features/underdrain/UnderdrainWorkAreaPage'
 import { CadAnalysisPage } from '@/features/underdrain/CadAnalysisPage'
 import { PipeCoordinateCalcPage } from '@/features/underdrain/PipeCoordinateCalcPage'
+import { StakeoutRoutePage } from '@/features/coordinates/StakeoutRoutePage'
 import { PipeWiringPage } from '@/features/underdrain/PipeWiringPage'
 import { DepthCalcPage } from '@/features/underdrain/DepthCalcPage'
 import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
@@ -350,6 +351,9 @@ function AppRoutes() {
         <Route index element={<ProjectChooserPage />} />
         <Route path="projects/:projectId" element={<ProjectListPage />} />
         <Route path="coordinates" element={<CoordinatesPage />} />
+        {/* 測設: 座標管理 配下。 順路 の 選択 と サーバ保存 / SIMA / JSON 出力 を 担当。
+            「暗渠工事 → 座標計算」 で 座標管理 に 登録 した 点 と、 元々 の 座標 を 対象 に 取る */}
+        <Route path="stakeout" element={<StakeoutRoutePage />} />
         {/* スマホで記録した測設記録の一覧（工区横断のトップレベル経路） */}
         <Route path="staking-records" element={<StakingRecordsPage />} />
         <Route path="staking-records/accuracy" element={<SurveyAccuracyPage />} />

@@ -959,6 +959,10 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         for (const row of (data || []) as Array<{ id: string; point_number: string }>) {
           idByPn.set(row.point_number, row.id)
         }
+        // 登録 日 を そのまま 作成日 / 更新日 として ストア に 載せる。 DB 側 も
+        // created_at / updated_at は DEFAULT now() で 入って いる の で、 次回 の
+        // 再取得 で 整合 する (ms 単位 で は 微 ズレ するが 画面 表示 用途 で は 無害)。
+        const nowIso = new Date().toISOString()
         for (const src of slice) {
           const id = idByPn.get(src.point_number)
           if (!id) continue
@@ -974,8 +978,8 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
             stakeType: src.stake_type ?? null,
             stakeStatus: 'unset',
             notes: src.notes ?? null,
-            createdAt: null,
-            updatedAt: null,
+            createdAt: nowIso,
+            updatedAt: nowIso,
             createdBy: src.created_by,
             updatedBy: src.updated_by,
           })

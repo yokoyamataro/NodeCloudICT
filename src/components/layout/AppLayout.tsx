@@ -186,6 +186,9 @@ const navigation: NavGroup[] = [
     icon: Map,
     children: [
       { name: '座標一覧', href: '/coordinates', icon: Map },
+      // 測設 (順路 の 選択 と サーバ保存)。 暗渠 の 「座標計算」 で 座標管理 に 登録 した 点、
+      // および 元々 座標管理 に ある 点 を 対象 に、 現場 で 落とす 順番 を 決める。
+      { name: '測設', href: '/stakeout', icon: MapPin },
       { name: '実測記録', href: '/staking-records', icon: FileSearch },
       { name: '座標比較表', href: '/staking-records/accuracy', icon: ClipboardCheck },
     ],
@@ -237,6 +240,8 @@ const navigation: NavGroup[] = [
         { name: '工事区域', href: '/underdrain/work-area', icon: Square },
         { name: 'CAD解析', href: '/underdrain/cad-analysis', icon: FileSearch },
         { name: '配管系統', href: '/underdrain/pipe-wiring', icon: Cable },
+        // 座標計算: 管路頂点 → 測点生成 + 命名 + 座標管理 に 登録。
+        // 「現場 の 順路」 は 測設 (座標管理 配下) で 行う。
         { name: '座標計算', href: '/underdrain/coordinate-calc', icon: MapPin },
         { name: '施工計画', href: '/underdrain/depth-calc', icon: Ruler },
         { name: 'ICT施工', href: '/underdrain/landxml', icon: FileOutput },
@@ -940,6 +945,12 @@ function UserMenu({
             <FileText className="h-4 w-4 text-slate-500" />
             利用規約
           </Link>
+          {/* アプリ の ビルド日時 (バージョン情報)。 利用規約 の 直下 に 常時 表示。
+              以前 は 利用規約 本文 の 末尾 や ヘッダ下 に 出して いた の を こちら に 集約 */}
+          <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-slate-500 bg-slate-50/70">
+            <span className="w-4 shrink-0" />
+            バージョン: {__BUILD_TIME__}
+          </div>
           <Link
             to="/settings/password"
             onClick={() => setOpen(false)}
