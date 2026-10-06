@@ -67,7 +67,7 @@ const TABLE_SECTIONS: Array<{
   {
     key: 'm1',
     label: '実測',
-    headerTitle: '観測値 (点名 / X / Y / Z)',
+    headerTitle: '観測値 (点名 / X / Y / Z / アンテナ高)',
     bgHeader: 'bg-orange-50',
     bgSub: 'bg-orange-50',
     cols: [
@@ -75,6 +75,7 @@ const TABLE_SECTIONS: Array<{
       { label: 'X', align: 'right' },
       { label: 'Y', align: 'right' },
       { label: 'Z', align: 'right', isZ: true },
+      { label: 'ア高', align: 'right' },
     ],
   },
   // 当初 (design) / 実測2 / 差 / 平均 / スライド 系 は 座標精度管理表 側 で 扱う。
@@ -1132,6 +1133,19 @@ export function StakingRecordsPage() {
                         {m1?.measuredZ != null ? m1.measuredZ.toFixed(3) : '—'}
                       </td>
                     )}
+                    <td
+                      className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50"
+                      title="この セッション に 記録 された 移動局 アンテナ高 [m]"
+                    >
+                      {(() => {
+                        const sid = m1?.recordSetId ?? null
+                        if (!sid) return '—'
+                        const st = sets.find((s) => s.id === sid)
+                        return st?.antennaHeight != null
+                          ? st.antennaHeight.toFixed(3)
+                          : '—'
+                      })()}
+                    </td>
                     </>}
                     {/* 実測2 (点名 + リンク操作 / X / Y / Z)。 別 の 実測点 を リンク
                         させる こと で 「後追い で 2 回目 の 実測」を 表現できる。 */}
