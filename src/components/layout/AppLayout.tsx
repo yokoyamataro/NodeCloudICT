@@ -101,15 +101,18 @@ function NavNode({
   depth: number
   expanded: Set<string>
   onToggle: (name: string) => void
-  isActiveLink: (href: string) => boolean
+  isActiveLink: (href: string, exact?: boolean) => boolean
   /** 工事種別 で 出す か どうか。 束 の 中 まで 効かせる */
   visible: (href: string) => boolean
 }) {
   const kids = (item.children ?? []).filter((c) => visible(c.href))
   const isOpen = expanded.has(item.name)
   const anyChildActive = (n: NavItem): boolean =>
-    isActiveLink(n.href) || (n.children ?? []).some(anyChildActive)
-  const active = isActiveLink(item.href)
+    // 子 側 は 「その 子 が 葉 なら 完全 一致」 で 判定 (孫 を 持て る 場合 は 接頭 一致)
+    isActiveLink(n.href, (n.children ?? []).length === 0) ||
+    (n.children ?? []).some(anyChildActive)
+  // 自分 自身 が 葉 なら 完全 一致 で のみ 活性
+  const active = isActiveLink(item.href, kids.length === 0)
   const childActive = kids.some(anyChildActive)
 
   // 段 が 深く なる ほど 小さく 薄く する
@@ -186,9 +189,9 @@ const navigation: NavGroup[] = [
     icon: Map,
     children: [
       { name: '座標一覧', href: '/coordinates', icon: Map },
-      // 測設 (順路 の 選択 と サーバ保存)。 暗渠 の 「座標計算」 で 座標管理 に 登録 した 点、
+      // 測設計画 (順路 の 選択 と サーバ保存)。 暗渠 の 「座標計算」 で 座標管理 に 登録 した 点、
       // および 元々 座標管理 に ある 点 を 対象 に、 現場 で 落とす 順番 を 決める。
-      { name: '測設', href: '/stakeout', icon: MapPin },
+      { name: '測設計画', href: '/stakeout', icon: MapPin },
       { name: '実測記録', href: '/staking-records', icon: FileSearch },
       { name: '座標比較表', href: '/staking-records/accuracy', icon: ClipboardCheck },
     ],
@@ -527,7 +530,11 @@ export function AppLayout() {
     })
   }
 
-  const isActiveLink = (href: string) => {
+  // 「葉」 の 項目 (子 を 持たない リンク) は 完全 一致 のみ で ハイライト。
+  // 親 の 項目 (束) は 従来 通り 接頭 一致 で OK。 /staking-records (実測記録) と
+  // /staking-records/accuracy (座標比較表) が 両方 ハイライト される 事象 を 防ぐ。
+  const isActiveLink = (href: string, exact = false) => {
+    if (exact) return location.pathname === href
     return location.pathname === href || location.pathname.startsWith(href + '/')
   }
 

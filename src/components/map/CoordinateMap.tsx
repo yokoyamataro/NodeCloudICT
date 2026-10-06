@@ -1204,7 +1204,9 @@ export function CoordinateMap({
       {/* 長押し / 右クリック でメモ作成等のコールバックを発火 */}
       {onMapLongPress && <CoordinateMapLongPressBridge onLongPress={onMapLongPress} />}
 
-      {/* 経路の順番ラベル */}
+      {/* 経路の順番ラベル。 iconAnchor を 負値 に して バッジ を 点 の 右上 (約 10px 右,
+          20px 上) に ずらす。 既存 の 中央 配置 だと オレンジ 強調 マーカー と 完全 に 重なり、
+          番号 が 読め なく なる (2026-10) */}
       {showRoute && route.map((p, idx) => {
         const c = validCoordinates.find((co) => co.id === p.coordinateId)
         if (!c) return null
@@ -1215,8 +1217,8 @@ export function CoordinateMap({
             background: ${color};
             color: white;
             border-radius: 50%;
-            width: 22px;
-            height: 22px;
+            width: 20px;
+            height: 20px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1225,8 +1227,9 @@ export function CoordinateMap({
             border: 2px solid white;
             box-shadow: 0 1px 3px rgba(0,0,0,0.4);
           ">${idx + 1}</div>`,
-          iconSize: [22, 22],
-          iconAnchor: [11, 11],
+          iconSize: [20, 20],
+          // (−8, 30) で バッジ の 中心 が 点 から 右 10 px 上 20 px に ずれる
+          iconAnchor: [-8, 30],
         })
         return (
           <Marker

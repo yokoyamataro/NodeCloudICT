@@ -808,7 +808,7 @@ export function StakingRecordsPage() {
       {/* 記録セット の タブ。 セット を 分けた 以上、1 つ ずつ 見る 方 が 分かり やすい。
           右端 の 「+ セット」 が セット を 作る 唯一 の 入口。 */}
       {currentFarm && (
-        <div className="px-3 pt-1.5 border-b bg-white flex items-end gap-0 overflow-x-auto">
+        <div className="px-3 pt-1.5 border-b bg-slate-100 flex items-end gap-1 overflow-x-auto">
           {[
             ...sets.map((st) => ({
               key: st.id,
@@ -824,10 +824,10 @@ export function StakingRecordsPage() {
             return (
               <div
                 key={t.key}
-                className={`inline-flex items-center -mb-px border-b-2 whitespace-nowrap ${
+                className={`inline-flex items-center -mb-px rounded-t border border-b-0 whitespace-nowrap ${
                   on
-                    ? 'border-blue-600'
-                    : 'border-transparent'
+                    ? 'bg-white border-slate-300 border-b-2 border-b-blue-600'
+                    : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
                 }`}
               >
                 <button

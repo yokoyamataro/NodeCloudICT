@@ -12,14 +12,7 @@
 //   と 共有 される の で、 同じ 編集中 ルート が 両画面 で 見える 挙動 と なる。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import {
-  ArrowDown,
-  ArrowUp,
-  Route,
-  Save,
-  Trash2,
-  X,
-} from 'lucide-react'
+import { ArrowDown, ArrowUp, Route, X } from 'lucide-react'
 import { Polyline as LeafletPolyline, CircleMarker, Tooltip } from 'react-leaflet'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { OpenChannelOverlay } from '@/components/map/OpenChannelOverlay'
@@ -31,8 +24,12 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useOpenChannelStore } from '@/stores/openChannelStore'
 import { useMapLayersStore } from '@/stores/mapLayersStore'
+import { useExportRouteStore } from '@/stores/exportRouteStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { buildChannelOverlay } from '@/lib/openChannel/overlayRender'
+
+// 「+ 新規」 タブ の 識別子
+const NEW_ROUTE_KEY = '__new__'
 
 export function StakeoutRoutePage() {
   const { currentFarm } = useFarmStore()
@@ -47,7 +44,6 @@ export function StakeoutRoutePage() {
   const removeRoutePoint = useCoordinateStore((s) => s.removeRoutePoint)
   const moveRoutePoint = useCoordinateStore((s) => s.moveRoutePoint)
   const setRouteDirection = useCoordinateStore((s) => s.setRouteDirection)
-  const clearRoute = useCoordinateStore((s) => s.clearRoute)
   const saveRoute = useCoordinateStore((s) => s.saveRoute)
 
   // 暗渠 配線 + 線形物 の 読取 (全体図 と 同じ 見た目 に 揃える)
@@ -87,9 +83,25 @@ export function StakeoutRoutePage() {
     return set
   }, [coordinates, layerVis])
 
-  const [selectMode, setSelectMode] = useState(true)
+  // 保管ルート 一覧 (export_point_routes)。 タブ 表示 用 に 購読。
+  // 無い とき は Map.get が undefined → selector 内 の ?? [] は 毎回 新 配列 を 作って
+  // React 無限 ループ に なる の で、 Map そのもの を 購読 して useMemo で 解決 する。
+  const routesByFarmId = useExportRouteStore((s) => s.routesByFarmId)
+  const savedRoutes = useMemo(
+    () => (currentFarm ? routesByFarmId.get(currentFarm.id) ?? [] : []),
+    [routesByFarmId, currentFarm],
+  )
+  const fetchSavedRoutes = useExportRouteStore((s) => s.fetchRoutes)
+  const deleteSavedRoute = useExportRouteStore((s) => s.deleteRoute)
+  const setStoreRoute = useCoordinateStore.setState
+
+  // 選択モード / 手動保存 ボタン は 廃止 (常時 選択 + 自動保存)
   const [routeName, setRouteName] = useState('既定')
-  const [saving, setSaving] = useState(false)
+  const [activeRouteId, setActiveRouteId] = useState<string | typeof NEW_ROUTE_KEY>(NEW_ROUTE_KEY)
+  // 「保存中…」 「保存済」 の 表示
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
+  // ルート 変更 の 追跡 (coordinateStore 側)
+  const routeHasChanges = useCoordinateStore((s) => s.routeHasChanges)
 
   // 工区 変更 時: 座標 / 現在 の 編集中 ルート / 暗渠 / 線形 を 取得
   useEffect(() => {
@@ -103,6 +115,7 @@ export function StakeoutRoutePage() {
     void fetchRoute(currentFarm.id)
     void fetchPipes(currentFarm.id)
     void fetchOpenChannels(currentFarm.id)
+    void fetchSavedRoutes(currentFarm.id)
   }, [
     currentFarm?.id,
     projects,
@@ -110,8 +123,50 @@ export function StakeoutRoutePage() {
     fetchRoute,
     fetchPipes,
     fetchOpenChannels,
+    fetchSavedRoutes,
     currentFarm,
   ])
+
+  /**
+   * 保管 ルート の タブ を 選ぶ: その ルート の 点列 を 編集中 ルート (coordinateStore.route)
+   * に 反映。 保存済み は RoutePoint[] (coordinateId を 持たない 変換後 の 形) なので、
+   * p.id (coordinate id) を 使って 復元 する。 方向 は 失われて いる の で 'down' 既定。
+   */
+  const handleSelectRouteTab = useCallback(
+    (routeId: string | typeof NEW_ROUTE_KEY) => {
+      if (routeId === NEW_ROUTE_KEY) {
+        setActiveRouteId(NEW_ROUTE_KEY)
+        setRouteName('既定')
+        setStoreRoute({ route: [], routeHasChanges: false })
+        return
+      }
+      const saved = savedRoutes.find((r) => r.id === routeId)
+      if (!saved) return
+      setActiveRouteId(routeId)
+      setRouteName(saved.name)
+      setStoreRoute({
+        route: saved.points.map((p) => ({
+          coordinateId: p.id,
+          direction: 'down' as const,
+        })),
+        routeHasChanges: false,
+      })
+    },
+    [savedRoutes, setStoreRoute],
+  )
+
+  // 削除 (タブ の X ボタン)
+  const handleDeleteRoute = useCallback(
+    async (routeId: string, name: string) => {
+      if (!currentFarm) return
+      if (!confirm(`ルート 「${name}」 を 削除 しますか？ (元 に 戻せません)`)) return
+      const ok = await deleteSavedRoute(currentFarm.id, routeId)
+      if (ok && activeRouteId === routeId) {
+        handleSelectRouteTab(NEW_ROUTE_KEY)
+      }
+    },
+    [currentFarm, deleteSavedRoute, activeRouteId, handleSelectRouteTab],
+  )
 
   // 暗渠配線 を 線 + 頂点 ラベル に 展開 (全体図 と 同一 ロジック)
   const pipeOverlay = useMemo(() => {
@@ -165,36 +220,38 @@ export function StakeoutRoutePage() {
 
   const handlePointSelect = useCallback(
     (id: string) => {
-      if (!selectMode) return
       // すでに ルート 末尾 と 同じ 点 な ら 無視 (連続 クリック の 誤 追加 を 防ぐ)
       if (route.length > 0 && route[route.length - 1]?.coordinateId === id) return
       void appendRoutePoint(id, 'down')
     },
-    [selectMode, route, appendRoutePoint],
+    [route, appendRoutePoint],
   )
 
-  const handleSave = async () => {
+  // 自動保存: route / routeName が 変わって routeHasChanges=true の 間、 800ms
+  // 無編集 で 保存。 タブ 切替 / 初回 ロード 直後 は routeHasChanges=false なので
+  // 走らない。 「保存中…」「保存済」 を 表示 して ユーザー に 進捗 を 伝える。
+  useEffect(() => {
     if (!currentFarm) return
-    const name = routeName.trim() || '既定'
-    setSaving(true)
-    try {
-      await saveRoute(name)
-      alert(
-        `ルート「${name}」を保存しました。\nスマホ 杭打ち で この 名前 を 選べます。`,
-      )
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      alert(`保存に失敗しました: ${msg}`)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleClear = () => {
-    if (route.length === 0) return
-    if (!confirm('編集中 の ルート を すべて クリア しますか？')) return
-    void clearRoute()
-  }
+    if (!routeHasChanges) return
+    setAutoSaveStatus('saving')
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const name = routeName.trim() || '既定'
+          await saveRoute(name)
+          const updated = await fetchSavedRoutes(currentFarm.id)
+          const match = updated.find((r) => r.name === name)
+          if (match) setActiveRouteId(match.id)
+          setAutoSaveStatus('saved')
+          window.setTimeout(() => setAutoSaveStatus('idle'), 1500)
+        } catch (err) {
+          console.error('[stakeout] auto save failed', err)
+          setAutoSaveStatus('idle')
+        }
+      })()
+    }, 800)
+    return () => window.clearTimeout(timer)
+  }, [route, routeName, routeHasChanges, currentFarm, saveRoute, fetchSavedRoutes])
 
   // 座標ID → 点 の 索引。 ルート 行 の 表示 で 点名 / 種別 を 引く ため
   const coordById = useMemo(() => {
@@ -202,6 +259,12 @@ export function StakeoutRoutePage() {
     for (const c of coordinates) map.set(c.id, c)
     return map
   }, [coordinates])
+
+  // ルート に 含まれる 点 を 地図 上 で オレンジ 強調 する (経路モード の 視認性)
+  const orangeCoordIds = useMemo(
+    () => new Set(route.map((p) => p.coordinateId)),
+    [route],
+  )
 
   if (!currentFarm) {
     return (
@@ -222,28 +285,67 @@ export function StakeoutRoutePage() {
         className="flex-1"
         left={
           <div className="flex-1 flex flex-col overflow-hidden border-r">
-            {/* ツールバー */}
-            <div className="p-3 bg-slate-50 border-b space-y-2">
-              <div className="flex items-center gap-2 flex-wrap">
+            {/* 保管ルート タブ。 クリック で ルート を 切替、× で 削除、「+ 新規」 で
+                空 ルート を 開く。 隣 と の 区切り を 分かり やすく する ため 非選択 タブ も
+                薄い 枠 (border + 間隔) を 入れる。 選択中 は 白背景 + 青下線 で 浮き 上がる。 */}
+            <div className="px-3 pt-1.5 border-b bg-slate-100 flex items-end gap-1 overflow-x-auto">
+              {savedRoutes.map((r) => {
+                const on = activeRouteId === r.id
+                return (
+                  <div
+                    key={r.id}
+                    className={`inline-flex items-center -mb-px rounded-t border border-b-0 whitespace-nowrap ${
+                      on
+                        ? 'bg-white border-slate-300 border-b-2 border-b-blue-600'
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleSelectRouteTab(r.id)}
+                      className={`px-3 py-1.5 text-xs whitespace-nowrap ${
+                        on ? 'text-blue-700 font-medium' : 'text-slate-600 hover:text-slate-800'
+                      }`}
+                    >
+                      {r.name}
+                      <span className="ml-1 text-slate-400">{r.points.length}</span>
+                    </button>
+                    {on && (
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteRoute(r.id, r.name)}
+                        title="このルートを削除"
+                        className="mr-1 p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+              <div
+                className={`inline-flex items-center -mb-px rounded-t border border-b-0 whitespace-nowrap ${
+                  activeRouteId === NEW_ROUTE_KEY
+                    ? 'bg-white border-slate-300 border-b-2 border-b-blue-600'
+                    : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
                 <button
-                  onClick={() => setSelectMode((v) => !v)}
-                  className={`px-3 py-1.5 text-sm rounded border ${
-                    selectMode
-                      ? 'bg-emerald-600 text-white border-emerald-700'
-                      : 'bg-white border-slate-300 hover:bg-slate-50'
+                  type="button"
+                  onClick={() => handleSelectRouteTab(NEW_ROUTE_KEY)}
+                  className={`px-3 py-1.5 text-xs whitespace-nowrap ${
+                    activeRouteId === NEW_ROUTE_KEY
+                      ? 'text-blue-700 font-medium'
+                      : 'text-slate-500 hover:text-slate-800'
                   }`}
                 >
-                  {selectMode ? '選択モード ON' : '選択モード OFF'}
-                </button>
-                <button
-                  onClick={handleClear}
-                  disabled={route.length === 0}
-                  className="px-3 py-1.5 text-sm rounded border border-slate-300 hover:bg-slate-50 disabled:opacity-40"
-                >
-                  <Trash2 className="h-3.5 w-3.5 inline mr-1" />
-                  クリア
+                  + 新規
                 </button>
               </div>
+            </div>
+
+            {/* ツールバー (ルート名 + 自動保存 ステータス のみ) */}
+            <div className="p-3 bg-slate-50 border-b space-y-2">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-500 shrink-0">ルート名</span>
                 <input
@@ -253,21 +355,17 @@ export function StakeoutRoutePage() {
                   placeholder="既定"
                   className="flex-1 min-w-0 px-2 py-1 text-sm border rounded"
                 />
-                <button
-                  onClick={handleSave}
-                  disabled={saving || route.length === 0}
-                  className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                  title="このルートをスマホ杭打ち用に保存"
-                >
-                  <Save className="h-3.5 w-3.5" />
-                  {saving ? '保存中…' : 'サーバ保存'}
-                </button>
+                <span className="text-[11px] text-slate-500 w-16 text-right">
+                  {autoSaveStatus === 'saving'
+                    ? '保存中…'
+                    : autoSaveStatus === 'saved'
+                      ? '保存済'
+                      : ''}
+                </span>
               </div>
-              {selectMode && (
-                <div className="text-[11px] text-emerald-700">
-                  地図上の点をクリックして順番に追加してください
-                </div>
-              )}
+              <div className="text-[11px] text-emerald-700">
+                地図上の点をクリックして順番に追加（自動保存されます）
+              </div>
             </div>
 
             {/* 選択済みルート 一覧 */}
@@ -275,9 +373,7 @@ export function StakeoutRoutePage() {
               {route.length === 0 ? (
                 <div className="p-6 text-center text-sm text-slate-500">
                   <Route className="h-10 w-10 mx-auto mb-2 text-slate-300" />
-                  {selectMode
-                    ? '地図から点を選んで順路を作ります'
-                    : '選択モードを ON にして地図から点を選びます'}
+                  地図から点を選んで順路を作ります
                 </div>
               ) : (
                 <table className="w-full text-sm">
@@ -382,6 +478,8 @@ export function StakeoutRoutePage() {
               farmId={currentFarm.id}
               showOrtho
               showRoute
+              route={route}
+              orangeCoordIds={orangeCoordIds}
               onPointSelect={handlePointSelect}
               coordinatesInteractive
               visibleTypes={visibleTypes}

@@ -691,8 +691,9 @@ export function CoordinatesPage() {
       }) as typeof _setStakeStatus)
     : _setStakeStatus
 
-  // 経路モード（クリックで経路に追加）
-  const [routeMode, setRouteMode] = useState(false)
+  // 経路モード は 「座標管理 → 測設」 に 移設 したため ここ で は 常時 OFF。
+  // 既存 の 条件分岐 を 一括 無効化 する ため の 定数 (再 導入 時 は useState に 戻す)
+  const routeMode = false
   // 現在編集中の route の name (保存時のキー、既定は '既定')
   const [routeName, setRouteName] = useState('既定')
   // 経路パネル折りたたみ (地図が見えにくい時用)
@@ -3254,18 +3255,8 @@ export function CoordinatesPage() {
         <div className="flex-1 bg-slate-100 flex flex-col relative">
           {/* 表示設定パネル */}
           <div className="p-2 bg-white border-b flex items-center gap-4 flex-wrap">
-            <button
-              onClick={() => setRouteMode(!routeMode)}
-              className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
-                routeMode
-                  ? 'bg-blue-100 border-blue-400 text-blue-800 font-medium'
-                  : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
-              }`}
-              title="ONにすると地図クリックで点を経路に追加"
-            >
-              <Route className="h-3 w-3" />
-              経路モード{routeMode ? 'ON' : 'OFF'}
-            </button>
+            {/* 経路モード は 「座標管理 → 測設」 ページ に 集約 (2026-10)。
+                座標一覧 で は 編集中 ルート の 線 だけ 読み取り 表示 する。 */}
             <button
               onClick={() => setShowLabels(!showLabels)}
               className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
