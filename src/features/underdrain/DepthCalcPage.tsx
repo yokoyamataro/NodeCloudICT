@@ -2124,16 +2124,67 @@ export function DepthCalcPage() {
                     <RefreshCw className="h-4 w-4" />
                     系統読込
                   </button>
-                  {/* 地盤高読込 */}
-                  <button
-                    onClick={() => reloadGroundHeights()}
-                    disabled={saving}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition-colors disabled:opacity-50 whitespace-nowrap"
-                    title="実測記録 (起工測量) から地盤高を読み込み (実測記録の Z補正値を加算した補正後 Z を使用)"
-                  >
-                    <Mountain className="h-4 w-4" />
-                    地盤高
-                  </button>
+                  {/* 地盤高 読込 (補正 Z = 実測 Z + Z 補正)。
+                      左側 の 「Z 補正」 で 補正 値 を 編集 し、 右側 の ボタン で 取り込み */}
+                  <div className="flex items-stretch border border-sky-500 rounded-lg overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!currentFarm) return
+                        const raw = window.prompt(
+                          '実測 Z に 加算 する 補正値 [m] を 入力 して ください。\n' +
+                            '例: +0.030 で 全ての 実測 Z に 3 cm 足して 取り込む。\n' +
+                            '空欄 で 0 (補正 なし) に 戻します。',
+                          stakingZOffset === 0 ? '' : String(stakingZOffset),
+                        )
+                        if (raw === null) return
+                        const trimmed = raw.trim()
+                        const n = trimmed === '' ? 0 : parseFloat(trimmed)
+                        if (!Number.isFinite(n)) {
+                          alert('数値 として 読み取れ ません でした')
+                          return
+                        }
+                        setStakingZOffset(n)
+                        // DB 側 (design_survey_calibration.dz_offset) に 保存。
+                        // 未マイグレ 環境 でも 画面 が 死な ない よう localStorage にも 書く
+                        try {
+                          await supabase
+                            .from('design_survey_calibration')
+                            .upsert(
+                              { farm_id: currentFarm.id, dz_offset: n } as never,
+                              { onConflict: 'farm_id' },
+                            )
+                        } catch (err) {
+                          console.warn('[dz_offset] DB 保存 に 失敗', err)
+                        }
+                        try {
+                          localStorage.setItem(
+                            `staking:zOffset:${currentFarm.id}`,
+                            String(n),
+                          )
+                        } catch { /* ignore */ }
+                      }}
+                      disabled={saving}
+                      className={`px-2 py-1.5 text-xs font-mono whitespace-nowrap ${
+                        stakingZOffset !== 0
+                          ? 'bg-rose-100 text-rose-700 hover:bg-rose-200'
+                          : 'bg-sky-50 text-sky-700 hover:bg-sky-100'
+                      }`}
+                      title="地盤高 取込 時 に 実測 Z に 加算 する 補正値 を 編集"
+                    >
+                      Z {stakingZOffset >= 0 ? '+' : ''}
+                      {stakingZOffset.toFixed(3)}
+                    </button>
+                    <button
+                      onClick={() => reloadGroundHeights()}
+                      disabled={saving}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-sky-600 text-white hover:bg-sky-700 transition-colors disabled:opacity-50 whitespace-nowrap border-l border-sky-500"
+                      title="実測記録 (起工測量) から 地盤高 を 読込。 左側 の Z 補正 を 加算 した 補正後 Z を 使う"
+                    >
+                      <Mountain className="h-4 w-4" />
+                      地盤高
+                    </button>
+                  </div>
                   {/* 自動切深計画 + 対象スコープ */}
                   <div className="flex items-stretch border border-amber-500 rounded-lg overflow-hidden">
                     <button
