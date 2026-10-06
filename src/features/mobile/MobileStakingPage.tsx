@@ -975,9 +975,13 @@ export function MobileStakingPage() {
           setSessionSetId(hit.id)
           return
         }
+        // 自動 作成 時 は 現 端末 の 設定 (アンテナ高) を 記録 して おく。
+        // 基準局 は 端末 側 で 自動 取得 して いない の で 空 の まま。 後 で PC の
+        // 「実測記録 → セッション 詳細」 で 追記 する 想定。
         const row = await createSurveySet(farmId, {
           measuredOn: today,
           name: generateDefaultSessionName(surveySets),
+          antennaHeight: Number.isFinite(antennaHeight) ? antennaHeight : null,
         })
         if (row) {
           setSessionSetId(row.id)
@@ -3780,11 +3784,12 @@ export function MobileStakingPage() {
       return hit.id
     }
     // 新規 セッション を 作成。 ストア の error は 事前 に クリア して、
-    // 失敗 時 に 新鮮 な 原因 だけ が 残る ように する。
+    // 失敗 時 に 新鮮 な 原因 だけ が 残る ように する。 アンテナ高 も 一緒 に 記録。
     useSurveySetStore.setState({ error: null })
     const row = await createSurveySet(farmId, {
       measuredOn: today,
       name: generateDefaultSessionName(surveySets),
+      antennaHeight: Number.isFinite(antennaHeight) ? antennaHeight : null,
     })
     if (!row) return null
     setSessionSetId(row.id)

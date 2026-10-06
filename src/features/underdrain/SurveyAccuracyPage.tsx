@@ -8,8 +8,8 @@
 //   - タブ は × で 削除 でき、「+ 新規」 で 空 タブ を 追加
 //   - 右側 に 地図 を 配置 し、 クリック 選択 と 現在 の 当初 の 可視化 を 兼ねる
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, ClipboardCheck, Plus, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Loader2, ClipboardCheck, Plus, X, Download } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import { useStakingStore } from '@/stores/stakingStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -18,9 +18,18 @@ import { deriveRow, type StakingGroup } from '@/lib/stakingGroups'
 import { useExportRouteStore } from '@/stores/exportRouteStore'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { ResizableSplit } from '@/components/layout/ResizableSplit'
+import { COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 
 /** 比較モード: 'pair' = 当初 + 実測1 + 実測2 の 平均比較、 'single' = 当初 + 実測1 のみ */
 type CompareMode = 'single' | 'pair'
+
+/** 行 ごと の 「手入力」 実測 値 (m1 / m2 を 任意 に 上書き) */
+interface ManualEntry {
+  x?: number
+  y?: number
+  z?: number
+  name?: string
+}
 
 interface ComparisonView {
   id: string
@@ -30,6 +39,99 @@ interface ComparisonView {
   type?: CompareMode
   /** Z 座標 も 比較 する か (旧 データ 無し は true として 従来 挙動 を 保つ) */
   hasZ?: boolean
+  /** coord id → 手入力 の 実測1 / 実測2。 実測記録 の 自動 マッチ より 優先 */
+  manual?: Record<string, { m1?: ManualEntry; m2?: ManualEntry }>
+}
+
+/** 実測記録 を 当初 と 突合 する 距離 の 閾値 [m]。 50 cm */
+const MATCH_RADIUS_M = 0.5
+
+/**
+ * 1 セル 分 の 数値 編集 可能 入力。 値 は 3 桁 固定 で 表示 する が、 編集中 は
+ * ユーザー 入力 を そのまま 保持 し blur で コミット する。 空 で 消すと null 扱い。
+ */
+function EditableNumberCell({
+  value,
+  onCommit,
+  className,
+}: {
+  value: number | null | undefined
+  onCommit: (next: number | null) => void
+  className?: string
+}) {
+  const [raw, setRaw] = useState<string>(value != null && Number.isFinite(value) ? value.toFixed(3) : '')
+  const [editing, setEditing] = useState(false)
+  useEffect(() => {
+    if (editing) return
+    setRaw(value != null && Number.isFinite(value) ? value.toFixed(3) : '')
+  }, [value, editing])
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={raw}
+      onFocus={() => setEditing(true)}
+      onChange={(e) => setRaw(e.target.value)}
+      onBlur={() => {
+        setEditing(false)
+        const n = parseFloat(raw)
+        if (!Number.isFinite(n)) {
+          onCommit(null)
+          setRaw('')
+        } else {
+          onCommit(n)
+          setRaw(n.toFixed(3))
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+      }}
+      className={
+        className ??
+        'w-20 px-1 text-right font-mono text-xs bg-transparent border border-transparent rounded focus:bg-white focus:border-blue-400 focus:outline-none'
+      }
+      placeholder="—"
+    />
+  )
+}
+
+/** 1 セル 分 の テキスト 編集 可能 入力 (点名 用) */
+function EditableTextCell({
+  value,
+  onCommit,
+  className,
+}: {
+  value: string | null | undefined
+  onCommit: (next: string | null) => void
+  className?: string
+}) {
+  const [raw, setRaw] = useState<string>(value ?? '')
+  const [editing, setEditing] = useState(false)
+  useEffect(() => {
+    if (editing) return
+    setRaw(value ?? '')
+  }, [value, editing])
+  return (
+    <input
+      type="text"
+      value={raw}
+      onFocus={() => setEditing(true)}
+      onChange={(e) => setRaw(e.target.value)}
+      onBlur={() => {
+        setEditing(false)
+        const v = raw.trim()
+        onCommit(v === '' ? null : v)
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+      }}
+      className={
+        className ??
+        'w-full px-1 font-mono text-xs bg-transparent border border-transparent rounded focus:bg-white focus:border-blue-400 focus:outline-none'
+      }
+      placeholder="—"
+    />
+  )
 }
 
 const VIEWS_STORAGE_PREFIX = 'nc:surveyAccuracy:views:'
@@ -81,12 +183,23 @@ export function SurveyAccuracyPage() {
 
   const [views, setViews] = useState<ComparisonView[]>([])
   const [activeViewId, setActiveViewId] = useState<string | null>(null)
-  // 「測設計画 から 取り込む」 select の 現在値 (per tab にはしない。 都度 選び 直す)
-  const [importRouteId, setImportRouteId] = useState<string>('')
   // 「座標比較表作成」 ダイアログ の 開閉 + 入力中 の 設定
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [newViewType, setNewViewType] = useState<CompareMode>('pair')
   const [newViewHasZ, setNewViewHasZ] = useState(true)
+  // 当初 列 の 「取込」 ポップオーバー。 'root' | 'route' | 'type'
+  const [importMenu, setImportMenu] = useState<'root' | 'route' | 'type' | null>(null)
+  const importMenuRef = useRef<HTMLDivElement | null>(null)
+  // ポップオーバー 外 クリック で 閉じる
+  useEffect(() => {
+    if (!importMenu) return
+    const onDown = (e: MouseEvent) => {
+      if (!importMenuRef.current) return
+      if (!importMenuRef.current.contains(e.target as Node)) setImportMenu(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [importMenu])
 
   useEffect(() => {
     if (currentFarm?.id) {
@@ -111,7 +224,7 @@ export function SurveyAccuracyPage() {
     const loaded = loadViews(currentFarm.id)
     setViews(loaded)
     setActiveViewId(null)
-    setImportRouteId('')
+    setImportMenu(null)
   }, [currentFarm?.id])
 
   // views を 変える 度 に localStorage へ 永続化
@@ -164,6 +277,57 @@ export function SurveyAccuracyPage() {
     [activeViewId],
   )
 
+  // 当初 1 行 分 の 手入力 (view.manual) を 更新
+  const updateManual = useCallback(
+    (
+      coordId: string,
+      which: 'm1' | 'm2',
+      field: 'name' | 'x' | 'y' | 'z',
+      value: string | number | null,
+    ) => {
+      if (!activeViewId) return
+      setViews((prev) =>
+        prev.map((v) => {
+          if (v.id !== activeViewId) return v
+          const manual = { ...(v.manual ?? {}) }
+          const entry = { ...(manual[coordId] ?? {}) }
+          const m = { ...(entry[which] ?? {}) }
+          if (value === null || value === '') delete (m as Record<string, unknown>)[field]
+          else (m as Record<string, unknown>)[field] = value
+          if (Object.keys(m).length === 0) delete entry[which]
+          else entry[which] = m
+          if (Object.keys(entry).length === 0) delete manual[coordId]
+          else manual[coordId] = entry
+          return { ...v, manual }
+        }),
+      )
+    },
+    [activeViewId],
+  )
+
+  // 測設計画 の ルート から 当初 を 置換 で 流し込む
+  const importFromRoute = useCallback(
+    (routeId: string) => {
+      const route = savedRoutes.find((r) => r.id === routeId)
+      if (!route) return
+      const coordIdSet = new Set(coordinates.map((c) => c.id))
+      const ids = route.points.filter((p) => coordIdSet.has(p.id)).map((p) => p.id)
+      updateActiveViewCoords(() => ids)
+      setImportMenu(null)
+    },
+    [savedRoutes, coordinates, updateActiveViewCoords],
+  )
+
+  // 座標管理 から 点種 指定 で 一括 取込 (置換)
+  const importFromType = useCallback(
+    (type: string) => {
+      const ids = coordinates.filter((c) => c.type === type).map((c) => c.id)
+      updateActiveViewCoords(() => ids)
+      setImportMenu(null)
+    },
+    [coordinates, updateActiveViewCoords],
+  )
+
   // 地図 の 点 を クリック した 時: 当初 セット に トグル
   const handleMapPointSelect = useCallback(
     (id: string) => {
@@ -191,79 +355,163 @@ export function SurveyAccuracyPage() {
 
   // 当初 が 1 点 も 指定 されて いない 場合 は 行 を 出さない。
   // 当初 が ある 場合:
-  //   1. 実測記録 が 存在 する 当初 → 通常 の グループ 行 (coordinate 型 のみ)
-  //      - 'pair' は 2 点 ペア、 'single' は 1 点 1 行 (m2 は null)
-  //   2. 実測 が 無い 当初 → 「未測」 行 を 合成 (m1/m2 null、 当初 X/Y/Z は 座標管理 から)
-  // フリー 点 / pipe_vertex は 「当初」 に 載ら ない の で 除外。
+  //   実測記録 を 「距離 50cm 以内」 で 当初 に 自動 マッチ (targetRefId は 使わない)。
+  //   各 実測 は 最寄り の 1 当初 に のみ 割り当てる。
+  //   当初 ごと に 'single' = 1 行 = 1 記録、 'pair' = 2 記録 ペア、 未測 は 空行。
+  //   手入力 (view.manual) が ある 行 は 自動 マッチ より 優先 して m1/m2 を 差し替える。
   const grouped = useMemo<StakingGroup[]>(() => {
     if (activeDesignIds.size === 0) return []
-    // 対象 の 実測記録 を 当初 ID で グループ 化
-    const byRef = new Map<string, typeof filteredRecords>()
-    for (const r of filteredRecords) {
-      if (r.targetType !== 'coordinate') continue
-      if (!r.targetRefId || !activeDesignIds.has(r.targetRefId)) continue
-      const arr = byRef.get(r.targetRefId) ?? []
-      arr.push(r)
-      byRef.set(r.targetRefId, arr)
-    }
     const coordById = new Map(coordinates.map((c) => [c.id, c]))
-    const matched: StakingGroup[] = []
-    for (const [refId, arr] of byRef.entries()) {
-      arr.sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
-      if (compareMode === 'single') {
-        // 1 行 = 1 記録
-        arr.forEach((r, i) => {
-          matched.push({
-            key: i === 0 ? refId : `${refId}#${i}`,
-            designName: r.targetName ?? '',
-            designX: r.targetX,
-            designY: r.targetY,
-            designZ: r.targetZ,
-            surveyCategory: r.surveyCategory,
+
+    // 距離 で 当初 に 割り当てる
+    const assigned = new Map<string, typeof filteredRecords>()
+    const coordRecords = filteredRecords.filter((r) => r.targetType === 'coordinate')
+    for (const r of coordRecords) {
+      let bestId: string | null = null
+      let bestD2 = MATCH_RADIUS_M * MATCH_RADIUS_M
+      for (const id of activeDesignIds) {
+        const d = coordById.get(id)
+        if (!d) continue
+        const dx = r.measuredX - d.x
+        const dy = r.measuredY - d.y
+        const d2 = dx * dx + dy * dy
+        if (d2 < bestD2) {
+          bestD2 = d2
+          bestId = id
+        }
+      }
+      if (bestId) {
+        const arr = assigned.get(bestId) ?? []
+        arr.push(r)
+        assigned.set(bestId, arr)
+      }
+    }
+
+    const manualMap = activeView?.manual ?? {}
+    const out: StakingGroup[] = []
+    for (const id of activeDesignIds) {
+      const c = coordById.get(id)
+      if (!c) continue
+      const arr = (assigned.get(id) ?? []).slice().sort((a, b) =>
+        a.recordedAt.localeCompare(b.recordedAt),
+      )
+      const manual = manualMap[id]
+      // 手入力 で m1 を 差し替え
+      const applyManual = (
+        r: (typeof arr)[number] | null,
+        override?: ManualEntry,
+      ): (typeof arr)[number] | null => {
+        if (!override) return r
+        const base =
+          r ??
+          ({
+            id: `__manual-${id}`,
+            farmId: currentFarm?.id ?? '',
+            surveyCategory: 'initial',
             targetType: 'coordinate',
-            m1: r,
+            targetRefId: id,
+            targetVertexIndex: null,
+            targetName: override.name ?? c.pointNumber,
+            targetX: c.x,
+            targetY: c.y,
+            targetZ: c.z,
+            measuredX: override.x ?? 0,
+            measuredY: override.y ?? 0,
+            measuredZ: override.z ?? null,
+            accuracy: null,
+            sampleCount: 0,
+            durationSeconds: 0,
+            recordedBy: null,
+            recordedAt: new Date().toISOString(),
+            notes: null,
+            pairedWithId: null,
+          } as unknown as (typeof arr)[number])
+        return {
+          ...base,
+          targetName: override.name ?? base.targetName,
+          measuredX: override.x ?? base.measuredX,
+          measuredY: override.y ?? base.measuredY,
+          measuredZ: override.z ?? base.measuredZ,
+        }
+      }
+
+      if (compareMode === 'single') {
+        if (arr.length === 0 && !manual?.m1) {
+          out.push({
+            key: `unmeasured-${id}`,
+            designName: c.pointNumber,
+            designX: c.x,
+            designY: c.y,
+            designZ: c.z,
+            surveyCategory: 'initial',
+            targetType: 'coordinate',
+            m1: null,
             m2: null,
           })
-        })
-      } else {
-        // 2 点 ペア
-        for (let i = 0; i < arr.length; i += 2) {
-          matched.push({
-            key: i === 0 ? refId : `${refId}#${i}`,
-            designName: arr[i].targetName ?? '',
-            designX: arr[i].targetX,
-            designY: arr[i].targetY,
-            designZ: arr[i].targetZ,
-            surveyCategory: arr[i].surveyCategory,
-            targetType: 'coordinate',
-            m1: arr[i],
-            m2: arr[i + 1] ?? null,
+        } else {
+          const list = arr.length > 0 ? arr : [null as unknown as (typeof arr)[number]]
+          list.forEach((r, i) => {
+            const m1 = applyManual(r, i === 0 ? manual?.m1 : undefined)
+            if (!m1) return
+            out.push({
+              key: i === 0 ? id : `${id}#${i}`,
+              designName: c.pointNumber,
+              designX: c.x,
+              designY: c.y,
+              designZ: c.z,
+              surveyCategory: m1.surveyCategory ?? 'initial',
+              targetType: 'coordinate',
+              m1,
+              m2: null,
+            })
           })
+        }
+      } else {
+        if (arr.length === 0 && !manual?.m1 && !manual?.m2) {
+          out.push({
+            key: `unmeasured-${id}`,
+            designName: c.pointNumber,
+            designX: c.x,
+            designY: c.y,
+            designZ: c.z,
+            surveyCategory: 'initial',
+            targetType: 'coordinate',
+            m1: null,
+            m2: null,
+          })
+        } else {
+          const first = applyManual(arr[0] ?? null, manual?.m1)
+          const second = applyManual(arr[1] ?? null, manual?.m2)
+          out.push({
+            key: id,
+            designName: c.pointNumber,
+            designX: c.x,
+            designY: c.y,
+            designZ: c.z,
+            surveyCategory: first?.surveyCategory ?? 'initial',
+            targetType: 'coordinate',
+            m1: first,
+            m2: second,
+          })
+          // 3 記録 目 以降 は 追加 ペア 行 と して 載せる
+          for (let i = 2; i < arr.length; i += 2) {
+            out.push({
+              key: `${id}#${i}`,
+              designName: c.pointNumber,
+              designX: c.x,
+              designY: c.y,
+              designZ: c.z,
+              surveyCategory: arr[i].surveyCategory,
+              targetType: 'coordinate',
+              m1: arr[i],
+              m2: arr[i + 1] ?? null,
+            })
+          }
         }
       }
     }
-    const measuredRefIds = new Set(byRef.keys())
-    const unmeasured: StakingGroup[] = []
-    for (const id of activeDesignIds) {
-      if (measuredRefIds.has(id)) continue
-      const c = coordById.get(id)
-      if (!c) continue
-      unmeasured.push({
-        key: `unmeasured-${id}`,
-        designName: c.pointNumber,
-        designX: c.x,
-        designY: c.y,
-        designZ: c.z,
-        surveyCategory: 'initial',
-        targetType: 'coordinate',
-        m1: null,
-        m2: null,
-      })
-    }
-    return [...matched, ...unmeasured].sort((a, b) =>
-      a.designName.localeCompare(b.designName, 'ja'),
-    )
-  }, [filteredRecords, activeDesignIds, coordinates, compareMode])
+    return out.sort((a, b) => a.designName.localeCompare(b.designName, 'ja'))
+  }, [filteredRecords, activeDesignIds, coordinates, compareMode, activeView, currentFarm?.id])
 
   const rows = useMemo(
     () =>
@@ -380,6 +628,14 @@ export function SurveyAccuracyPage() {
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
             読み込み中…
           </div>
+        ) : !activeViewId ? (
+          // タブ 未選択 時 は 表 を 一切 出さず、 作成 を 促す
+          <div className="h-full flex flex-col items-center justify-center text-slate-500 text-sm gap-3 px-4">
+            <ClipboardCheck className="h-8 w-8 text-slate-300" />
+            <div className="text-center">
+              右上 の 「座標比較表作成」 で 表 を 作成 して ください
+            </div>
+          </div>
         ) : (
           <table className="min-w-max text-xs border-collapse whitespace-nowrap">
             <thead className="bg-slate-100 sticky top-0 z-10">
@@ -388,10 +644,104 @@ export function SurveyAccuracyPage() {
                   種別
                 </th>
                 <th
-                  className="px-2 py-1 border-b border-r text-center bg-slate-50"
+                  className="px-2 py-1 border-b border-r text-center bg-slate-50 relative"
                   colSpan={showZ ? 4 : 3}
                 >
-                  当初
+                  <div className="flex items-center justify-center gap-2">
+                    <span>当初</span>
+                    <div className="relative" ref={importMenuRef}>
+                      <button
+                        type="button"
+                        onClick={() => setImportMenu(importMenu ? null : 'root')}
+                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] rounded border border-slate-300 bg-white hover:bg-slate-50"
+                      >
+                        <Download className="h-3 w-3" />
+                        取込
+                      </button>
+                      {importMenu === 'root' && (
+                        <div className="absolute left-0 top-full mt-1 z-20 w-56 bg-white border border-slate-300 rounded shadow-lg py-1 text-left">
+                          <button
+                            type="button"
+                            onClick={() => setImportMenu('route')}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50"
+                          >
+                            測設計画から取込 ▶
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setImportMenu('type')}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50"
+                          >
+                            座標管理から取込 (点種) ▶
+                          </button>
+                        </div>
+                      )}
+                      {importMenu === 'route' && (
+                        <div className="absolute left-0 top-full mt-1 z-20 w-56 bg-white border border-slate-300 rounded shadow-lg py-1 max-h-64 overflow-auto text-left">
+                          <div className="px-3 py-1 text-[10px] text-slate-500 border-b">
+                            測設計画 の 順路
+                          </div>
+                          {savedRoutes.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-slate-400">
+                              保管ルートがありません
+                            </div>
+                          ) : (
+                            savedRoutes.map((r) => {
+                              const coordIdSet = new Set(coordinates.map((c) => c.id))
+                              const avail = r.points.filter((p) => coordIdSet.has(p.id)).length
+                              return (
+                                <button
+                                  key={r.id}
+                                  type="button"
+                                  onClick={() => importFromRoute(r.id)}
+                                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 flex items-center justify-between"
+                                >
+                                  <span>{r.name}</span>
+                                  <span className="text-slate-400">{avail}点</span>
+                                </button>
+                              )
+                            })
+                          )}
+                        </div>
+                      )}
+                      {importMenu === 'type' && (
+                        <div className="absolute left-0 top-full mt-1 z-20 w-56 bg-white border border-slate-300 rounded shadow-lg py-1 max-h-64 overflow-auto text-left">
+                          <div className="px-3 py-1 text-[10px] text-slate-500 border-b">
+                            座標管理 の 点種
+                          </div>
+                          {(() => {
+                            const countByType = new Map<string, number>()
+                            for (const c of coordinates) {
+                              countByType.set(c.type, (countByType.get(c.type) ?? 0) + 1)
+                            }
+                            const entries = Array.from(countByType.entries()).sort(
+                              (a, b) => b[1] - a[1],
+                            )
+                            if (entries.length === 0) {
+                              return (
+                                <div className="px-3 py-2 text-xs text-slate-400">
+                                  座標がありません
+                                </div>
+                              )
+                            }
+                            return entries.map(([type, n]) => (
+                              <button
+                                key={type}
+                                type="button"
+                                onClick={() => importFromType(type)}
+                                className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 flex items-center justify-between"
+                              >
+                                <span>
+                                  {(COORDINATE_TYPE_NAMES as Record<string, string>)[type] ?? type}
+                                </span>
+                                <span className="text-slate-400">{n}点</span>
+                              </button>
+                            ))
+                          })()}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </th>
                 <th
                   className="px-2 py-1 border-b border-r text-center bg-orange-50"
@@ -557,36 +907,110 @@ export function SurveyAccuracyPage() {
                         {g.designZ != null ? g.designZ.toFixed(3) : '—'}
                       </td>
                     )}
-                    {/* 実測1 */}
-                    <td className="px-2 py-1 border-b border-r truncate max-w-[8rem] bg-orange-50/40">
-                      {m1?.targetName ?? '—'}
+                    {/* 実測1 (手入力 可)。 当初 が coord 型 の 場合 のみ 編集 UI を 出す */}
+                    <td className="px-1 py-0.5 border-b border-r bg-orange-50/40">
+                      {g.m1?.targetRefId ? (
+                        <EditableTextCell
+                          value={m1?.targetName ?? ''}
+                          onCommit={(v) =>
+                            updateManual(g.m1!.targetRefId!, 'm1', 'name', v)
+                          }
+                          className="w-full px-1 font-mono text-xs bg-transparent border border-transparent rounded focus:bg-white focus:border-blue-400 focus:outline-none"
+                        />
+                      ) : (
+                        <span className="px-1 font-mono text-xs">{m1?.targetName ?? '—'}</span>
+                      )}
                     </td>
-                    <td className="px-2 py-1 border-b border-r text-right font-mono bg-orange-50/40">
-                      {m1 ? m1.measuredX.toFixed(3) : '—'}
+                    <td className="px-1 py-0.5 border-b border-r text-right bg-orange-50/40">
+                      {g.m1?.targetRefId ? (
+                        <EditableNumberCell
+                          value={m1?.measuredX}
+                          onCommit={(v) => updateManual(g.m1!.targetRefId!, 'm1', 'x', v)}
+                        />
+                      ) : (
+                        <span className="font-mono text-xs">
+                          {m1 ? m1.measuredX.toFixed(3) : '—'}
+                        </span>
+                      )}
                     </td>
-                    <td className="px-2 py-1 border-b border-r text-right font-mono bg-orange-50/40">
-                      {m1 ? m1.measuredY.toFixed(3) : '—'}
+                    <td className="px-1 py-0.5 border-b border-r text-right bg-orange-50/40">
+                      {g.m1?.targetRefId ? (
+                        <EditableNumberCell
+                          value={m1?.measuredY}
+                          onCommit={(v) => updateManual(g.m1!.targetRefId!, 'm1', 'y', v)}
+                        />
+                      ) : (
+                        <span className="font-mono text-xs">
+                          {m1 ? m1.measuredY.toFixed(3) : '—'}
+                        </span>
+                      )}
                     </td>
                     {showZ && (
-                      <td className="px-2 py-1 border-b border-r text-right font-mono bg-orange-50/40">
-                        {m1?.measuredZ != null ? m1.measuredZ.toFixed(3) : '—'}
+                      <td className="px-1 py-0.5 border-b border-r text-right bg-orange-50/40">
+                        {g.m1?.targetRefId ? (
+                          <EditableNumberCell
+                            value={m1?.measuredZ}
+                            onCommit={(v) => updateManual(g.m1!.targetRefId!, 'm1', 'z', v)}
+                          />
+                        ) : (
+                          <span className="font-mono text-xs">
+                            {m1?.measuredZ != null ? m1.measuredZ.toFixed(3) : '—'}
+                          </span>
+                        )}
                       </td>
                     )}
                     {compareMode === 'pair' && (
                       <>
-                        {/* 実測2 */}
-                        <td className="px-2 py-1 border-b border-r truncate max-w-[8rem] bg-orange-50/40">
-                          {m2?.targetName ?? '—'}
+                        {/* 実測2 (手入力 可) */}
+                        <td className="px-1 py-0.5 border-b border-r bg-orange-50/40">
+                          {g.m1?.targetRefId ? (
+                            <EditableTextCell
+                              value={m2?.targetName ?? ''}
+                              onCommit={(v) =>
+                                updateManual(g.m1!.targetRefId!, 'm2', 'name', v)
+                              }
+                              className="w-full px-1 font-mono text-xs bg-transparent border border-transparent rounded focus:bg-white focus:border-blue-400 focus:outline-none"
+                            />
+                          ) : (
+                            <span className="px-1 font-mono text-xs">{m2?.targetName ?? '—'}</span>
+                          )}
                         </td>
-                        <td className="px-2 py-1 border-b border-r text-right font-mono bg-orange-50/40">
-                          {m2 ? m2.measuredX.toFixed(3) : '—'}
+                        <td className="px-1 py-0.5 border-b border-r text-right bg-orange-50/40">
+                          {g.m1?.targetRefId ? (
+                            <EditableNumberCell
+                              value={m2?.measuredX}
+                              onCommit={(v) => updateManual(g.m1!.targetRefId!, 'm2', 'x', v)}
+                            />
+                          ) : (
+                            <span className="font-mono text-xs">
+                              {m2 ? m2.measuredX.toFixed(3) : '—'}
+                            </span>
+                          )}
                         </td>
-                        <td className="px-2 py-1 border-b border-r text-right font-mono bg-orange-50/40">
-                          {m2 ? m2.measuredY.toFixed(3) : '—'}
+                        <td className="px-1 py-0.5 border-b border-r text-right bg-orange-50/40">
+                          {g.m1?.targetRefId ? (
+                            <EditableNumberCell
+                              value={m2?.measuredY}
+                              onCommit={(v) => updateManual(g.m1!.targetRefId!, 'm2', 'y', v)}
+                            />
+                          ) : (
+                            <span className="font-mono text-xs">
+                              {m2 ? m2.measuredY.toFixed(3) : '—'}
+                            </span>
+                          )}
                         </td>
                         {showZ && (
-                          <td className="px-2 py-1 border-b border-r text-right font-mono bg-orange-50/40">
-                            {m2?.measuredZ != null ? m2.measuredZ.toFixed(3) : '—'}
+                          <td className="px-1 py-0.5 border-b border-r text-right bg-orange-50/40">
+                            {g.m1?.targetRefId ? (
+                              <EditableNumberCell
+                                value={m2?.measuredZ}
+                                onCommit={(v) => updateManual(g.m1!.targetRefId!, 'm2', 'z', v)}
+                              />
+                            ) : (
+                              <span className="font-mono text-xs">
+                                {m2?.measuredZ != null ? m2.measuredZ.toFixed(3) : '—'}
+                              </span>
+                            )}
                           </td>
                         )}
                         {/* 実測差 (実測2 - 実測1) */}
@@ -661,56 +1085,6 @@ export function SurveyAccuracyPage() {
         }
         right={
           <div className="flex-1 flex flex-col bg-slate-100 relative min-w-0">
-            {/* 取り込み コントロール: 測設計画 の 順路 から 置換 で 流し込む。
-                タブ 未選択 でも プルダウン は 開ける。 取り込み 時 に タブ が 無けれ ば 自動 作成 */}
-            <div className="p-2 bg-white border-b flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-slate-500 shrink-0">測設計画から取り込む</span>
-              <select
-                value={importRouteId}
-                onChange={(e) => setImportRouteId(e.target.value)}
-                className="flex-1 min-w-0 px-2 py-1 text-xs border rounded bg-white"
-              >
-                <option value="">
-                  {savedRoutes.length === 0 ? '保管ルートがありません' : '選択…'}
-                </option>
-                {savedRoutes.map((r) => {
-                  const coordIdSet = new Set(coordinates.map((c) => c.id))
-                  const avail = r.points.filter((p) => coordIdSet.has(p.id)).length
-                  return (
-                    <option key={r.id} value={r.id}>
-                      {r.name} ({avail}点)
-                    </option>
-                  )
-                })}
-              </select>
-              <button
-                type="button"
-                disabled={!importRouteId}
-                onClick={() => {
-                  // アクティブ タブ が 無けれ ば 新規 作成 し、 その 直後 に 取り込む
-                  const route = savedRoutes.find((r) => r.id === importRouteId)
-                  if (!route) return
-                  const coordIdSet = new Set(coordinates.map((c) => c.id))
-                  const ids = route.points.filter((p) => coordIdSet.has(p.id)).map((p) => p.id)
-                  if (!activeViewId) {
-                    const newId = (crypto.randomUUID?.() ?? Date.now().toString()) as string
-                    // 新規 作成 時 は 既定 で 2点平均 + Z 比較 ON
-                    setViews((prev) => [
-                      ...prev,
-                      { id: newId, name: route.name, coordIds: ids, type: 'pair', hasZ: true },
-                    ])
-                    setActiveViewId(newId)
-                  } else {
-                    updateActiveViewCoords(() => ids)
-                  }
-                  setImportRouteId('')
-                }}
-                className="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                title="選択した順路の点で当初を置き換えます (タブが無ければ自動作成)"
-              >
-                取り込む
-              </button>
-            </div>
             {activeViewId && activeView && (
               <div className="px-2 py-1 bg-emerald-50 border-b text-[11px] text-emerald-800 flex items-center gap-2">
                 <input

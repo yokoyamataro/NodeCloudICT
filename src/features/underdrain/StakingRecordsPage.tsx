@@ -1723,6 +1723,26 @@ export function StakingRecordsPage() {
                   />
                 </label>
                 <label className="block">
+                  <span className="text-[11px] text-slate-500">アンテナ高 (m)</span>
+                  <input
+                    type="number"
+                    step="0.001"
+                    className="w-full px-2 py-1 border rounded font-mono"
+                    value={
+                      slideTargetSet.antennaHeight != null
+                        ? String(slideTargetSet.antennaHeight)
+                        : ''
+                    }
+                    onChange={(e) => {
+                      const n = parseFloat(e.target.value)
+                      void updateSet(slideTargetSet.id, {
+                        antennaHeight: Number.isFinite(n) ? n : null,
+                      })
+                    }}
+                    placeholder="例: 1.800"
+                  />
+                </label>
+                <label className="block">
                   <span className="text-[11px] text-slate-500">受信機</span>
                   <input
                     className="w-full px-2 py-1 border rounded"

@@ -24,6 +24,8 @@ export interface SurveyRecordSet {
   baseStationPosition: string | null
   /** 移動局 の アンテナ 名 / 型番 */
   antennaName: string | null
+  /** 移動局 アンテナ高 [m]。 ロッド 先端 〜 位相中心 */
+  antennaHeight: number | null
   /** 移動局 の 受信機 名 / 型番 */
   receiverName: string | null
   settingsNote: string | null
@@ -51,6 +53,7 @@ export type SurveySetPatch = Partial<
     | 'baseStation'
     | 'baseStationPosition'
     | 'antennaName'
+    | 'antennaHeight'
     | 'receiverName'
     | 'settingsNote'
     | 'slide'
@@ -74,6 +77,7 @@ function toSet(r: Record<string, unknown>): SurveyRecordSet {
     baseStation: (r.base_station as string) ?? null,
     baseStationPosition: (r.base_station_position as string) ?? null,
     antennaName: (r.antenna_name as string) ?? null,
+    antennaHeight: r.antenna_height != null ? Number(r.antenna_height) : null,
     receiverName: (r.receiver_name as string) ?? null,
     settingsNote: (r.settings_note as string) ?? null,
     // dx/dy/dz スライド は 廃止。 DB に 残って いる 値 は 無視 して 常 に 0。
@@ -222,6 +226,7 @@ export const useSurveySetStore = create<State>((set, get) => ({
         base_station: init?.baseStation ?? null,
         base_station_position: init?.baseStationPosition ?? null,
         antenna_name: init?.antennaName ?? null,
+        antenna_height: init?.antennaHeight ?? null,
         receiver_name: init?.receiverName ?? null,
         settings_note: init?.settingsNote ?? null,
         dx_offset: 0,
@@ -256,6 +261,7 @@ export const useSurveySetStore = create<State>((set, get) => ({
     if (patch.baseStationPosition !== undefined)
       body.base_station_position = patch.baseStationPosition
     if (patch.antennaName !== undefined) body.antenna_name = patch.antennaName
+    if (patch.antennaHeight !== undefined) body.antenna_height = patch.antennaHeight
     if (patch.receiverName !== undefined) body.receiver_name = patch.receiverName
     if (patch.settingsNote !== undefined) body.settings_note = patch.settingsNote
     if (patch.sortOrder !== undefined) body.sort_order = patch.sortOrder
