@@ -23,12 +23,14 @@ import {
 import { Polyline as LeafletPolyline, CircleMarker, Tooltip } from 'react-leaflet'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { OpenChannelOverlay } from '@/components/map/OpenChannelOverlay'
+import { MapLayerControl } from '@/components/map/MapLayerControl'
 import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useOpenChannelStore } from '@/stores/openChannelStore'
+import { useMapLayersStore } from '@/stores/mapLayersStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { buildChannelOverlay } from '@/lib/openChannel/overlayRender'
 
@@ -53,6 +55,37 @@ export function StakeoutRoutePage() {
   const pipes = useUnderdrainStore((s) => s.pipes)
   const fetchOpenChannels = useOpenChannelStore((s) => s.fetchChannels)
   const openChannels = useOpenChannelStore((s) => s.channels)
+
+  // 地図 の レイヤ 表示 設定 (全ページ 共通)
+  const layerVis = useMapLayersStore((s) => s.visibility)
+  const showPipes = layerVis['pipes'] !== false
+  const showChannels = layerVis['channels'] !== false
+
+  // 測点 の 可視 type Set を 作る。 既定 (visibility 未登録) は 表示。
+  // 'control' / 'boundary' / 'current' / 'measured' / 'underdrain' は 個別 切替、
+  // それ 以外 は 「その他」 (map_xml, witness, tombo, chohari 等) に まとめる。
+  const visibleTypes = useMemo(() => {
+    const builtin: Record<string, string> = {
+      control: 'points.control',
+      boundary: 'points.boundary',
+      current: 'points.current',
+      measured: 'points.measured',
+      underdrain: 'points.underdrain',
+    }
+    const otherVisible = layerVis['points.other'] !== false
+    const set = new Set<string>()
+    // 既知 の type: その type の key が true なら 追加
+    for (const [type, key] of Object.entries(builtin)) {
+      if (layerVis[key] !== false) set.add(type)
+    }
+    // 既知 以外 の 全 type (coordinates 内 に 存在 する もの) を 一括 制御
+    if (otherVisible) {
+      for (const c of coordinates) {
+        if (!(c.type in builtin)) set.add(c.type)
+      }
+    }
+    return set
+  }, [coordinates, layerVis])
 
   const [selectMode, setSelectMode] = useState(true)
   const [routeName, setRouteName] = useState('既定')
@@ -317,7 +350,33 @@ export function StakeoutRoutePage() {
           </div>
         }
         right={
-          <div className="flex-1 flex flex-col bg-slate-100">
+          <div className="flex-1 flex flex-col bg-slate-100 relative">
+            {/* 地図 左下 の レイヤ 切替 ボタン (全ページ 共通)。 法務省地図 ボタン (bottom-6)
+                の 上 に 置く ため bottom-16 相当。 CoordinateMap の 外 に 配置 する の は、
+                MapContainer 内 の 子 に React 要素 を 置くと Leaflet 側 の 座標 制御 に
+                干渉 する ため */}
+            <MapLayerControl
+              sections={[
+                {
+                  title: '測点',
+                  layers: [
+                    { key: 'points.control', label: '基準点', indent: 1 },
+                    { key: 'points.boundary', label: '境界点', indent: 1 },
+                    { key: 'points.current', label: '現況', indent: 1 },
+                    { key: 'points.measured', label: '実測点', indent: 1 },
+                    { key: 'points.underdrain', label: '暗渠', indent: 1 },
+                    { key: 'points.other', label: 'その他', indent: 1 },
+                  ],
+                },
+                {
+                  title: 'オーバーレイ',
+                  layers: [
+                    { key: 'pipes', label: '暗渠配線' },
+                    { key: 'channels', label: '線形物' },
+                  ],
+                },
+              ]}
+            />
             <CoordinateMap
               key={currentFarm.id}
               farmId={currentFarm.id}
@@ -325,43 +384,48 @@ export function StakeoutRoutePage() {
               showRoute
               onPointSelect={handlePointSelect}
               coordinatesInteractive
+              visibleTypes={visibleTypes}
             >
               {/* 暗渠 配線 (読取 専用)。 全体図 と 同じ 配色 (シアン 系) で 統一 */}
-              {pipeOverlay.lines.map((line) => (
-                <LeafletPolyline
-                  key={`pipe-${line.id}`}
-                  positions={line.positions}
-                  pathOptions={{
-                    color: '#0891b2',
-                    weight: 2,
-                    opacity: 0.7,
-                    dashArray: '4 4',
-                  }}
+              {showPipes &&
+                pipeOverlay.lines.map((line) => (
+                  <LeafletPolyline
+                    key={`pipe-${line.id}`}
+                    positions={line.positions}
+                    pathOptions={{
+                      color: '#0891b2',
+                      weight: 2,
+                      opacity: 0.7,
+                      dashArray: '4 4',
+                    }}
+                  />
+                ))}
+              {showPipes &&
+                pipeOverlay.vertices.map((v) => (
+                  <CircleMarker
+                    key={v.key}
+                    center={[v.lat, v.lng]}
+                    radius={3}
+                    pathOptions={{
+                      color: '#0e7490',
+                      fillColor: '#67e8f9',
+                      fillOpacity: 0.9,
+                      weight: 1,
+                    }}
+                  >
+                    <Tooltip direction="top" offset={[0, -4]} opacity={0.9}>
+                      <span className="text-[10px] font-mono">{v.label}</span>
+                    </Tooltip>
+                  </CircleMarker>
+                ))}
+              {/* 線形物 (中心線 / 幅杭 / IP / 中間点) */}
+              {showChannels && (
+                <OpenChannelOverlay
+                  overlay={channelOverlay}
+                  subOn={() => true}
+                  disableClicks
                 />
-              ))}
-              {pipeOverlay.vertices.map((v) => (
-                <CircleMarker
-                  key={v.key}
-                  center={[v.lat, v.lng]}
-                  radius={3}
-                  pathOptions={{
-                    color: '#0e7490',
-                    fillColor: '#67e8f9',
-                    fillOpacity: 0.9,
-                    weight: 1,
-                  }}
-                >
-                  <Tooltip direction="top" offset={[0, -4]} opacity={0.9}>
-                    <span className="text-[10px] font-mono">{v.label}</span>
-                  </Tooltip>
-                </CircleMarker>
-              ))}
-              {/* 線形物 (中心線 / 幅杭 / IP / 中間点)。 subOn は 全部 ON (全体図 と 同一) */}
-              <OpenChannelOverlay
-                overlay={channelOverlay}
-                subOn={() => true}
-                disableClicks
-              />
+              )}
             </CoordinateMap>
           </div>
         }
