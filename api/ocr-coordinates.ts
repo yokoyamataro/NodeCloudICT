@@ -84,6 +84,11 @@ const SYSTEM_PROMPT = `あなた は 日本 の 測量 座標表 の OCR 専門 
 
 const CLAUDE_MODEL = 'claude-sonnet-4-5-20250929'
 
+// Vercel サーバーレス 関数 の 最大 実行 時間 を 60 秒 に 伸ばす。
+// PDF を Claude Vision に 投げる と 15-30 秒 かかる 事 が あり、 既定 の
+// 10 秒 (Hobby) / 60 秒 (Pro) 内 で 完了 する 保証 が ない。 Pro plan 必須。
+export const config = { maxDuration: 60 }
+
 /** Claude Messages API の コンテンツ ブロック 型 (必要 分 のみ) */
 type ContentBlock =
   | { type: 'text'; text: string }

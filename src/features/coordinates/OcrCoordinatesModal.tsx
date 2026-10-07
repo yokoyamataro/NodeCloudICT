@@ -134,10 +134,23 @@ export function OcrCoordinatesModal({ open, onClose, onImport, defaultType }: Pr
           files: files.map((f) => ({ mimeType: f.mimeType, dataBase64: f.dataBase64 })),
         }),
       })
-      const json = (await res.json()) as {
-        points?: OcrPoint[]
-        error?: string
-        detail?: string
+      // Vercel タイムアウト 等 で body が 空 の 場合 res.json() が
+      // 「Unexpected end of JSON input」 を 投げる の で、 先 に text で 受ける
+      const bodyText = await res.text()
+      if (!bodyText) {
+        setError(
+          res.status === 504 || res.status === 408
+            ? 'タイムアウト しました (Vercel サーバーレス 関数 の 制限)。 PDF の ページ 数 を 減らす か、 画像 で 再 試行 して ください'
+            : `サーバー から 空 応答 (HTTP ${res.status})。 Vercel タイムアウト の 可能性`,
+        )
+        return
+      }
+      let json: { points?: OcrPoint[]; error?: string; detail?: string }
+      try {
+        json = JSON.parse(bodyText)
+      } catch {
+        setError(`応答 が JSON で は ありません でした: ${bodyText.slice(0, 300)}`)
+        return
       }
       if (!res.ok) {
         setError(`${json.error ?? '読取 失敗'}${json.detail ? '\n' + json.detail : ''}`)
