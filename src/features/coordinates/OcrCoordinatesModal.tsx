@@ -49,6 +49,7 @@ export function OcrCoordinatesModal({ open, onClose, onImport, defaultType }: Pr
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [points, setPoints] = useState<OcrPoint[]>([])
+  const [dedupedCount, setDedupedCount] = useState(0)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   // モーダル を 閉じる 時 に 状態 リセット
@@ -57,6 +58,7 @@ export function OcrCoordinatesModal({ open, onClose, onImport, defaultType }: Pr
       setFiles([])
       setPoints([])
       setError(null)
+      setDedupedCount(0)
       setLoading(false)
     }
   }, [open])
@@ -141,8 +143,11 @@ export function OcrCoordinatesModal({ open, onClose, onImport, defaultType }: Pr
         setError(`${json.error ?? '読取 失敗'}${json.detail ? '\n' + json.detail : ''}`)
         return
       }
-      setPoints(json.points ?? [])
-      if ((json.points ?? []).length === 0) {
+      const raw = json.points ?? []
+      const deduped = dedupeByCoordinate(raw)
+      setPoints(deduped)
+      setDedupedCount(raw.length - deduped.length)
+      if (deduped.length === 0) {
         setError('読み取れる 座標 が ありません でした')
       }
     } catch (err) {
@@ -312,8 +317,13 @@ export function OcrCoordinatesModal({ open, onClose, onImport, defaultType }: Pr
           {/* プレビュー 表 (読取結果) */}
           {points.length > 0 && (
             <div className="border rounded">
-              <div className="px-3 py-1.5 bg-emerald-50 text-xs font-medium border-b flex items-center gap-2">
+              <div className="px-3 py-1.5 bg-emerald-50 text-xs font-medium border-b flex items-center gap-2 flex-wrap">
                 <span>読取結果 ({points.length} 点)</span>
+                {dedupedCount > 0 && (
+                  <span className="text-[11px] text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                    同一 座標 {dedupedCount} 件 を 自動 削除
+                  </span>
+                )}
                 <span className="text-[11px] text-slate-500">
                   間違い が ある 行 は 編集 または × で 削除 して ください
                 </span>
@@ -447,6 +457,29 @@ export function OcrCoordinatesModal({ open, onClose, onImport, defaultType }: Pr
       </div>
     </div>
   )
+}
+
+/**
+ * 同一 座標 (X, Y が 1mm 以内 で 一致) の 行 を 自動 削除。
+ * 1 点 を 複数 回 記載 して ある 表 や、 OCR の 誤認識 で 行 が 二重 計上 される
+ * ケース を 救う。 点番号 や 種別 が 違って も 座標 が 一致 すれ ば 同一 と 見做す。
+ * 先 に 出現 した 方 を 残す。 Z は 片方 が null で 片方 が 値 持ち なら 値 持ち 側 を 残す。
+ */
+function dedupeByCoordinate(points: OcrPoint[]): OcrPoint[] {
+  const TOL = 1e-3 // 1 mm
+  const kept: OcrPoint[] = []
+  for (const p of points) {
+    const dup = kept.find(
+      (q) => Math.abs(q.x - p.x) < TOL && Math.abs(q.y - p.y) < TOL,
+    )
+    if (dup) {
+      // Z は 残して ある 行 が null で 新しい 行 に 値 が あれば 引き継ぐ
+      if (dup.z == null && p.z != null) dup.z = p.z
+      continue
+    }
+    kept.push({ ...p })
+  }
+  return kept
 }
 
 /** File → base64 (data URL の prefix は 除外) */
