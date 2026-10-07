@@ -18,6 +18,7 @@ import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { CoordinatePhotoPanel } from './CoordinatePhotoPanel'
 import { BulkCalcModal } from './BulkCalcModal'
 import { CoordinateCalcModal } from './CoordinateCalcModal'
+import { GeodeticTransformModal } from './GeodeticTransformModal'
 import { lookupGeoid, type GeoidGrid } from '@/lib/geoid'
 import { DeletedCoordinatesModal } from './DeletedCoordinatesModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
@@ -463,6 +464,7 @@ export function CoordinatesPage() {
   const setShowOrtho = useMapViewStore((s) => s.setShowOrtho)
   const [showPasteModal, setShowPasteModal] = useState(false)
   const [showOcrModal, setShowOcrModal] = useState(false)
+  const [showGeodeticModal, setShowGeodeticModal] = useState(false)
 
   // チェックされた点のID（エクスポート対象）
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set())
@@ -595,6 +597,7 @@ export function CoordinatesPage() {
     deleteCoordinate: _deleteCoordinate,
     deleteCoordinates: _deleteCoordinates,
     importCoordinates: _importCoordinates,
+    updateCoordinatesBulk: _updateCoordinatesBulk,
     selectedType,
     setSelectedType,
     route,
@@ -657,6 +660,12 @@ export function CoordinatesPage() {
         return [] as Awaited<ReturnType<typeof _importCoordinates>>
       }) as typeof _importCoordinates)
     : _importCoordinates
+  const updateCoordinatesBulk = readOnly
+    ? ((async (..._args: Parameters<typeof _updateCoordinatesBulk>) => {
+        warnReadOnly()
+        return 0
+      }) as typeof _updateCoordinatesBulk)
+    : _updateCoordinatesBulk
   const appendRoutePoint = readOnly
     ? ((..._args: Parameters<typeof _appendRoutePoint>) => {
         warnReadOnly()
@@ -2274,6 +2283,23 @@ export function CoordinatesPage() {
           座標計算
         </button>
 
+        {/* 測地座標変換 (世界測地変換 / 地殻変動補正) — チェック 済 の 点 を 上書き */}
+        {projectZone !== null && (
+          <button
+            type="button"
+            onClick={() => setShowGeodeticModal(true)}
+            disabled={checkedIds.size === 0 || readOnly}
+            title={
+              checkedIds.size === 0
+                ? '対象 の 点 を チェック して ください'
+                : `チェック 済 ${checkedIds.size} 点 を 変換`
+            }
+            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-white text-slate-700 border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-50"
+          >
+            測地座標変換
+          </button>
+        )}
+
         {/* 削除履歴 (30 日以内の 削除座標を 復元) */}
         {currentFarm && (
           <button
@@ -3695,6 +3721,21 @@ export function CoordinatesPage() {
           )
         }}
       />
+
+      {/* 測地座標変換 モーダル (TKY2JGD / PATCHJGD で チェック 済 の 点 を 上書き) */}
+      {projectZone !== null && (
+        <GeodeticTransformModal
+          open={showGeodeticModal}
+          onClose={() => setShowGeodeticModal(false)}
+          systemNo={projectZone}
+          points={coordinates
+            .filter((c) => checkedIds.has(c.id) && Number.isFinite(c.x) && Number.isFinite(c.y))
+            .map((c) => ({ id: c.id, pointNumber: c.pointNumber, x: c.x, y: c.y }))}
+          onApply={async (updates) => {
+            await updateCoordinatesBulk(updates)
+          }}
+        />
+      )}
 
       {/* 点種管理モーダル */}
       <PointTypeManagerModal
