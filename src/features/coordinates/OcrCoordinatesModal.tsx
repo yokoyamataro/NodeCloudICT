@@ -11,6 +11,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Clipboard, FileText, Image as ImageIcon, Loader2, Upload, X, AlertTriangle } from 'lucide-react'
+import { COORDINATE_TYPE_NAMES, type CoordinateType } from '../../lib/coordinates'
+
+const TYPE_OPTIONS = Object.entries(COORDINATE_TYPE_NAMES) as Array<[CoordinateType, string]>
 
 interface Props {
   open: boolean
@@ -383,13 +386,22 @@ export function OcrCoordinatesModal({ open, onClose, onImport, defaultType }: Pr
                             />
                           </td>
                           <td className="px-1 py-0.5">
-                            <input
-                              type="text"
-                              value={p.type ?? ''}
+                            <select
+                              value={(p.type ?? defaultType) as string}
                               onChange={(e) => updatePoint(i, { type: e.target.value || null })}
-                              placeholder={defaultType}
-                              className="w-full px-1 py-0.5 border rounded font-mono"
-                            />
+                              className="w-full px-1 py-0.5 border rounded bg-white"
+                            >
+                              {TYPE_OPTIONS.map(([key, label]) => (
+                                <option key={key} value={key}>
+                                  {label}
+                                </option>
+                              ))}
+                              {/* AI が 既定 以外 を 返した 場合 の フォールバック */}
+                              {p.type &&
+                                !TYPE_OPTIONS.some(([k]) => k === p.type) && (
+                                  <option value={p.type}>{p.type}</option>
+                                )}
+                            </select>
                           </td>
                           <td className="px-1 py-0.5 text-right font-mono text-[11px]">
                             <span className={lowConf ? 'text-amber-700' : 'text-slate-500'}>

@@ -173,7 +173,8 @@ export default async function handler(
       },
       body: JSON.stringify({
         model: CLAUDE_MODEL,
-        max_tokens: 4096,
+        // 1 点 あたり 100-150 tok 消費 する の で、 数百 点 の 表 でも 入り切る よう 多め に 確保
+        max_tokens: 16000,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content }],
       }),
@@ -188,6 +189,7 @@ export default async function handler(
     }
     const resp = (await upstream.json()) as {
       content?: Array<{ type: string; text?: string }>
+      stop_reason?: string
       usage?: { input_tokens?: number; output_tokens?: number }
     }
     const textOut =
@@ -199,11 +201,20 @@ export default async function handler(
     try {
       parsed = JSON.parse(stripped) as { points?: unknown }
     } catch {
-      res.status(502).json({
-        error: 'Claude の 返答 が JSON と して 読め ません でした',
-        detail: textOut.slice(0, 500),
-      })
-      return
+      // max_tokens 到達 で 途中 切れ して いる 場合 は 救済 を 試みる
+      const salvaged = salvageTruncatedPoints(stripped)
+      if (salvaged.length > 0) {
+        parsed = { points: salvaged }
+      } else {
+        const truncated = resp.stop_reason === 'max_tokens'
+        res.status(502).json({
+          error: truncated
+            ? '読取 量 が 多すぎて 応答 が 途中 で 切れ ました。 ページ を 分割 して 読み込んで ください'
+            : 'Claude の 返答 が JSON と して 読め ません でした',
+          detail: textOut.slice(0, 500),
+        })
+        return
+      }
     }
     const points = normalizePoints(parsed.points)
     res.status(200).json({
@@ -223,8 +234,55 @@ export default async function handler(
 
 function stripCodeFence(s: string): string {
   // ``` or ```json で 囲まれた 部分 を 中身 だけ 取り出す
-  const m = s.match(/```(?:json)?\s*([\s\S]*?)```/)
-  return m ? m[1] : s
+  // 閉じ ``` が 無い (切れ た) 場合 は 開き だけ 削って 残り を 返す
+  const closed = s.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (closed) return closed[1]
+  const open = s.match(/```(?:json)?\s*([\s\S]*)$/)
+  if (open) return open[1]
+  return s
+}
+
+/**
+ * 応答 が max_tokens 等 で 途中 で 切れた 場合 の 救済。
+ * 「"points": [ { ... }, { ... }, ... 」 の 完結 し ている オブジェクト だけ を 拾って
+ * パース する。 切れた 末尾 の 不完全 オブジェクト は 捨てる。
+ */
+function salvageTruncatedPoints(s: string): unknown[] {
+  const start = s.indexOf('[')
+  if (start < 0) return []
+  const out: unknown[] = []
+  let depth = 0
+  let objStart = -1
+  let inStr = false
+  let esc = false
+  for (let i = start + 1; i < s.length; i += 1) {
+    const ch = s[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (ch === '\\') esc = true
+      else if (ch === '"') inStr = false
+      continue
+    }
+    if (ch === '"') { inStr = true; continue }
+    if (ch === '{') {
+      if (depth === 0) objStart = i
+      depth += 1
+    } else if (ch === '}') {
+      depth -= 1
+      if (depth === 0 && objStart >= 0) {
+        const chunk = s.slice(objStart, i + 1)
+        try {
+          out.push(JSON.parse(chunk))
+        } catch {
+          /* 1 件 ダメ でも 続行 */
+        }
+        objStart = -1
+      }
+    } else if (ch === ']' && depth === 0) {
+      break
+    }
+  }
+  return out
 }
 
 /** 返答 の points 配列 を 安全 な 型 に 整える。 不正 な 行 は skip */
