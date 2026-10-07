@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check, Pencil, X, Save, Waves, Target } from 'lucide-react'
+import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check, Pencil, X, Save, Waves, Target, Sparkles } from 'lucide-react'
 import { Polyline as LeafletPolyline, CircleMarker, Tooltip } from 'react-leaflet'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
@@ -8,6 +8,7 @@ import { useExportRouteStore, type Route as ExportRoute } from '@/stores/exportR
 const EMPTY_EXPORT_ROUTES: ExportRoute[] = []
 import { PointTypeFilterButton } from './PointTypeFilterButton'
 import { StakeStatusFilterButton } from './StakeStatusFilterButton'
+import { OcrCoordinatesModal } from './OcrCoordinatesModal'
 import {
   PhotoCountFilterButton,
   type PhotoCountFilter,
@@ -461,6 +462,7 @@ export function CoordinatesPage() {
   const showOrtho = useMapViewStore((s) => s.showOrtho)
   const setShowOrtho = useMapViewStore((s) => s.setShowOrtho)
   const [showPasteModal, setShowPasteModal] = useState(false)
+  const [showOcrModal, setShowOcrModal] = useState(false)
 
   // チェックされた点のID（エクスポート対象）
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set())
@@ -1974,6 +1976,16 @@ export function CoordinatesPage() {
                   ))}
                 </select>
               </div>
+              <button
+                type="button"
+                onClick={() => { setShowOcrModal(true); setOpenMenu(null) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100 font-medium text-blue-700"
+                title="画像 / PDF / クリップボード 貼付 を AI で 読取"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                AI 読取 (画像/PDF)
+              </button>
+              <div className="border-t" />
               <button
                 type="button"
                 onClick={() => { setShowPasteModal(true); setOpenMenu(null) }}
@@ -3663,6 +3675,25 @@ export function CoordinatesPage() {
         onClose={() => setShowPasteModal(false)}
         onPaste={handleModalPaste}
         typeOptions={typeOptions}
+      />
+
+      {/* AI 読取 モーダル (Claude Vision で 画像 / PDF から 座標 を 抽出) */}
+      <OcrCoordinatesModal
+        open={showOcrModal}
+        onClose={() => setShowOcrModal(false)}
+        defaultType={selectedType}
+        onImport={(pts) => {
+          // 既存 の importCoordinates に 流し込む (非同期)
+          void importCoordinates(
+            pts.map((p) => ({
+              pointNumber: p.pointNumber,
+              x: p.x,
+              y: p.y,
+              z: p.z,
+              type: (p.type ?? selectedType) as CoordinateType,
+            })),
+          )
+        }}
       />
 
       {/* 点種管理モーダル */}
