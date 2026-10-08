@@ -39,6 +39,7 @@ import {
   Edit3,
   Undo2,
   Redo2,
+  Globe,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
@@ -71,6 +72,9 @@ import { FarmChatSheet } from '@/features/chat/FarmChatSheet'
 import { useFarmChatStore } from '@/stores/farmChatStore'
 import { FarmEditModal } from '@/features/farms/FarmEditModal'
 import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
+import { OcrCoordinatesModal } from '@/features/coordinates/OcrCoordinatesModal'
+import { GeodeticTransformModal } from '@/features/coordinates/GeodeticTransformModal'
+import type { ImportCoordinateInput } from '@/stores/coordinateStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
   useCoordinatePointTypeStore,
@@ -1067,6 +1071,12 @@ export function MobileStakingPage() {
   }
   // 座標一覧タブ内から手入力で 1 点追加するモーダル
   const [showManualCoordEntry, setShowManualCoordEntry] = useState(false)
+  // 画像 AI 読取 (カメラ 撮影 → OCR → 登録)。 photo を 掴んだ ら OcrCoordinatesModal を 開く
+  const [aiCapturedFile, setAiCapturedFile] = useState<File | null>(null)
+  const [showAiModal, setShowAiModal] = useState(false)
+  // 測地座標変換 (世界測地変換 / 地殻変動補正)
+  const [showGeodeticModal, setShowGeodeticModal] = useState(false)
+  const [geodeticStaging, setGeodeticStaging] = useState<ImportCoordinateInput[] | null>(null)
   // 測位モードの区分 (精密 / 簡易) は 廃止。 常に 平均化フロー で測定し、
   // 精度が しきい値内なら 「精密測定」、外れたら 「概略測定」として ラベル/色 だけ変える。
   // 現場を開いた 時に 出していた 「開始前チェック」「モード選択」モーダルも 廃止。
@@ -4391,6 +4401,17 @@ export function MobileStakingPage() {
     setPhotoModalTarget(selectedTarget)
   }
 
+  // 画像 AI 読取 (カメラ 撮影 → OCR 解析)
+  const aiCameraInputRef = useRef<HTMLInputElement>(null)
+  const handleOpenAiCamera = () => aiCameraInputRef.current?.click()
+  const handleAiCaptured = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setAiCapturedFile(file)
+    setShowAiModal(true)
+  }
+
   // SIM インポート
   const simInputRef = useRef<HTMLInputElement>(null)
   const handleOpenSimImport = () => simInputRef.current?.click()
@@ -4754,6 +4775,15 @@ export function MobileStakingPage() {
         type="file"
         accept=".sim,.SIM,application/octet-stream,text/plain"
         onChange={handleSimImported}
+        className="hidden"
+      />
+      {/* 画像 AI 読取 用: capture=environment で カメラ 直接 起動 (iOS/Android 共通) */}
+      <input
+        ref={aiCameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleAiCaptured}
         className="hidden"
       />
       {/* 工区チャットシート */}
@@ -7622,6 +7652,23 @@ export function MobileStakingPage() {
                 SIMA 取込
               </button>
               <button
+                onClick={handleOpenAiCamera}
+                className="flex items-center gap-1 text-xs px-2 py-0.5 border rounded text-blue-700 border-blue-300 hover:bg-blue-50"
+                title="カメラ で 座標表 を 撮影 し AI で 読取"
+              >
+                <Camera className="h-3.5 w-3.5" />
+                画像AI
+              </button>
+              <button
+                onClick={() => setShowGeodeticModal(true)}
+                disabled={coordinates.length === 0}
+                className="flex items-center gap-1 text-xs px-2 py-0.5 border rounded text-blue-700 border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+                title="世界測地変換 / 地殻変動補正"
+              >
+                <Globe className="h-3.5 w-3.5" />
+                測地変換
+              </button>
+              <button
                 onClick={handleSimExport}
                 className="flex items-center gap-1 text-xs px-2 py-0.5 border rounded text-blue-700 border-blue-300 hover:bg-blue-50"
                 title="SIMA エクスポート"
@@ -8615,6 +8662,78 @@ export function MobileStakingPage() {
           onCancel={() => setShowManualCoordEntry(false)}
           onSaved={() => {
             setShowManualCoordEntry(false)
+          }}
+        />
+      )}
+
+      {/* 画像 AI 読取 モーダル (カメラ 撮影 → OCR → 登録 or 座標変換) */}
+      <OcrCoordinatesModal
+        open={showAiModal}
+        onClose={() => {
+          setShowAiModal(false)
+          setAiCapturedFile(null)
+        }}
+        defaultType="boundary"
+        initialFile={aiCapturedFile}
+        onImport={(pts) => {
+          void importCoordinates(
+            pts.map((p) => ({
+              pointNumber: p.pointNumber,
+              x: p.x,
+              y: p.y,
+              z: p.z,
+              type: (p.type ?? 'boundary') as CoordinateRow['type'],
+            })),
+          )
+        }}
+        onOpenTransform={(pts) => {
+          const staged: ImportCoordinateInput[] = pts.map((p) => ({
+            pointNumber: p.pointNumber,
+            x: p.x,
+            y: p.y,
+            z: p.z,
+            type: (p.type ?? 'boundary') as CoordinateRow['type'],
+          }))
+          setGeodeticStaging(staged)
+          setShowGeodeticModal(true)
+          setShowAiModal(false)
+        }}
+      />
+
+      {/* 測地座標変換 モーダル。 staging=null なら 全座標 を 上書き、 staging あり なら 新規 登録 */}
+      {(project?.coordinate_zone ?? null) !== null && (
+        <GeodeticTransformModal
+          open={showGeodeticModal}
+          onClose={() => {
+            setShowGeodeticModal(false)
+            setGeodeticStaging(null)
+          }}
+          systemNo={project!.coordinate_zone as number}
+          mode={geodeticStaging ? 'staging' : 'update'}
+          points={
+            geodeticStaging
+              ? geodeticStaging.map((c, i) => ({
+                  id: `staging-${i}`,
+                  pointNumber: c.pointNumber,
+                  x: c.x,
+                  y: c.y,
+                }))
+              : coordinates
+                  .filter((c) => Number.isFinite(c.x) && Number.isFinite(c.y))
+                  .map((c) => ({ id: c.id, pointNumber: c.pointNumber, x: c.x, y: c.y }))
+          }
+          onApply={async (updates) => {
+            if (geodeticStaging) {
+              const byId = new Map(updates.map((u) => [u.id, u]))
+              const toImport = geodeticStaging.map((c, i) => {
+                const u = byId.get(`staging-${i}`)
+                return u ? { ...c, x: u.x, y: u.y } : c
+              })
+              await importCoordinates(toImport)
+              setGeodeticStaging(null)
+            } else {
+              await useCoordinateStore.getState().updateCoordinatesBulk(updates)
+            }
           }}
         />
       )}

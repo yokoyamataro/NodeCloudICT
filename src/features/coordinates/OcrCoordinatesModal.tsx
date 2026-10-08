@@ -28,6 +28,8 @@ interface Props {
   ) => void
   /** 既定 の 点種 (親 側 の 「取り込む 点種」)。 読取結果 の type が null の 時 に 使う */
   defaultType: string
+  /** モバイル で カメラ 撮影 直後 に 開く 用途。 open=true の 時 に 1 回 だけ 自動 で 吸い込む */
+  initialFile?: File | null
 }
 
 interface InputFile {
@@ -48,13 +50,14 @@ interface OcrPoint {
   confidence: number
 }
 
-export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, defaultType }: Props) {
+export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, defaultType, initialFile }: Props) {
   const [files, setFiles] = useState<InputFile[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [points, setPoints] = useState<OcrPoint[]>([])
   const [dedupedCount, setDedupedCount] = useState(0)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const initialFileConsumedRef = useRef<File | null>(null)
 
   // モーダル を 閉じる 時 に 状態 リセット
   useEffect(() => {
@@ -64,8 +67,18 @@ export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, 
       setError(null)
       setDedupedCount(0)
       setLoading(false)
+      initialFileConsumedRef.current = null
     }
   }, [open])
+
+  // モバイル カメラ 等 から 開いた 時: initialFile を 自動 吸い込み
+  useEffect(() => {
+    if (!open || !initialFile) return
+    if (initialFileConsumedRef.current === initialFile) return
+    initialFileConsumedRef.current = initialFile
+    void addFile(initialFile)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialFile])
 
   // クリップボード 貼付: モーダル が 開いて いる 時 のみ 画像 を 吸い込む
   useEffect(() => {
