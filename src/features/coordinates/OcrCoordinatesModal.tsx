@@ -424,16 +424,7 @@ export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, 
                     同一 座標 {dedupedCount} 件 を 自動 削除
                   </span>
                 )}
-                <button
-                  type="button"
-                  onClick={() => void handleExportInspection()}
-                  className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 text-[11px] bg-white border border-emerald-300 text-emerald-700 rounded hover:bg-emerald-50"
-                  title="点名 / X / Y / Z / 点検 の 列 で Excel 出力"
-                >
-                  <Download className="h-3 w-3" />
-                  点検表 (Excel)
-                </button>
-                <label className="flex items-center gap-1 text-[11px] text-slate-700">
+                <label className="ml-auto flex items-center gap-1 text-[11px] text-slate-700">
                   点種 (全点 一括):
                   <select
                     value={bulkType}
@@ -548,6 +539,16 @@ export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, 
             className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
           >
             キャンセル
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleExportInspection()}
+            disabled={points.length === 0}
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm bg-white border border-emerald-300 text-emerald-700 rounded hover:bg-emerald-50 disabled:opacity-50"
+            title="点名 / X / Y / Z / 点検 の 列 で Excel 出力"
+          >
+            <Download className="h-3.5 w-3.5" />
+            点検表 (Excel)
           </button>
           {onOpenTransform && (
             <button
