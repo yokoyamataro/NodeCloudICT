@@ -40,6 +40,7 @@ import {
   Undo2,
   Redo2,
   Globe,
+  ChevronDown,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
@@ -1074,6 +1075,19 @@ export function MobileStakingPage() {
   // 画像 AI 読取 (カメラ 撮影 → OCR → 登録)。 photo を 掴んだ ら OcrCoordinatesModal を 開く
   const [aiCapturedFile, setAiCapturedFile] = useState<File | null>(null)
   const [showAiModal, setShowAiModal] = useState(false)
+  // 「座標入力」 ドロップダウン (手入力 / SIMA 取込 / 画像AI を まとめた メニュー)
+  const [showInputMenu, setShowInputMenu] = useState(false)
+  const inputMenuRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!showInputMenu) return
+    const onClick = (e: MouseEvent) => {
+      if (inputMenuRef.current && !inputMenuRef.current.contains(e.target as Node)) {
+        setShowInputMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [showInputMenu])
   // 測地座標変換 (世界測地変換 / 地殻変動補正)
   const [showGeodeticModal, setShowGeodeticModal] = useState(false)
   const [geodeticStaging, setGeodeticStaging] = useState<ImportCoordinateInput[] | null>(null)
@@ -7631,34 +7645,46 @@ export function MobileStakingPage() {
         {/* 座標一覧（元の座標 + 起工測量記録をマージ表示） */}
         {showRecordList && (
           <div className="absolute inset-x-0 bottom-0 z-[1000] bg-white border-t shadow-xl max-h-[65%] flex flex-col">
-            <div className="px-3 py-2 border-b flex items-center gap-2 text-sm">
+            <div className="px-3 py-2 border-b flex items-center flex-wrap gap-2 text-sm">
               <span className="font-semibold">座標</span>
               <span className="text-xs text-slate-500">{filteredTargets.length} 件</span>
-              {/* SIMA インポート / エクスポート を「閉じる」の左に配置 */}
-              <button
-                onClick={() => setShowManualCoordEntry(true)}
-                className="ml-auto flex items-center gap-1 text-xs px-2 py-0.5 border rounded text-emerald-700 border-emerald-300 hover:bg-emerald-50"
-                title="X / Y 座標を手入力で 1 点追加"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                手入力
-              </button>
-              <button
-                onClick={handleOpenSimImport}
-                className="flex items-center gap-1 text-xs px-2 py-0.5 border rounded text-blue-700 border-blue-300 hover:bg-blue-50"
-                title="SIMA インポート"
-              >
-                <Download className="h-3.5 w-3.5" />
-                SIMA 取込
-              </button>
-              <button
-                onClick={handleOpenAiCamera}
-                className="flex items-center gap-1 text-xs px-2 py-0.5 border rounded text-blue-700 border-blue-300 hover:bg-blue-50"
-                title="カメラ で 座標表 を 撮影 し AI で 読取"
-              >
-                <Camera className="h-3.5 w-3.5" />
-                画像AI
-              </button>
+              {/* 座標入力 (手入力 / SIMA 取込 / 画像AI を まとめた ドロップダウン) */}
+              <div className="relative ml-auto" ref={inputMenuRef}>
+                <button
+                  onClick={() => setShowInputMenu((v) => !v)}
+                  className="flex items-center gap-1 text-xs px-2 py-0.5 border rounded text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                  title="座標 を 追加"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  座標入力
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+                {showInputMenu && (
+                  <div className="absolute right-0 top-full mt-1 w-40 bg-white border rounded shadow-lg z-[1200]">
+                    <button
+                      onClick={() => { setShowInputMenu(false); setShowManualCoordEntry(true) }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-slate-100"
+                    >
+                      <Plus className="h-3.5 w-3.5 text-emerald-600" />
+                      手入力
+                    </button>
+                    <button
+                      onClick={() => { setShowInputMenu(false); handleOpenSimImport() }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-slate-100"
+                    >
+                      <Download className="h-3.5 w-3.5 text-blue-600" />
+                      SIMA 取込
+                    </button>
+                    <button
+                      onClick={() => { setShowInputMenu(false); handleOpenAiCamera() }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-slate-100"
+                    >
+                      <Camera className="h-3.5 w-3.5 text-blue-600" />
+                      画像AI
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
                 onClick={() => setShowGeodeticModal(true)}
                 disabled={coordinates.length === 0}
