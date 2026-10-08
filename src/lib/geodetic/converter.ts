@@ -341,21 +341,21 @@ export function bl2xy(lat: number, lng: number, systemNo: number, ellipsoidType:
 }
 
 export interface ConvertResult {
-  X: number
-  Y: number
-  /** TKY2JGD / PATCHJGD が 適用 できた 点 なら true */
+  /** TKY2JGD 後 の 平面直角 (適用 して い なけれ ば null) */
+  tky: { X: number; Y: number } | null
+  /** PATCHJGD 後 の 平面直角 (適用 して い なけれ ば null)。 TKY も ON なら TKY 結果 の 上 に 更に 補正 */
+  patch: { X: number; Y: number } | null
+  /** 最終 の 上書き 対象 座標。 patch > tky > 元 の 順 で 選ばれる */
+  final: { X: number; Y: number }
   ok: boolean
-  /** エラー メッセージ (ok=false の 時) */
   reason?: string
-  dX?: number
-  dY?: number
 }
 
 /**
- * 1 点 を 変換:
- *   - tkyGrid が 渡された ら TKY2JGD (日本測地系 → JGD2000)
- *   - patchGrid が 渡された ら PATCHJGD (地殻変動補正)
- *   - 両方 無し なら 入力 を そのまま 返す (no-op)
+ * 1 点 を 変換。 段階 ごと の 中間 結果 を 返す。
+ *   - tkyGrid 指定: TKY2JGD (日本測地系 → JGD2000)
+ *   - patchGrid 指定: PATCHJGD (TKY 後 or 入力 に 地殻変動 を 加算)
+ *   - 両方 無し: 元 を そのまま 返す (no-op)
  */
 export function convertPoint(
   X: number,
@@ -372,27 +372,33 @@ export function convertPoint(
     let lat = bl.lat
     let lng = bl.lng
 
+    let tky: { X: number; Y: number } | null = null
     if (options.tkyGrid) {
       const g = interpGrid(options.tkyGrid, lat, lng)
       if (!g.found) {
-        return { X, Y, ok: false, reason: 'TKY2JGD グリッド 範囲 外' }
+        return { tky: null, patch: null, final: { X, Y }, ok: false, reason: 'TKY2JGD グリッド 範囲 外' }
       }
       lat = lat + g.dB / 3600
       lng = lng + g.dL / 3600
+      const xy = bl2xy(lat, lng, systemNo, 'grs80')
+      tky = { X: xy.X, Y: xy.Y }
     }
 
+    let patch: { X: number; Y: number } | null = null
     if (options.patchGrid) {
       const g = interpGrid(options.patchGrid, lat, lng, { allowNearest: true })
       if (!g.found) {
-        return { X, Y, ok: false, reason: '地殻変動補正 グリッド 範囲 外' }
+        return { tky, patch: null, final: tky ?? { X, Y }, ok: false, reason: '地殻変動補正 グリッド 範囲 外' }
       }
       lat = lat + g.dB / 3600
       lng = lng + g.dL / 3600
+      const xy = bl2xy(lat, lng, systemNo, 'grs80')
+      patch = { X: xy.X, Y: xy.Y }
     }
 
-    const xy = bl2xy(lat, lng, systemNo, 'grs80')
-    return { X: xy.X, Y: xy.Y, ok: true, dX: xy.X - X, dY: xy.Y - Y }
+    const final = patch ?? tky ?? { X, Y }
+    return { tky, patch, final, ok: true }
   } catch (err) {
-    return { X, Y, ok: false, reason: err instanceof Error ? err.message : String(err) }
+    return { tky: null, patch: null, final: { X, Y }, ok: false, reason: err instanceof Error ? err.message : String(err) }
   }
 }

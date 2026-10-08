@@ -19,6 +19,8 @@ import { CoordinatePhotoPanel } from './CoordinatePhotoPanel'
 import { BulkCalcModal } from './BulkCalcModal'
 import { CoordinateCalcModal } from './CoordinateCalcModal'
 import { GeodeticTransformModal } from './GeodeticTransformModal'
+import { ImportPreviewModal } from './ImportPreviewModal'
+import type { ImportCoordinateInput } from '@/stores/coordinateStore'
 import { lookupGeoid, type GeoidGrid } from '@/lib/geoid'
 import { DeletedCoordinatesModal } from './DeletedCoordinatesModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
@@ -454,6 +456,30 @@ export function CoordinatesPage() {
   // フォーマット選択を先にする 2 段階フローに変更。
   // ① 座標出力ボタン → ② 出力フォーマット → ③ 出力対象（全/表示/順指定）
   const [pendingFormat, setPendingFormat] = useState<ExportFormat | null>(null)
+  // CSV / Excel 出力 時 の 「出力項目 を 選択」 ステップ。
+  // 対象 を 選んだ 後 に ここ に 進み、 ユーザー が フィールド を 選んで から 実行 する。
+  const [pendingExportSource, setPendingExportSource] = useState<ExportSource | null>(null)
+  const [exportFields, setExportFields] = useState<{
+    lat: boolean
+    lng: boolean
+    type: boolean
+    stakeType: boolean
+    stakeStatus: boolean
+    notes: boolean
+    createdAt: boolean
+    updatedAt: boolean
+    inspectedAt: boolean
+  }>({
+    lat: true,
+    lng: true,
+    type: true,
+    stakeType: false,
+    stakeStatus: false,
+    notes: false,
+    createdAt: false,
+    updatedAt: false,
+    inspectedAt: false,
+  })
   // 順指定モード中: 地図クリックで orderedIds に追加 / 表でドラッグ並べ替え
   const [orderSelectMode, setOrderSelectMode] = useState(false)
   const [orderedIds, setOrderedIds] = useState<string[]>([])
@@ -465,6 +491,13 @@ export function CoordinatesPage() {
   const [showPasteModal, setShowPasteModal] = useState(false)
   const [showOcrModal, setShowOcrModal] = useState(false)
   const [showGeodeticModal, setShowGeodeticModal] = useState(false)
+  // SIMA / CSV / 貼付 で 読み込んだ 座標 を 一旦 プレビュー する ための バッファ。
+  // ユーザー が 「登録」 を 押せば importCoordinates へ 流し、 「座標変換」 を 押せば
+  // GeodeticTransformModal を staging モード で 開く。
+  const [stagedImport, setStagedImport] = useState<ImportCoordinateInput[] | null>(null)
+  // staging モード の 変換 中 か (true の 間 は GeodeticTransformModal の onApply で
+  // DB update で は なく importCoordinates を 呼ぶ)
+  const [geodeticStaging, setGeodeticStaging] = useState<ImportCoordinateInput[] | null>(null)
 
   // チェックされた点のID（エクスポート対象）
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set())
@@ -1123,7 +1156,7 @@ export function CoordinatesPage() {
       const text = e.target?.result as string
       const lines = text.split('\n').filter(line => line.trim())
 
-      const newCoords = lines.slice(1).map((line, idx) => {
+      const newCoords: ImportCoordinateInput[] = lines.slice(1).map((line, idx) => {
         const [pointNumber, x, y, z] = line.split(',').map(s => s.trim())
         return {
           pointNumber: pointNumber || `P${idx + 1}`,
@@ -1134,7 +1167,7 @@ export function CoordinatesPage() {
         }
       })
 
-      importCoordinates(newCoords)
+      setStagedImport(newCoords)
     }
     reader.readAsText(file)
     event.target.value = ''
@@ -1179,7 +1212,7 @@ export function CoordinatesPage() {
     try {
       const result = await loadSimaFile(file)
 
-      const newCoords = result.coordinates.map((coord) => ({
+      const newCoords: ImportCoordinateInput[] = result.coordinates.map((coord) => ({
         pointNumber: coord.pointNumber,
         x: coord.x,
         y: coord.y,
@@ -1187,7 +1220,7 @@ export function CoordinatesPage() {
         type: selectedType,
       }))
 
-      importCoordinates(newCoords)
+      setStagedImport(newCoords)
 
       // SIMAファイルに座標系情報があり、プロジェクトの座標系と異なる場合は警告
       if (result.system !== null && projectZone !== null && result.system !== projectZone) {
@@ -1225,15 +1258,42 @@ export function CoordinatesPage() {
     return coordinates.filter((c) => checkedIds.has(c.id))
   }
 
-  const handleExportCSV = (source?: ExportSource) => {
+  const handleExportCSV = (source?: ExportSource, fields?: ExportFields) => {
     const targets = getExportTargets(source)
     if (targets.length === 0) return
-    const header = '点番号,X,Y,Z,緯度,経度,種類\n'
+    // fields 指定 が 無ければ 既定 (従来 と 同じ 列 を 出す)
+    const f = fields ?? {
+      lat: true, lng: true, type: true,
+      stakeType: false, stakeStatus: false, notes: false,
+      createdAt: false, updatedAt: false, inspectedAt: false,
+    }
+    const headerCols = ['点番号', 'X', 'Y', 'Z']
+    if (f.lat) headerCols.push('緯度')
+    if (f.lng) headerCols.push('経度')
+    if (f.type) headerCols.push('点種')
+    if (f.stakeType) headerCols.push('杭種')
+    if (f.stakeStatus) headerCols.push('設置状態')
+    if (f.notes) headerCols.push('備考')
+    if (f.createdAt) headerCols.push('作成日時')
+    if (f.updatedAt) headerCols.push('更新日時')
+    if (f.inspectedAt) headerCols.push('点検日時')
+    const header = headerCols.join(',') + '\n'
     const rows = targets.map(c => {
-      // 既定 + カスタム点種のラベルを参照
-      const typeName =
-        typeOptions.find((o) => o.code === c.type)?.label ?? c.type ?? '不明'
-      return `${c.pointNumber},${c.x},${c.y},${c.z ?? ''},${c.lat ?? ''},${c.lng ?? ''},${typeName}`
+      const cols: Array<string | number> = [c.pointNumber, c.x, c.y, c.z ?? '']
+      if (f.lat) cols.push(c.lat ?? '')
+      if (f.lng) cols.push(c.lng ?? '')
+      if (f.type) {
+        const typeName =
+          typeOptions.find((o) => o.code === c.type)?.label ?? c.type ?? '不明'
+        cols.push(typeName)
+      }
+      if (f.stakeType) cols.push(c.stakeType ?? '')
+      if (f.stakeStatus) cols.push(c.stakeStatus ?? '')
+      if (f.notes) cols.push((c.notes ?? '').replace(/,/g, ' '))
+      if (f.createdAt) cols.push(c.createdAt ?? '')
+      if (f.updatedAt) cols.push(c.updatedAt ?? '')
+      if (f.inspectedAt) cols.push(c.inspectedAt ?? '')
+      return cols.join(',')
     }).join('\n')
 
     const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
@@ -1325,8 +1385,79 @@ export function CoordinatesPage() {
     URL.revokeObjectURL(url)
   }
 
-  const handleExportExcel = () => {
-    alert('Excel 出力は実装予定です')
+  const handleExportExcel = async (source?: ExportSource, fields?: ExportFields) => {
+    const targets = getExportTargets(source)
+    if (targets.length === 0) return
+    const f = fields ?? {
+      lat: true, lng: true, type: true,
+      stakeType: false, stakeStatus: false, notes: false,
+      createdAt: false, updatedAt: false, inspectedAt: false,
+    }
+    const ExcelJS = (await import('exceljs')).default
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('座標一覧')
+
+    // 列 定義: 必須 + 任意 (選択 済み) の 順
+    const headerCols: string[] = ['点番号', 'X (m)', 'Y (m)', 'Z (m)']
+    const numFmtMap: Record<number, string> = { 2: '0.000', 3: '0.000', 4: '0.000' }
+    const addCol = (label: string, numFmt?: string) => {
+      headerCols.push(label)
+      if (numFmt) numFmtMap[headerCols.length] = numFmt
+    }
+    if (f.lat) addCol('緯度', '0.0000000')
+    if (f.lng) addCol('経度', '0.0000000')
+    if (f.type) addCol('点種')
+    if (f.stakeType) addCol('杭種')
+    if (f.stakeStatus) addCol('設置状態')
+    if (f.notes) addCol('備考')
+    if (f.createdAt) addCol('作成日時')
+    if (f.updatedAt) addCol('更新日時')
+    if (f.inspectedAt) addCol('点検日時')
+
+    const header = ws.addRow(headerCols)
+    header.font = { bold: true }
+    header.alignment = { horizontal: 'center' }
+
+    for (const c of targets) {
+      const row: Array<string | number> = [c.pointNumber, c.x, c.y, c.z == null ? '' : c.z]
+      if (f.lat) row.push(c.lat == null ? '' : c.lat)
+      if (f.lng) row.push(c.lng == null ? '' : c.lng)
+      if (f.type) {
+        const typeName =
+          typeOptions.find((o) => o.code === c.type)?.label ?? c.type ?? ''
+        row.push(typeName)
+      }
+      if (f.stakeType) row.push(c.stakeType ?? '')
+      if (f.stakeStatus) row.push(c.stakeStatus ?? '')
+      if (f.notes) row.push(c.notes ?? '')
+      if (f.createdAt) row.push(c.createdAt ?? '')
+      if (f.updatedAt) row.push(c.updatedAt ?? '')
+      if (f.inspectedAt) row.push(c.inspectedAt ?? '')
+      ws.addRow(row)
+    }
+
+    // 列 書式 と 幅
+    ws.columns.forEach((col, i) => {
+      const idx1 = i + 1
+      col.width = idx1 === 1 ? 16 : headerCols[i] === '備考' ? 24 : 14
+      const nf = numFmtMap[idx1]
+      if (nf) col.numFmt = nf
+    })
+
+    const buf = await wb.xlsx.writeBuffer()
+    const blob = new Blob([buf], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const stamp = new Date().toISOString().slice(0, 10)
+    const farmName = currentFarm?.name ?? '座標'
+    a.href = url
+    a.download = `${farmName}_座標_${stamp}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   }
 
   // 選択座標を TSV（点名 / X / Y / Z）でクリップボードへコピー。
@@ -1577,16 +1708,34 @@ export function CoordinatesPage() {
       setPendingFormat(null)
       return
     }
-    if (format === 'csv') handleExportCSV(source)
-    else if (format === 'tsv') void handleCopyTSV(source)
+    // CSV / Excel は 出力項目 を 選ぶ 3 段目 へ 進む
+    if (format === 'csv' || format === 'excel') {
+      setPendingExportSource(source)
+      return
+    }
+    if (format === 'tsv') void handleCopyTSV(source)
     else if (format === 'sima') handleExportSIMA(source)
     else if (format === 'gpx') handleExportGPX(source)
     else if (format === 'photos') void handleExportPhotos(source)
-    else if (format === 'excel') handleExportExcel()
     setOpenMenu(null)
     setPendingFormat(null)
     setExportSource(null)
   }
+
+  // 3 段目: 出力項目 を 選んで から 実行 する (CSV / Excel 専用)
+  const finalizeFieldExport = () => {
+    const format = pendingFormat
+    const source = pendingExportSource
+    if (!format || !source) return
+    if (format === 'csv') handleExportCSV(source, exportFields)
+    else if (format === 'excel') void handleExportExcel(source, exportFields)
+    setOpenMenu(null)
+    setPendingFormat(null)
+    setPendingExportSource(null)
+    setExportSource(null)
+  }
+
+  type ExportFields = typeof exportFields
 
   // チェック関連
   const allChecked = coordinates.length > 0 && coordinates.every((c) => checkedIds.has(c.id))
@@ -1699,7 +1848,7 @@ export function CoordinatesPage() {
   // モーダルからのペースト処理。
   // PasteModal で指定された列マッピングに従って、各列を 点名/X/Y/Z/無視 に割り当てる。
   // Z 列が未割当のときは Z=0 として取り込む（点名,X,Y のみの貼り付け対応）。
-  const handleModalPaste = useCallback((
+  const handleModalPaste = (
     text: string,
     pasteType: CoordinateType,
     mapping: ColumnRole[],
@@ -1747,9 +1896,9 @@ export function CoordinatesPage() {
     }).filter((c): c is NonNullable<typeof c> => c !== null)
 
     if (newCoords.length > 0) {
-      importCoordinates(newCoords)
+      setStagedImport(newCoords)
     }
-  }, [coordinates.length, importCoordinates])
+  }
 
   // 地図マーカーで Ctrl/⌘ + クリック されたときに 表のチェック状態をトグルする
   const handlePointToggleCheck = (id: string) => {
@@ -2064,8 +2213,59 @@ export function CoordinatesPage() {
           </button>
           {openMenu === 'export' && !exportDisabled && (
             <div className="absolute left-0 top-full mt-1 w-60 bg-white border rounded shadow-lg z-40">
-              {/* 2 段階フロー: ① 出力フォーマット → ② 出力対象（全点 / 表示点 / 順指定） */}
-              {!pendingFormat ? (
+              {/* 3 段階フロー: ① 出力フォーマット → ② 出力対象 → ③ 出力項目 (CSV / Excel のみ) */}
+              {pendingExportSource && (pendingFormat === 'csv' || pendingFormat === 'excel') ? (
+                <>
+                  <div className="px-3 py-2 bg-slate-50 border-b text-[11px] text-slate-500 flex items-center justify-between">
+                    <span>
+                      {pendingFormat === 'csv' ? 'CSV出力' : 'EXCEL出力'} → 出力項目 を 選択
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPendingExportSource(null)}
+                      className="text-blue-600 hover:underline"
+                    >
+                      戻る
+                    </button>
+                  </div>
+                  <div className="px-3 py-2 border-b text-[11px] text-slate-500">
+                    必須: 点番号 / X / Y / Z
+                  </div>
+                  <div className="px-3 py-2 space-y-1">
+                    {([
+                      ['lat', '緯度'],
+                      ['lng', '経度'],
+                      ['type', '点種'],
+                      ['stakeType', '杭種'],
+                      ['stakeStatus', '設置状態'],
+                      ['notes', '備考'],
+                      ['createdAt', '作成日時'],
+                      ['updatedAt', '更新日時'],
+                      ['inspectedAt', '点検日時'],
+                    ] as const).map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={exportFields[key]}
+                          onChange={(e) =>
+                            setExportFields((prev) => ({ ...prev, [key]: e.target.checked }))
+                          }
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="px-3 py-2 border-t flex justify-end bg-slate-50">
+                    <button
+                      type="button"
+                      onClick={finalizeFieldExport}
+                      className="px-3 py-1.5 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700"
+                    >
+                      出力
+                    </button>
+                  </div>
+                </>
+              ) : !pendingFormat ? (
                 <>
                   <div className="px-3 py-2 bg-slate-50 border-b text-[11px] text-slate-500">
                     出力フォーマットを選択
@@ -2124,10 +2324,10 @@ export function CoordinatesPage() {
                   <button
                     type="button"
                     onClick={() => setPendingFormat('excel')}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100 text-slate-500"
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    EXCEL出力（実装予定）
+                    EXCEL出力
                   </button>
                 </>
               ) : (
@@ -2299,6 +2499,7 @@ export function CoordinatesPage() {
             測地座標変換
           </button>
         )}
+
 
         {/* 削除履歴 (30 日以内の 削除座標を 復元) */}
         {currentFarm && (
@@ -3709,7 +3910,6 @@ export function CoordinatesPage() {
         onClose={() => setShowOcrModal(false)}
         defaultType={selectedType}
         onImport={(pts) => {
-          // 既存 の importCoordinates に 流し込む (非同期)
           void importCoordinates(
             pts.map((p) => ({
               pointNumber: p.pointNumber,
@@ -3720,22 +3920,78 @@ export function CoordinatesPage() {
             })),
           )
         }}
+        onOpenTransform={(pts) => {
+          // staging モード で GeodeticTransformModal に 送る
+          const staged: ImportCoordinateInput[] = pts.map((p) => ({
+            pointNumber: p.pointNumber,
+            x: p.x,
+            y: p.y,
+            z: p.z,
+            type: (p.type ?? selectedType) as CoordinateType,
+          }))
+          setGeodeticStaging(staged)
+          setShowGeodeticModal(true)
+          setShowOcrModal(false)
+        }}
       />
 
-      {/* 測地座標変換 モーダル (TKY2JGD / PATCHJGD で チェック 済 の 点 を 上書き) */}
+      {/* 測地座標変換 モーダル。
+          - staging モード: geodeticStaging が 入って いる (AI / SIMA / CSV / 貼付 の 取込予定点)
+          - update  モード: 既存 の チェック 済 の 点 を 上書き */}
       {projectZone !== null && (
         <GeodeticTransformModal
           open={showGeodeticModal}
-          onClose={() => setShowGeodeticModal(false)}
+          onClose={() => {
+            setShowGeodeticModal(false)
+            setGeodeticStaging(null)
+          }}
           systemNo={projectZone}
-          points={coordinates
-            .filter((c) => checkedIds.has(c.id) && Number.isFinite(c.x) && Number.isFinite(c.y))
-            .map((c) => ({ id: c.id, pointNumber: c.pointNumber, x: c.x, y: c.y }))}
+          mode={geodeticStaging ? 'staging' : 'update'}
+          points={
+            geodeticStaging
+              ? geodeticStaging.map((c, i) => ({
+                  id: `staging-${i}`,
+                  pointNumber: c.pointNumber,
+                  x: c.x,
+                  y: c.y,
+                }))
+              : coordinates
+                  .filter((c) => checkedIds.has(c.id) && Number.isFinite(c.x) && Number.isFinite(c.y))
+                  .map((c) => ({ id: c.id, pointNumber: c.pointNumber, x: c.x, y: c.y }))
+          }
           onApply={async (updates) => {
-            await updateCoordinatesBulk(updates)
+            if (geodeticStaging) {
+              // staging: 変換後 の x, y で ImportCoordinateInput を 作り直して 登録
+              const byId = new Map(updates.map((u) => [u.id, u]))
+              const toImport = geodeticStaging.map((c, i) => {
+                const u = byId.get(`staging-${i}`)
+                return u ? { ...c, x: u.x, y: u.y } : c
+              })
+              await importCoordinates(toImport)
+              setGeodeticStaging(null)
+            } else {
+              await updateCoordinatesBulk(updates)
+            }
           }}
         />
       )}
+
+      {/* SIMA / CSV / 貼付 の 共通 プレビュー。 登録 or 座標変換 を 選ぶ */}
+      <ImportPreviewModal
+        open={stagedImport !== null}
+        onClose={() => setStagedImport(null)}
+        title="取込予定 座標 の 確認"
+        points={stagedImport ?? []}
+        onRegister={(pts) => {
+          void importCoordinates(pts)
+          setStagedImport(null)
+        }}
+        onOpenTransform={(pts) => {
+          setGeodeticStaging(pts)
+          setShowGeodeticModal(true)
+          setStagedImport(null)
+        }}
+      />
 
       {/* 点種管理モーダル */}
       <PointTypeManagerModal

@@ -18,8 +18,12 @@ const TYPE_OPTIONS = Object.entries(COORDINATE_TYPE_NAMES) as Array<[CoordinateT
 interface Props {
   open: boolean
   onClose: () => void
-  /** 読取 結果 を 取り込む コールバック。 親 側 で importCoordinates に 渡す 想定 */
+  /** 読取 結果 を そのまま 登録 する コールバック (親 側 で importCoordinates を 呼ぶ) */
   onImport: (
+    points: Array<{ pointNumber: string; x: number; y: number; z: number | null; type: string | null }>,
+  ) => void
+  /** 登録 前 に 測地座標変換 を 掛ける コールバック (親 側 で GeodeticTransformModal を 開く) */
+  onOpenTransform?: (
     points: Array<{ pointNumber: string; x: number; y: number; z: number | null; type: string | null }>,
   ) => void
   /** 既定 の 点種 (親 側 の 「取り込む 点種」)。 読取結果 の type が null の 時 に 使う */
@@ -44,7 +48,7 @@ interface OcrPoint {
   confidence: number
 }
 
-export function OcrCoordinatesModal({ open, onClose, onImport, defaultType }: Props) {
+export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, defaultType }: Props) {
   const [files, setFiles] = useState<InputFile[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -170,16 +174,23 @@ export function OcrCoordinatesModal({ open, onClose, onImport, defaultType }: Pr
     }
   }
 
-  const handleImport = () => {
-    const toImport = points.map((p) => ({
+  const toImportArray = () =>
+    points.map((p) => ({
       pointNumber: p.pointNumber,
       x: p.x,
       y: p.y,
       z: p.z,
       type: p.type ?? defaultType,
     }))
-    onImport(toImport)
+
+  const handleImport = () => {
+    onImport(toImportArray())
     onClose()
+  }
+
+  const handleTransform = () => {
+    if (!onOpenTransform) return
+    onOpenTransform(toImportArray())
   }
 
   const updatePoint = (idx: number, patch: Partial<OcrPoint>) => {
@@ -458,13 +469,24 @@ export function OcrCoordinatesModal({ open, onClose, onImport, defaultType }: Pr
           >
             キャンセル
           </button>
+          {onOpenTransform && (
+            <button
+              type="button"
+              onClick={handleTransform}
+              disabled={points.length === 0}
+              className="px-3 py-1.5 text-sm bg-white border border-blue-300 text-blue-700 rounded hover:bg-blue-50 disabled:opacity-50"
+              title="登録 前 に 世界測地変換 / 地殻変動補正 を 掛ける"
+            >
+              座標変換 →
+            </button>
+          )}
           <button
             type="button"
             onClick={handleImport}
             disabled={points.length === 0}
             className="px-3 py-1.5 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
           >
-            {points.length > 0 ? `取込 (${points.length} 点)` : '取込'}
+            {points.length > 0 ? `登録 (${points.length} 点)` : '登録'}
           </button>
         </div>
       </div>
