@@ -109,20 +109,29 @@ export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, 
       setError(`未対応 の 形式: ${file.type || file.name}`)
       return
     }
-    // サイズ 上限 (10 MB)。 Claude API も 大きすぎる と 弾く
-    if (file.size > 10 * 1024 * 1024) {
-      setError(`ファイル が 大きすぎ ます (${(file.size / 1024 / 1024).toFixed(1)} MB)。 10 MB 以下 に して ください`)
+    // サイズ 上限 (PDF 10 MB、 画像 20 MB — スマホ カメラ の 原本 を 吸い込める よう に)
+    const sizeLimit = file.type === 'application/pdf' ? 10 * 1024 * 1024 : 20 * 1024 * 1024
+    if (file.size > sizeLimit) {
+      setError(`ファイル が 大きすぎ ます (${(file.size / 1024 / 1024).toFixed(1)} MB)`)
       return
     }
-    const dataBase64 = await fileToBase64(file)
-    const previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : null
+    // Vercel 関数 の リクエスト 上限 (4.5 MB) + base64 の 33% オーバーヘッド を 考慮:
+    //   画像 は 約 2.5 MB 以下 に 縮小 する。 スマホ カメラ 原本 (3-5 MB) で 必ず 発動
+    let outFile = file
+    let outMime = file.type
+    if (file.type.startsWith('image/')) {
+      outFile = await downscaleImage(file, { maxEdgePx: 1600, quality: 0.85, targetMimeType: 'image/jpeg' })
+      outMime = outFile.type
+    }
+    const dataBase64 = await fileToBase64(outFile)
+    const previewUrl = outFile.type.startsWith('image/') ? URL.createObjectURL(outFile) : null
     setFiles((prev) => [
       ...prev,
       {
         key: `${file.name}-${Date.now()}-${Math.random()}`,
-        name: file.name || (file.type === 'application/pdf' ? '貼付.pdf' : '貼付.png'),
-        mimeType: file.type,
-        sizeBytes: file.size,
+        name: file.name || (file.type === 'application/pdf' ? '貼付.pdf' : '貼付.jpg'),
+        mimeType: outMime,
+        sizeBytes: outFile.size,
         dataBase64,
         previewUrl,
       },
@@ -528,6 +537,49 @@ function dedupeByCoordinate(points: OcrPoint[]): OcrPoint[] {
     kept.push({ ...p })
   }
   return kept
+}
+
+/**
+ * 画像 を 最長辺 maxEdgePx に 収まる よう 縮小 し、 JPEG で 再エンコード する。
+ * iPhone カメラ 原本 (3-5 MB) を Vercel の 4.5 MB リクエスト 上限 内 に 収める 目的。
+ * 既に 小さい 画像 は そのまま 返す。 createImageBitmap が EXIF 向き を 既定 で
+ * 反映 する ので 回転 補正 不要。
+ */
+async function downscaleImage(
+  file: File,
+  opts: { maxEdgePx: number; quality: number; targetMimeType: 'image/jpeg' | 'image/webp' },
+): Promise<File> {
+  try {
+    const bitmap = await createImageBitmap(file)
+    const longest = Math.max(bitmap.width, bitmap.height)
+    // 既に 小さく、 かつ 元 ファイル も 2 MB 以下 なら 変換 不要
+    if (longest <= opts.maxEdgePx && file.size <= 2 * 1024 * 1024) {
+      bitmap.close()
+      return file
+    }
+    const scale = Math.min(1, opts.maxEdgePx / longest)
+    const w = Math.round(bitmap.width * scale)
+    const h = Math.round(bitmap.height * scale)
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      bitmap.close()
+      return file
+    }
+    ctx.drawImage(bitmap, 0, 0, w, h)
+    bitmap.close()
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob(resolve, opts.targetMimeType, opts.quality),
+    )
+    if (!blob) return file
+    const ext = opts.targetMimeType === 'image/jpeg' ? '.jpg' : '.webp'
+    const name = file.name.replace(/\.[^.]+$/, '') + ext
+    return new File([blob], name, { type: opts.targetMimeType, lastModified: Date.now() })
+  } catch {
+    return file
+  }
 }
 
 /** File → base64 (data URL の prefix は 除外) */
