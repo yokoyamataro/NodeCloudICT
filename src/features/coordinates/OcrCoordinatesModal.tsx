@@ -10,7 +10,7 @@
 // 日本 の 平面直角座標 を 前提 と して API 側 の プロンプト で X=北 / Y=東 を 固定。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Clipboard, FileText, Image as ImageIcon, Loader2, Upload, X, AlertTriangle } from 'lucide-react'
+import { Clipboard, Download, FileText, Image as ImageIcon, Loader2, Upload, X, AlertTriangle } from 'lucide-react'
 import { COORDINATE_TYPE_NAMES, type CoordinateType } from '../../lib/coordinates'
 
 const TYPE_OPTIONS = Object.entries(COORDINATE_TYPE_NAMES) as Array<[CoordinateType, string]>
@@ -223,6 +223,52 @@ export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, 
     onOpenTransform(toImportArray())
   }
 
+  // 点検表 (Excel) を 出力。 列: 点名 / X / Y / Z / 点検 (空欄 の □)
+  const handleExportInspection = async () => {
+    if (points.length === 0) return
+    const ExcelJS = (await import('exceljs')).default
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('点検表')
+
+    const header = ws.addRow(['点名', 'X (m)', 'Y (m)', 'Z (m)', '点検'])
+    header.font = { bold: true }
+    header.alignment = { horizontal: 'center' }
+
+    for (const p of points) {
+      ws.addRow([
+        p.pointNumber,
+        p.x,
+        p.y,
+        p.z == null ? '' : p.z,
+        '□',
+      ])
+    }
+
+    // 列幅 と 書式
+    ws.columns.forEach((col, i) => {
+      const idx1 = i + 1
+      if (idx1 === 1) col.width = 16
+      else if (idx1 === 5) col.width = 8
+      else col.width = 14
+      if (idx1 >= 2 && idx1 <= 4) col.numFmt = '0.000'
+      if (idx1 === 5) col.alignment = { horizontal: 'center' }
+    })
+
+    const buf = await wb.xlsx.writeBuffer()
+    const blob = new Blob([buf], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const stamp = new Date().toISOString().slice(0, 10)
+    a.href = url
+    a.download = `点検表_${stamp}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   const updatePoint = (idx: number, patch: Partial<OcrPoint>) => {
     setPoints((prev) => prev.map((p, i) => (i === idx ? { ...p, ...patch } : p)))
   }
@@ -378,7 +424,16 @@ export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, 
                     同一 座標 {dedupedCount} 件 を 自動 削除
                   </span>
                 )}
-                <label className="ml-auto flex items-center gap-1 text-[11px] text-slate-700">
+                <button
+                  type="button"
+                  onClick={() => void handleExportInspection()}
+                  className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 text-[11px] bg-white border border-emerald-300 text-emerald-700 rounded hover:bg-emerald-50"
+                  title="点名 / X / Y / Z / 点検 の 列 で Excel 出力"
+                >
+                  <Download className="h-3 w-3" />
+                  点検表 (Excel)
+                </button>
+                <label className="flex items-center gap-1 text-[11px] text-slate-700">
                   点種 (全点 一括):
                   <select
                     value={bulkType}
