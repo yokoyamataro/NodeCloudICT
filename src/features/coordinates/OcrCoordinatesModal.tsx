@@ -56,8 +56,15 @@ export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, 
   const [error, setError] = useState<string | null>(null)
   const [points, setPoints] = useState<OcrPoint[]>([])
   const [dedupedCount, setDedupedCount] = useState(0)
+  // 全点 共通 の 点種。 1 つ の セレクタ で 一括 指定 する (個別 変更 は 廃止)
+  const [bulkType, setBulkType] = useState<string>(defaultType)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const initialFileConsumedRef = useRef<File | null>(null)
+
+  // モーダル を 開いた 時 は defaultType を 反映 (親 の 「取り込む点種」 が 変わった 場合 用)
+  useEffect(() => {
+    if (open) setBulkType(defaultType)
+  }, [open, defaultType])
 
   // モーダル を 閉じる 時 に 状態 リセット
   useEffect(() => {
@@ -202,7 +209,8 @@ export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, 
       x: p.x,
       y: p.y,
       z: p.z,
-      type: p.type ?? defaultType,
+      // AI が 推測 した 個別 の type は 無視 し、 一括 セレクタ の 値 を 全点 に 適用
+      type: bulkType,
     }))
 
   const handleImport = () => {
@@ -370,9 +378,23 @@ export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, 
                     同一 座標 {dedupedCount} 件 を 自動 削除
                   </span>
                 )}
-                <span className="text-[11px] text-slate-500">
-                  間違い が ある 行 は 編集 または × で 削除 して ください
-                </span>
+                <label className="ml-auto flex items-center gap-1 text-[11px] text-slate-700">
+                  点種 (全点 一括):
+                  <select
+                    value={bulkType}
+                    onChange={(e) => setBulkType(e.target.value)}
+                    className="px-1.5 py-0.5 text-xs border rounded bg-white"
+                  >
+                    {TYPE_OPTIONS.map(([key, label]) => (
+                      <option key={key} value={key}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="px-3 py-1 text-[11px] text-slate-500 border-b bg-slate-50">
+                間違い が ある 行 は 編集 または × で 削除 して ください
               </div>
               <div className="max-h-80 overflow-auto">
                 <table className="w-full text-xs">
@@ -382,7 +404,6 @@ export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, 
                       <th className="px-2 py-1 text-right w-24">X (m)</th>
                       <th className="px-2 py-1 text-right w-24">Y (m)</th>
                       <th className="px-2 py-1 text-right w-20">Z (m)</th>
-                      <th className="px-2 py-1 text-left w-20">種別</th>
                       <th className="px-2 py-1 text-right w-14">信頼</th>
                       <th className="px-2 py-1 w-8"></th>
                     </tr>
@@ -440,24 +461,6 @@ export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, 
                               }}
                               className="w-full px-1 py-0.5 border rounded font-mono text-right"
                             />
-                          </td>
-                          <td className="px-1 py-0.5">
-                            <select
-                              value={(p.type ?? defaultType) as string}
-                              onChange={(e) => updatePoint(i, { type: e.target.value || null })}
-                              className="w-full px-1 py-0.5 border rounded bg-white"
-                            >
-                              {TYPE_OPTIONS.map(([key, label]) => (
-                                <option key={key} value={key}>
-                                  {label}
-                                </option>
-                              ))}
-                              {/* AI が 既定 以外 を 返した 場合 の フォールバック */}
-                              {p.type &&
-                                !TYPE_OPTIONS.some(([k]) => k === p.type) && (
-                                  <option value={p.type}>{p.type}</option>
-                                )}
-                            </select>
                           </td>
                           <td className="px-1 py-0.5 text-right font-mono text-[11px]">
                             <span className={lowConf ? 'text-amber-700' : 'text-slate-500'}>
