@@ -1134,6 +1134,22 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                     <FileText className="h-3.5 w-3.5" />
                     登記PDF取込
                   </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const newArea = await addWorkArea('boundary_survey')
+                      if (newArea) {
+                        await upsertParcel(newArea.id, { parcel_number: '' })
+                        setSelectedAreaId(newArea.id)
+                      }
+                    }}
+                    disabled={loading || readOnly}
+                    title="新規 地番 を 1 件 追加 (地番 は 後 で 編集)"
+                    className="flex items-center gap-1 px-2 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    新地番
+                  </button>
                   {areaListActions}
                 </>
               )}
