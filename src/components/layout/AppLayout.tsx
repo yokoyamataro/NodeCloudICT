@@ -934,16 +934,6 @@ function UserMenu({
               )}
             </div>
           )}
-          {isSiteOwner && (
-            <Link
-              to="/settings/registry"
-              onClick={() => setOpen(false)}
-              className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50"
-            >
-              <KeyRound className="h-4 w-4 text-slate-500" />
-              登記情報 (touki.or.jp)
-            </Link>
-          )}
           <Link
             to="/terms"
             onClick={() => setOpen(false)}

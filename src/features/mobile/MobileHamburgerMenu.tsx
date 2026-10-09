@@ -233,10 +233,6 @@ export function MobileHamburgerMenu(_props: Props) {
                   )}
                 </div>
               )}
-              <div className="text-[11px] text-slate-500 leading-relaxed border-t pt-3">
-                touki.or.jp 認証情報等の詳細設定は PC 表示から
-                「設定 → 登記情報」で行えます。
-              </div>
               <button
                 type="button"
                 onClick={handleSignOut}

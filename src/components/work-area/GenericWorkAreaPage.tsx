@@ -11,17 +11,12 @@ import {
   Tag,
   Hash,
   FileText,
-  KeyRound,
   ChevronRight,
   ChevronDown,
   ChevronLeft,
 } from 'lucide-react'
-import { useAuth } from '@/contexts/AuthContext'
-import { isAdmin } from '@/lib/admin'
 import L from 'leaflet'
 import { useMap } from 'react-leaflet'
-import { RegistryFetchOneModal } from '@/features/parcel-maps/RegistryFetchOneModal'
-import { parseRegistryPdfViaAI } from '@/lib/registryPdf'
 import {
   useWorkAreaStore,
   type WorkAreaPoint,
@@ -139,10 +134,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
   //   それ以外      → 表 + 地図
   const showTable = fullscreenPanel !== 'map'
   const showMap = fullscreenPanel !== 'table'
-  const { user } = useAuth()
-  const isSiteOwner = isAdmin(user?.email)
   // 「登記取得」モーダルを開く対象 work_area id。1 度に 1 件だけ。
-  const [registryFetchTargetId, setRegistryFetchTargetId] = useState<string | null>(null)
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   // 編集中ポリゴン: 選択中の構成点 ID（DEL/BACKSPACE で削除する対象）
   const [selectedConstituentPointId, setSelectedConstituentPointId] = useState<string | null>(null)
@@ -637,7 +629,9 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     if (editingAreaId) {
       const editingArea = areas.find((a) => a.id === editingAreaId)
       if (!editingArea) return
-      const constituentIds = editingArea.pointIds
+      // 編集中 の 境界 種別 (仮 / 確定 / 分筆 / 合筆) に 対応 した pointIds を 使う。
+      // area.pointIds 固定 だと 確定境界 等 の 編集 で index が ズレ て 別点 が 動く。
+      const constituentIds = pointIdsOf(editingArea)
       const coord = coordinates.find((c) => c.id === id)
       if (!coord) return
 
@@ -907,9 +901,11 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
 
   // 区域ポリゴンを生成
   const externalPolygons: ExternalPolygon[] = areas
-    .filter(area => area.points.length >= 3)
+    .filter(area => pointsOf(area).length >= 3)
     .map(area => {
-      const pts = area.points.filter(p => p.lat !== null && p.lng !== null)
+      // 編集中 の 境界 種別 (仮 / 確定 / 分筆 / 合筆) に 合わせた 配列 を 使う。
+      // area.points / area.pointIds を 固定 で 使う と 確定境界 等 で 不整合。
+      const pts = pointsOf(area).filter(p => p.lat !== null && p.lng !== null)
       let positions = pts.map(p => [p.lat!, p.lng!] as [number, number])
       // 編集中ポリゴンのプレビュー追従:
       //   ① 構成点を選択中 + マウスが地図上にある
@@ -917,16 +913,25 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
       //   ② 中点 + クリックで挿入待機中 + マウスが地図上にある
       //      → hoverPos を挿入位置として描画
       if (editingAreaId === area.id && positions.length >= 1) {
-        const constituentIds = area.pointIds
+        // 「実際 に 描画 して いる 点 の ID 列」。 pointIds に 有って も
+        // coordinatesMap に 無い (削除 済 等) や lat/lng=null は pts から 落ちる ので、
+        // 位置 配列 と ID 配列 を 並行 で 持って ズレ を 防ぐ。
+        const renderedIds = pts.map(p => p.id)
         if (selectedConstituentPointId && hoverPos) {
-          const idx = constituentIds.indexOf(selectedConstituentPointId)
+          const idx = renderedIds.indexOf(selectedConstituentPointId)
           if (idx >= 0 && idx < positions.length) {
             positions = positions.map((p, i) =>
               i === idx ? [hoverPos.lat, hoverPos.lng] : p,
             )
           }
         } else if (pendingInsertIdx != null && hoverPos) {
-          const insertAt = Math.min(Math.max(pendingInsertIdx, 0), positions.length)
+          // pendingInsertIdx は pointIdsOf(area) 空間 の index (MidpointPlusLayer が 発行)。
+          // 描画 配列 に 翻訳 する: 直前 点 (= constituentIds[idx-1]) が renderedIds の
+          // 何番目 に ある か を 探して、 その 次 に 入れる。
+          const constituentIds = pointIdsOf(area)
+          const prevId = constituentIds[pendingInsertIdx - 1]
+          const beforeIdx = prevId ? renderedIds.indexOf(prevId) : -1
+          const insertAt = beforeIdx >= 0 ? beforeIdx + 1 : positions.length
           positions = [
             ...positions.slice(0, insertAt),
             [hoverPos.lat, hoverPos.lng],
@@ -1162,7 +1167,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                   見出しと行で 別々の overflow-x-auto を 持たせない ため。 */}
               <div className={isBoundarySurvey ? 'min-w-max' : ''}>
                 {isBoundarySurvey && (
-                  <CadastralHeader visibleColumns={effectiveColumns} leadingWidth={isSiteOwner ? 'w-28' : 'w-20'} />
+                  <CadastralHeader visibleColumns={effectiveColumns} leadingWidth="w-20" />
                 )}
                 <div>
               {sortedAreas.map((area) => {
@@ -1196,7 +1201,7 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                         // 行頭の「構成点編集」+「登記PDFを開く」(+ site owner のみ「登記取得」)。
                         // 横スクロールでの 貼り付け は しない。 ボタン数に応じて 幅は 可変。
                         <div
-                          className={`${isSiteOwner ? 'w-28' : 'w-20'} shrink-0 flex items-center justify-center gap-1`}
+                          className="w-20 shrink-0 flex items-center justify-center gap-1"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <button
@@ -1237,19 +1242,6 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                               </button>
                             )
                           })()}
-                          {isSiteOwner && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setRegistryFetchTargetId(area.id)
-                              }}
-                              className="w-9 h-7 flex items-center justify-center rounded border bg-white border-slate-300 text-slate-600 hover:bg-blue-50"
-                              title="登記情報 (所有者事項 / 全部事項) を touki.or.jp から自動取得 (site owner のみ)"
-                            >
-                              <KeyRound className="h-3.5 w-3.5" />
-                            </button>
-                          )}
                         </div>
                       )}
                       {isBoundarySurvey ? (
@@ -1865,90 +1857,6 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
           onClose={() => setShowRegistryImport(false)}
         />
       )}
-
-      {/* 登記情報 自動取得モーダル (touki.or.jp、site owner のみ) */}
-      {registryFetchTargetId && isSiteOwner && farmId && (() => {
-        const targetArea = sortedAreas.find((a) => a.id === registryFetchTargetId)
-        const targetParcel = targetArea
-          ? parcelByWorkAreaId.get(targetArea.id) ?? null
-          : null
-        const parcelNumber =
-          targetParcel?.parcel_number || targetArea?.zoneNumber || targetArea?.name || ''
-        const location = targetParcel?.location ?? ''
-        return (
-          <RegistryFetchOneModal
-            workAreaId={registryFetchTargetId}
-            parcelNumber={parcelNumber}
-            location={location}
-            initialPrefecture={targetParcel?.prefecture ?? null}
-            initialCity={targetParcel?.municipality ?? null}
-            farmId={farmId}
-            onClose={() => setRegistryFetchTargetId(null)}
-            onDone={(r) => {
-              const targetId = registryFetchTargetId
-              // 取得完了 → attachments を再取得 + parcels に prefecture/municipality を保存
-              void fetchAttachmentsByEntityIds(
-                'work_area',
-                sortedAreas.map((a) => a.id),
-              )
-              // 前回入力値を parcels に反映 (次回モーダルで自動入力される)
-              if (
-                (targetParcel?.prefecture ?? null) !== r.prefecture ||
-                (targetParcel?.municipality ?? null) !== r.municipality
-              ) {
-                void upsertParcel(targetId, {
-                  prefecture: r.prefecture,
-                  municipality: r.municipality,
-                })
-              }
-              // 取得した PDF を自動パースして parcels の登記情報カラムに反映
-              if (r.signedUrl) {
-                void (async () => {
-                  try {
-                    const resp = await fetch(r.signedUrl!)
-                    if (!resp.ok) {
-                      console.warn('[registry] PDF fetch failed', resp.status)
-                      return
-                    }
-                    const blob = await resp.blob()
-                    const file = new File([blob], `${r.kind}_${targetId}.pdf`, {
-                      type: 'application/pdf',
-                    })
-                    // Claude Haiku で PDF を直接パース (regex ではなく AI 一本化)
-                    const parsed = await parseRegistryPdfViaAI(
-                      file,
-                      r.kind,
-                      {
-                        location: targetParcel?.location ?? null,
-                        parcel_number: targetParcel?.parcel_number ?? null,
-                      },
-                    )
-                    const patch: Partial<import('@/stores/parcelStore').ParcelEditableFields> = {}
-                    if (parsed.location && !targetParcel?.location) {
-                      patch.location = parsed.location
-                    }
-                    if (parsed.landCategory) {
-                      patch.registered_land_category = parsed.landCategory
-                    }
-                    if (parsed.areaSqm != null) {
-                      patch.registered_area_sqm = parsed.areaSqm
-                    }
-                    if (parsed.owners.length > 0) {
-                      patch.registered_owner_name = parsed.owners[0].fullName
-                      patch.registered_owner_address = parsed.owners[0].address
-                    }
-                    if (Object.keys(patch).length > 0) {
-                      await upsertParcel(targetId, patch)
-                    }
-                  } catch (err) {
-                    console.error('[registry] auto parse failed', err)
-                  }
-                })()
-              }
-            }}
-          />
-        )
-      })()}
 
     </div>
   )

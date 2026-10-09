@@ -61,7 +61,6 @@ import { StoneRemovalWorkAreaPage } from '@/features/stone-removal/StoneRemovalW
 import { OpenChannelAlignmentPage } from '@/features/open-channel/OpenChannelAlignmentPage'
 import { TrashPage } from '@/features/trash/TrashPage'
 // 個人設定
-import { RegistryCredentialsPage } from '@/features/settings/RegistryCredentialsPage'
 import { PasswordSettingsPage } from '@/features/settings/PasswordSettingsPage'
 import { AccountSettingsPage } from '@/features/settings/AccountSettingsPage'
 import { FarmSettingsPage } from '@/features/settings/FarmSettingsPage'
@@ -113,24 +112,6 @@ function MobilityAdminRoute({ children }: { children: React.ReactNode }) {
   if (!isAdmin(user.email) && !isOrgAdmin) {
     return <Navigate to="/mobility/drive" replace />
   }
-
-  return <>{children}</>
-}
-
-// サイトオーナー限定ルート。非オーナーは /coordinates に飛ばす
-function SiteOwnerRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth()
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-      </div>
-    )
-  }
-
-  if (!user) return <Navigate to="/login" replace />
-  if (!isAdmin(user.email)) return <Navigate to="/coordinates" replace />
 
   return <>{children}</>
 }
@@ -266,15 +247,6 @@ function AppRoutes() {
             <ProtectedRoute>
               <AdminParcelMapsPage />
             </ProtectedRoute>
-          }
-        />
-        {/* 個人設定: 登記情報提供サービスの認証情報 (Phase 1 はサイトオーナー限定) */}
-        <Route
-          path="/settings/registry"
-          element={
-            <SiteOwnerRoute>
-              <RegistryCredentialsPage />
-            </SiteOwnerRoute>
           }
         />
         {/* 個人設定: パスワード変更 */}
