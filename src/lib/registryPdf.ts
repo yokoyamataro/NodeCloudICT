@@ -15,6 +15,17 @@ export interface ParsedOwner {
   share?: string | null
 }
 
+export interface ParsedDisplayHistory {
+  orderNo: number
+  parcelNumber: string | null
+  landCategory: string | null
+  /** 地積 の 原文 (例: 「232・32」「232.32」) */
+  areaText: string | null
+  reason: string | null
+  /** 原因 日付 の 原文 (例: 「令和3年7月15日」) */
+  causeDate: string | null
+}
+
 export interface ParsedRegistry {
   /** ファイル名（参照用） */
   fileName: string
@@ -28,6 +39,8 @@ export interface ParsedRegistry {
   areaSqm: number | null
   /** 現在の所有者（複数可。共有なら全員含む） */
   owners: ParsedOwner[]
+  /** 表題部 の 「表示欄」 (= 土地の沿革) を 時系列 で */
+  displayHistories: ParsedDisplayHistory[]
   /** AI 抽出時の信頼度 0.0-1.0 */
   confidence: number
   /** 警告 / 抽出時の注記 */
@@ -76,6 +89,14 @@ interface AiExtracted {
   land_category: string | null
   area_sqm: number | null
   owners: Array<{ name: string; address: string; share?: string | null }>
+  display_histories?: Array<{
+    order_no: number
+    parcel_number: string | null
+    land_category: string | null
+    area_text: string | null
+    reason: string | null
+    cause_date: string | null
+  }>
   confidence: number
   warnings: string[]
 }
@@ -123,6 +144,14 @@ export async function parseRegistryPdfViaAI(
     fullName: o.name,
     share: o.share ?? null,
   }))
+  const displayHistories: ParsedDisplayHistory[] = (ex.display_histories ?? []).map((h) => ({
+    orderNo: h.order_no,
+    parcelNumber: h.parcel_number,
+    landCategory: h.land_category,
+    areaText: h.area_text,
+    reason: h.reason,
+    causeDate: h.cause_date,
+  }))
   return {
     fileName: file.name,
     location: ex.location,
@@ -132,6 +161,7 @@ export async function parseRegistryPdfViaAI(
     landCategory: ex.land_category,
     areaSqm: ex.area_sqm,
     owners,
+    displayHistories,
     confidence: ex.confidence,
     warnings: ex.warnings,
   }

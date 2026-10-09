@@ -15,7 +15,8 @@
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001'
 const ANTHROPIC_VERSION = '2023-06-01'
-const MAX_TOKENS = 2048
+// display_histories を 返す よう に なった ので 旧 2048 では 全部事項 で 枯渇 する
+const MAX_TOKENS = 8192
 
 interface ParseBody {
   pdf_base64?: string
@@ -35,12 +36,28 @@ interface ExtractedOwner {
   share?: string | null
 }
 
+interface ExtractedDisplayHistory {
+  /** 1 から 連番 (PDF の 表題部 の 表示欄 順) */
+  order_no: number
+  /** その 時点 の 地番 */
+  parcel_number: string | null
+  /** その 時点 の 地目 */
+  land_category: string | null
+  /** その 時点 の 地積 (原文、 例: "232・32" / "232.32") */
+  area_text: string | null
+  /** 事由 (例: 「○番、○番 に 分筆」「地目変更」「地積更正」) */
+  reason: string | null
+  /** 原因 日付 (原文、 例: 「令和3年7月15日」) */
+  cause_date: string | null
+}
+
 interface Extracted {
   location: string | null
   parcel_number: string | null
   land_category: string | null
   area_sqm: number | null
   owners: ExtractedOwner[]
+  display_histories: ExtractedDisplayHistory[]
   confidence: number
   warnings: string[]
 }
@@ -115,6 +132,44 @@ const TOOL_SCHEMA = {
           required: ['name', 'address'],
         },
       },
+      display_histories: {
+        type: 'array',
+        description:
+          '表題部 の 「表示欄」 (= 土地の沿革) を 時系列 で 全件 返す。 分筆 / 合筆 / 地目変更 / 地積更正 等 の 履歴 を 表 の 上 (= 古い) から 下 (= 新しい) の 順 に 配列化。 空欄 の 列 は null。 下線 (= 抹消) 行 も 歴史 と して 含める。',
+        items: {
+          type: 'object',
+          properties: {
+            order_no: {
+              type: 'number',
+              description: '1 から 始まる 連番 (表 の 上 から 下 の 並び)',
+            },
+            parcel_number: {
+              type: ['string', 'null'],
+              description: 'その 時点 の 地番 (例: 「10-6」「430」)',
+            },
+            land_category: {
+              type: ['string', 'null'],
+              description: 'その 時点 の 地目 (例: 「田」「宅地」)',
+            },
+            area_text: {
+              type: ['string', 'null'],
+              description:
+                'その 時点 の 地積 (原文 の まま 保持、 例: 「232・32」「232.32」)',
+            },
+            reason: {
+              type: ['string', 'null'],
+              description:
+                '事由 (例: 「○番、○番 に 分筆」「地目変更」「地積更正」)',
+            },
+            cause_date: {
+              type: ['string', 'null'],
+              description:
+                '原因 日付 (PDF の 原文 の まま、 例: 「令和3年7月15日」「平成28年2月1日」)',
+            },
+          },
+          required: ['order_no'],
+        },
+      },
       confidence: {
         type: 'number',
         description:
@@ -127,7 +182,7 @@ const TOOL_SCHEMA = {
           '抽出時に注意した点があれば列挙 (例: 「相続登記が2件連続していたため最後のものを採用」)。',
       },
     },
-    required: ['location', 'parcel_number', 'owners', 'confidence', 'warnings'],
+    required: ['location', 'parcel_number', 'owners', 'display_histories', 'confidence', 'warnings'],
   },
 }
 
@@ -142,15 +197,16 @@ function buildPrompt(kind: 'ownership' | 'full', hint?: ParseBody['hint']): stri
 
   const kindText =
     kind === 'ownership'
-      ? '添付 PDF は「所有者事項」証明書 (¥140 の簡易版) です。所有者一覧のみ含まれ、地目・地積の情報はありません (area_sqm, land_category は null で返す)。'
-      : '添付 PDF は「全部事項証明書」(¥334 の詳細版) です。表題部 (所在・地番・地目・地積) と 甲区 (所有者履歴) が含まれます。分筆・合筆・相続・売買等で複数の履歴がある場合、下線=抹消 されているものを除外し、現在有効な最新のものを採用してください。'
+      ? '添付 PDF は「所有者事項」証明書 (¥140 の簡易版) です。所有者一覧のみ含まれ、地目・地積の情報はありません (area_sqm, land_category, display_histories は null / 空配列 で返す)。'
+      : '添付 PDF は「全部事項証明書」(¥334 の詳細版) です。表題部 (所在・地番・地目・地積・表示欄) と 甲区 (所有者履歴) が含まれます。分筆・合筆・相続・売買等で複数の履歴がある場合、下線=抹消 されているものを除外し、現在有効な最新のものを採用してください。'
 
   return `${kindText}
 
-extract_registry ツールで、現在有効な登記情報を抽出してください。${hintText}
+extract_registry ツールで、現在有効な登記情報 + 表題部 の 表示欄 (土地の沿革) を抽出してください。${hintText}
 
 重要:
-- 下線 (=抹消) された情報は除外する
+- owners / 現在値 (land_category, area_sqm): 下線 (=抹消) された情報は除外し、現在 有効 な もの のみ
+- display_histories: 表題部 の 「表示欄」 (= 土地の沿革) に 書かれて いる 分筆・合筆・地目変更・地積更正 等 の 履歴 を 時系列 で **全件** 返す (下線 の 抹消 行 も 含めて 歴史 と して 残す)
 - 共有登記の場合、owners に全員を含める (share も設定)
 - 会社所有の場合、name に法人格を含めた正式名称 (例: 「株式会社元木金物店」)
 - 氏名や住所の全角スペースは詰める`
@@ -247,6 +303,29 @@ function normalizeExtracted(raw: Record<string, unknown>): Extracted {
       if (typeof w === 'string') warnings.push(w)
     }
   }
+  const display_histories: ExtractedDisplayHistory[] = []
+  if (Array.isArray(raw.display_histories)) {
+    let implicitOrder = 0
+    for (const h of raw.display_histories) {
+      if (!h || typeof h !== 'object') continue
+      const hh = h as Record<string, unknown>
+      implicitOrder += 1
+      const order_no =
+        typeof hh.order_no === 'number' && Number.isFinite(hh.order_no)
+          ? hh.order_no
+          : implicitOrder
+      const strOrNull = (v: unknown): string | null =>
+        typeof v === 'string' && v.trim() !== '' ? v.trim() : null
+      display_histories.push({
+        order_no,
+        parcel_number: strOrNull(hh.parcel_number),
+        land_category: strOrNull(hh.land_category),
+        area_text: strOrNull(hh.area_text),
+        reason: strOrNull(hh.reason),
+        cause_date: strOrNull(hh.cause_date),
+      })
+    }
+  }
   return {
     location: typeof raw.location === 'string' ? raw.location.trim() : null,
     parcel_number:
@@ -258,6 +337,7 @@ function normalizeExtracted(raw: Record<string, unknown>): Extracted {
         ? raw.area_sqm
         : null,
     owners,
+    display_histories,
     confidence:
       typeof raw.confidence === 'number' && Number.isFinite(raw.confidence)
         ? Math.max(0, Math.min(1, raw.confidence))

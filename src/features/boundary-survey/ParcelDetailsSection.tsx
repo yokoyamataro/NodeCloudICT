@@ -11,16 +11,16 @@
 // blur で parcelStore.upsertParcel を 呼んで 保存。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Upload } from 'lucide-react'
+import { Loader2, Upload, FileText } from 'lucide-react'
 import type { ParcelEditableFields } from '@/stores/parcelStore'
 import type { Parcel } from '@/types/database'
 import { LAND_CATEGORIES } from '@/lib/landCategory'
 import { useLandownerStore } from '@/stores/landownerStore'
 import { useLandHistoryStore, formatLandHistoryLine, EMPTY_LAND_HISTORY } from '@/stores/landHistoryStore'
-import { parseRegistryPdfViaAI } from '@/lib/registryPdf'
 import { useAttachmentStore } from '@/stores/attachmentStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { REGISTRY_PDF_CATEGORY } from './RegistryPdfImportModal'
+import { RegistryPdfViewerModal } from './RegistryPdfViewerModal'
 
 interface Props {
   workAreaId: string
@@ -82,60 +82,48 @@ export function ParcelDetailsSection({ workAreaId: _workAreaId, parcel, onPatch,
     parcel ? s.byParcelId.get(parcel.id) ?? EMPTY_LAND_HISTORY : EMPTY_LAND_HISTORY,
   )
 
-  // 登記 PDF の 1 件 アップロード + AI 解析。 全部事項 の 想定 で kind='full'。
-  // ParcelDetailsSection は 1 筆 だけ 相手 に する の で、 bulk 画面 (RegistryPdfImportModal)
-  // より 単純。 解析後 は 現在 の 地番 の parcel を 直接 上書き。
+  // 登記 PDF の 1 件 アップロード。 AI 解析 は 行わない (ユーザー が 「登記情報表示」
+  // → ビューア の 「AI 解析」 ボタン を 押した 時 に 解析)。
   const uploadFile = useAttachmentStore((s) => s.uploadFile)
   const projectId = useFarmStore((s) => s.currentFarm?.project_id ?? null)
   const pdfInputRef = useRef<HTMLInputElement | null>(null)
   const [registryUploading, setRegistryUploading] = useState(false)
   const [registryMessage, setRegistryMessage] = useState<string | null>(null)
+  // 「登記情報表示」 で 開く PDF ビューア
+  const [showViewer, setShowViewer] = useState(false)
+
+  // この 筆 に 登録済 の 登記 PDF 数 (= 「登記情報表示」 ボタン の バッジ)
+  const attachmentsByEntity = useAttachmentStore((s) => s.byEntity)
+  const pdfCount = useMemo(() => {
+    const key = `work_area:${_workAreaId}`
+    const list = attachmentsByEntity.get(key) ?? []
+    return list.filter((a) => a.category === REGISTRY_PDF_CATEGORY).length
+  }, [attachmentsByEntity, _workAreaId])
+
   const handleRegistryPdf = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file || !parcel) return
+    if (!projectId) {
+      setRegistryMessage('プロジェクト が 未選択 の ため アップロード でき ません')
+      return
+    }
     setRegistryUploading(true)
     setRegistryMessage(null)
     try {
-      const parsed = await parseRegistryPdfViaAI(file, 'full', {
-        location: parcel.location,
-        parcel_number: parcel.parcel_number,
+      const uploaded = await uploadFile({
+        projectId,
+        entityType: 'work_area',
+        entityId: _workAreaId,
+        file,
+        category: REGISTRY_PDF_CATEGORY,
+        fileName: file.name,
+        caption: file.name,
       })
-      const patch: Partial<ParcelEditableFields> = {}
-      if (parsed.location && !parcel.location) patch.location = parsed.location
-      if (parsed.parcelNumber && !parcel.parcel_number) patch.parcel_number = parsed.parcelNumber
-      if (parsed.landCategory) patch.registered_land_category = parsed.landCategory
-      if (parsed.areaSqm != null) patch.registered_area_sqm = parsed.areaSqm
-      if (parsed.owners.length > 0) {
-        patch.registered_owner_name = parsed.owners[0].fullName
-        patch.registered_owner_address = parsed.owners[0].address
-      }
-      if (Object.keys(patch).length > 0) {
-        commit(patch)
-        // ローカル state も 即 反映 (親 からの 再 sync を 待たず に 画面 を 新しく)
-        if (patch.registered_land_category !== undefined) setRegCategory(patch.registered_land_category ?? '')
-        if (patch.registered_area_sqm !== undefined) setRegArea(numStr(patch.registered_area_sqm))
-        if (patch.registered_owner_name !== undefined) setOwnerName(patch.registered_owner_name ?? '')
-        if (patch.registered_owner_address !== undefined) setOwnerAddr(patch.registered_owner_address ?? '')
-        if (patch.location !== undefined) setLocation(patch.location ?? '')
-        if (patch.parcel_number !== undefined) setParcelNumber(patch.parcel_number ?? '')
-      }
-      // 原本 PDF を attachments に 保管 (後 で ダウンロード 可能)
-      if (projectId) {
-        await uploadFile({
-          projectId,
-          entityType: 'work_area',
-          entityId: _workAreaId,
-          file,
-          category: REGISTRY_PDF_CATEGORY,
-          fileName: file.name,
-          caption: file.name,
-        })
-      }
-      const extras = parsed.warnings.length > 0 ? ` / 警告: ${parsed.warnings.join(', ')}` : ''
-      setRegistryMessage(
-        `取込 完了 (信頼度 ${(parsed.confidence * 100).toFixed(0)}%)${extras}`,
-      )
+      if (!uploaded) throw new Error('アップロード 失敗')
+      setRegistryMessage(`アップロード 完了: ${file.name}`)
+      // 自動 で ビューア を 開く (ユーザー が すぐ AI 解析 ボタン を 押せる よう)
+      setShowViewer(true)
     } catch (err) {
       setRegistryMessage(
         `取込 失敗: ${err instanceof Error ? err.message : String(err)}`,
@@ -222,9 +210,11 @@ export function ParcelDetailsSection({ workAreaId: _workAreaId, parcel, onPatch,
         />
       </div>
 
-      {/* 登記 PDF を 1 件 アップロード → AI で 解析 → 下 の 登記 セクション を 自動 入力 */}
-      {!readOnly && parcel && (
-        <div className="flex items-center gap-2">
+      {/* 登記情報 の 取込 / 表示。
+          取込: PDF を アップロード (AI 解析 は しない)。 自動 で ビューア が 開く。
+          表示: ビューア を 開き、 「AI 解析」 ボタン で 地目 / 地積 / 所有者 / 土地の沿革 を 反映。 */}
+      {parcel && (
+        <div className="flex items-center gap-2 flex-wrap">
           <input
             ref={pdfInputRef}
             type="file"
@@ -232,29 +222,46 @@ export function ParcelDetailsSection({ workAreaId: _workAreaId, parcel, onPatch,
             onChange={handleRegistryPdf}
             className="hidden"
           />
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => pdfInputRef.current?.click()}
+              disabled={registryUploading}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs border border-blue-300 text-blue-700 rounded hover:bg-blue-50 disabled:opacity-50"
+              title="登記情報 PDF を 1 件 アップロード"
+            >
+              {registryUploading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  取込中…
+                </>
+              ) : (
+                <>
+                  <Upload className="h-3.5 w-3.5" />
+                  登記情報取込
+                </>
+              )}
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => pdfInputRef.current?.click()}
-            disabled={registryUploading}
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs border border-blue-300 text-blue-700 rounded hover:bg-blue-50 disabled:opacity-50"
-            title="登記情報 PDF を 1 件 アップロード して AI で 地目 / 地積 / 所有者 を 読み取る"
+            onClick={() => setShowViewer(true)}
+            disabled={pdfCount === 0}
+            className="inline-flex items-center gap-1 px-2 py-1 text-xs border border-blue-300 text-blue-700 rounded hover:bg-blue-50 disabled:opacity-40"
+            title={
+              pdfCount === 0
+                ? '登記 PDF が ありません'
+                : 'アップロード 済 の 登記 PDF を 表示 (AI 解析 可)'
+            }
           >
-            {registryUploading ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                解析中…
-              </>
-            ) : (
-              <>
-                <Upload className="h-3.5 w-3.5" />
-                登記PDF取込 (AI)
-              </>
-            )}
+            <FileText className="h-3.5 w-3.5" />
+            登記情報表示
+            {pdfCount > 0 && <span className="text-slate-500">({pdfCount})</span>}
           </button>
           {registryMessage && (
             <span
-              className={`text-[11px] truncate ${
-                registryMessage.startsWith('取込 完了')
+              className={`text-[11px] truncate flex-1 ${
+                registryMessage.startsWith('アップロード 完了')
                   ? 'text-emerald-700'
                   : 'text-red-600'
               }`}
@@ -264,6 +271,17 @@ export function ParcelDetailsSection({ workAreaId: _workAreaId, parcel, onPatch,
             </span>
           )}
         </div>
+      )}
+
+      {/* PDF ビューア + AI 解析 モーダル */}
+      {showViewer && parcel && (
+        <RegistryPdfViewerModal
+          workAreaId={_workAreaId}
+          parcelId={parcel.id}
+          parcelNumber={parcel.parcel_number}
+          location={parcel.location}
+          onClose={() => setShowViewer(false)}
+        />
       )}
 
       {/* 登記 (登記簿・登記CSV の 値) */}

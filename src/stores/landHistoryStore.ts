@@ -26,12 +26,23 @@ export interface LandHistoryRow {
   cause_date: string | null
 }
 
+export interface LandHistoryInput {
+  order_no: number
+  parcel_number: string | null
+  land_category: string | null
+  area_text: string | null
+  reason: string | null
+  cause_date: string | null
+}
+
 interface State {
   loadedFarmId: string | null
   /** parcel_id → order_no 昇順 の 履歴 行 */
   byParcelId: Map<string, LandHistoryRow[]>
   loading: boolean
   fetchByParcelIds: (farmId: string, parcelIds: string[]) => Promise<void>
+  /** 既存 を 全消去 して 入れ替える (AI 解析 結果 を 反映 する 用途) */
+  replaceForParcel: (parcelId: string, rows: LandHistoryInput[]) => Promise<void>
   clear: () => void
 }
 
@@ -72,6 +83,44 @@ export const useLandHistoryStore = create<State>((set, get) => ({
     } catch (err) {
       console.error('[landHistoryStore] fetch failed', err)
       set({ loading: false })
+    }
+  },
+
+  replaceForParcel: async (parcelId, rows) => {
+    // 既存 の 履歴 を 全消去 → 新しい 行 を insert → ローカル state 更新
+    try {
+      const { error: delErr } = await supabase
+        .from('parcel_display_histories')
+        .delete()
+        .eq('parcel_id', parcelId)
+      if (delErr) throw delErr
+      let saved: LandHistoryRow[] = []
+      if (rows.length > 0) {
+        const payload = rows.map((r) => ({
+          parcel_id: parcelId,
+          order_no: r.order_no,
+          parcel_number: r.parcel_number,
+          land_category: r.land_category,
+          area_text: r.area_text,
+          reason: r.reason,
+          cause_date: r.cause_date,
+        }))
+        const { data, error } = await supabase
+          .from('parcel_display_histories')
+          .insert(payload as never)
+          .select('id, parcel_id, order_no, parcel_number, land_category, area_text, reason, cause_date')
+          .order('order_no')
+        if (error) throw error
+        saved = (data ?? []) as LandHistoryRow[]
+      }
+      set((state) => {
+        const next = new Map(state.byParcelId)
+        next.set(parcelId, saved)
+        return { byParcelId: next }
+      })
+    } catch (err) {
+      console.error('[landHistoryStore] replaceForParcel failed', err)
+      throw err
     }
   },
 
