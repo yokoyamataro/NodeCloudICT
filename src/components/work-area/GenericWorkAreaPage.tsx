@@ -67,6 +67,7 @@ import {
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { useParcelViewsStore } from '@/stores/parcelViewsStore'
 import { touchParcelView } from '@/lib/parcelViews'
+import { useLandHistoryStore } from '@/stores/landHistoryStore'
 
 // メイン工事区域ページコンポーネント
 interface GenericWorkAreaPageProps {
@@ -458,7 +459,8 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
   }, [isBoundarySurvey, areas.map((a) => a.id).join(','), fetchParcels])
 
   // 地籍モード: 各 work_area の 閲覧履歴 (parcel_views) を 一括 取得。
-  // 「表示履歴」 列 で 最終 閲覧者・時刻 を 出す ため。
+  // 現在 「土地の沿革」 列 は 登記 表示事項 を 出す ので ここ の データ は UI には
+  // 使わない が、 touchParcelView の 楽観更新 用 に ストア は 残して いる。
   const fetchParcelViews = useParcelViewsStore((s) => s.fetchForWorkAreas)
   const clearParcelViews = useParcelViewsStore((s) => s.clear)
   const bumpParcelView = useParcelViewsStore((s) => s.bumpLocal)
@@ -471,6 +473,26 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
     void fetchParcelViews(farmId, areas.map((a) => a.id))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBoundarySurvey, farmId, areas.map((a) => a.id).join(',')])
+
+  // 地籍モード: 土地の沿革 (parcel_display_histories) を 工区 単位 で 一括 取得。
+  // 「土地の沿革」 列 と 右パネル 「地番情報」 の 沿革 セクション で 使う。
+  const parcelByWorkAreaIdForHistory = useParcelStore((s) => s.byWorkAreaId)
+  const fetchLandHistory = useLandHistoryStore((s) => s.fetchByParcelIds)
+  const clearLandHistory = useLandHistoryStore((s) => s.clear)
+  useEffect(() => {
+    if (!isBoundarySurvey || !farmId) {
+      clearLandHistory()
+      return
+    }
+    const pids: string[] = []
+    for (const a of areas) {
+      const p = parcelByWorkAreaIdForHistory.get(a.id)
+      if (p) pids.push(p.id)
+    }
+    if (pids.length === 0) return
+    void fetchLandHistory(farmId, pids)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBoundarySurvey, farmId, areas.map((a) => a.id).join(','), parcelByWorkAreaIdForHistory])
 
   // 地籍モード: 各 work_area に紐づく添付ファイル（登記 PDF など）を一括取得。
   // 行頭の「登記PDFを開く」ボタンの表示判定に使う。
@@ -1575,16 +1597,35 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                     '地番'
                   : '地番'}
               </span>
-              {isEditingCurrent && (
-                <button
-                  type="button"
-                  onClick={finishEditingArea}
-                  className="ml-auto shrink-0 px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
-                  title="構成点の編集を終える (Enter)"
-                >
-                  確定
-                </button>
-              )}
+              <div className="ml-auto flex items-center gap-1 shrink-0">
+                {isEditingCurrent && (
+                  <button
+                    type="button"
+                    onClick={finishEditingArea}
+                    className="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+                    title="構成点の編集を終える (Enter)"
+                  >
+                    確定
+                  </button>
+                )}
+                {isBoundarySurvey && !readOnly && !isEditingCurrent && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const newArea = await addWorkArea('boundary_survey')
+                      if (newArea) {
+                        await upsertParcel(newArea.id, { parcel_number: '' })
+                        setSelectedAreaId(newArea.id)
+                      }
+                    }}
+                    title="新規 地番 を 1 件 追加"
+                    className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90"
+                  >
+                    <Plus className="h-3 w-3" />
+                    新地番
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* 地番 が 選ばれて いない = 案内 */}
