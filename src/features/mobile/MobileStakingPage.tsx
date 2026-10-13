@@ -2413,6 +2413,13 @@ export function MobileStakingPage() {
   }, [parcelsByWorkAreaId, workAreasAll])
   // 取込済 ポリゴン を タップ した 時 に 出す popup 用 の 詳細 情報
   // (登記地目 / 登記地積 / 変更地目 / 変更地積 / 登記所有者氏名)
+  //
+  // キー 揃え の 都合 で 2 系統 の 索引 を 作る:
+  //   (a) parcels.location + parcel_number ("光陽町|12-22")
+  //   (b) 空 location + parcel_number ("|12-22") — JPGIS XML 由来 の feature は
+  //       location が null なの で、 こちら で も 引ける よう に 二重 登録
+  //   (c) 空 location + work_area.name / zoneNumber — 法務省地図 以外 で 作られた
+  //       work_area で も 情報 を 引ける よう に
   const importedParcelInfo = useMemo(() => {
     const m = new Map<
       string,
@@ -2426,17 +2433,34 @@ export function MobileStakingPage() {
     >()
     for (const p of parcelsByWorkAreaId.values()) {
       if (!p.parcel_number) continue
-      const key = `${p.location ?? ''}|${p.parcel_number}`
-      m.set(key, {
+      const info = {
         registeredLandCategory: p.registered_land_category ?? null,
         registeredAreaSqm: p.registered_area_sqm ?? null,
         updatedLandCategory: p.updated_land_category ?? null,
         updatedAreaSqm: p.updated_area_sqm ?? null,
         ownerName: p.registered_owner_name ?? null,
-      })
+      }
+      m.set(`${p.location ?? ''}|${p.parcel_number}`, info)
+      // 空 location キー に も 同じ 情報 を 入れる (feature.location が null の 場合 の 救済)
+      if (p.location) m.set(`|${p.parcel_number}`, info)
+    }
+    // 法務省地図 以外 由来 の work_area (areas) の 名前 でも 引ける よう に
+    const areas = workAreasAll['boundary_survey'] ?? []
+    for (const a of areas) {
+      const parcel = parcelsByWorkAreaId.get(a.id)
+      if (!parcel) continue
+      const info = {
+        registeredLandCategory: parcel.registered_land_category ?? null,
+        registeredAreaSqm: parcel.registered_area_sqm ?? null,
+        updatedLandCategory: parcel.updated_land_category ?? null,
+        updatedAreaSqm: parcel.updated_area_sqm ?? null,
+        ownerName: parcel.registered_owner_name ?? null,
+      }
+      if (a.name) m.set(`|${a.name}`, info)
+      if (a.zoneNumber && a.zoneNumber !== a.name) m.set(`|${a.zoneNumber}`, info)
     }
     return m
-  }, [parcelsByWorkAreaId])
+  }, [parcelsByWorkAreaId, workAreasAll])
   const handleImportParcelBatch = async (
     features: Feature<GeoJsonPolygon, ParcelFeatureProperties>[],
   ) => {

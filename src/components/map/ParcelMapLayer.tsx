@@ -681,7 +681,11 @@ function GeoJsonInner({
       const isImported = !!importedParcelKeys?.has(key)
       // 取込済 なら 現場 の parcels DB の 値 を 使う。 未取込 は GeoJSON feature の
       // 元 データ (登記地積 / 所有者) だけ 使う。
-      const info = isImported ? importedParcelInfo?.get(key) ?? null : null
+      // key は "所在|地番" 形式。 所在 null の feature に 救済 と して "|地番" でも 試す。
+      const fallbackKey = `|${props.parcel_number}`
+      const info = isImported
+        ? importedParcelInfo?.get(key) ?? importedParcelInfo?.get(fallbackKey) ?? null
+        : null
       const registeredLandCategory = info?.registeredLandCategory ?? null
       const registeredAreaSqm = info?.registeredAreaSqm ?? props.registered_area_sqm
       const updatedLandCategory = info?.updatedLandCategory ?? null
