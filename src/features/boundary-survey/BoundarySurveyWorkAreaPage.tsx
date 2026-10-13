@@ -14,7 +14,8 @@ import {
   ChevronDown,
   Palette,
 } from 'lucide-react'
-import { GenericWorkAreaPage } from '@/components/work-area/GenericWorkAreaPage'
+import { GenericWorkAreaPage, ParcelMapClickContext } from '@/components/work-area/GenericWorkAreaPage'
+import { useContext } from 'react'
 import { CadastralCsvExportModal } from './CadastralCsvExportModal'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -1008,7 +1009,7 @@ export function BoundarySurveyWorkAreaPage({
         }
         mapChildren={
           hasActiveDataset ? (
-            <ParcelMapLayer
+            <BoundaryParcelMapLayer
               visible={showParcelLayer}
               bbox={effectiveParcelBbox}
               importedParcelKeys={importedParcelKeys}
@@ -1131,4 +1132,14 @@ export function BoundarySurveyWorkAreaPage({
       />
     </>
   )
+}
+
+/**
+ * ParcelMapLayer を GenericWorkAreaPage の ParcelMapClickContext に 繋ぎ こむ
+ * 薄い ラッパー。 PC (このページ) では 取込済 ポリゴン を クリック したら
+ * 右パネル の 地番 を 選択 する コンテキスト 経由 の コールバック を 渡す。
+ */
+function BoundaryParcelMapLayer(props: React.ComponentProps<typeof ParcelMapLayer>) {
+  const onImportedPolygonClick = useContext(ParcelMapClickContext) ?? undefined
+  return <ParcelMapLayer {...props} onImportedPolygonClick={onImportedPolygonClick} />
 }

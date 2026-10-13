@@ -72,6 +72,10 @@ interface Props {
   selectedKeys?: Set<string>
   /** 選択トグル (selectionMode=true で polygon クリック時、または popup ボタン) */
   onToggleSelect?: (feature: Feature<Polygon, ParcelFeatureProperties>) => void
+  /** 取込済 ポリゴン を クリック した 時 の コールバック (PC 用途)。
+   *  指定 すると popup を 出さ ず これ を 呼ぶ (= 右パネル で 地番 を 選ぶ 等)。
+   *  未指定 なら 従来通り 情報 popup を 開く (モバイル 用途)。 */
+  onImportedPolygonClick?: (feature: Feature<Polygon, ParcelFeatureProperties>) => void
   /** true のとき polygon クリック = 即トグル (popup 非表示)。
    *  false のとき polygon クリック = 属性情報の popup を開く (読み取り専用) */
   selectionMode?: boolean
@@ -188,6 +192,7 @@ export function ParcelMapLayer({
   importedParcelInfo,
   selectedKeys,
   onToggleSelect,
+  onImportedPolygonClick,
   selectionMode = false,
   showLabels = true,
   disableClicks = false,
@@ -453,6 +458,7 @@ export function ParcelMapLayer({
         showLabels={showLabels}
         disableClicks={disableClicks}
         onLabelBindProgress={setLabelBindProgress}
+        onImportedPolygonClick={onImportedPolygonClick}
         onToggleSelect={
           onToggleSelect
             ? (feature) => {
@@ -478,6 +484,7 @@ function GeoJsonInner({
   importedParcelInfo,
   selectedKeys,
   onToggleSelect,
+  onImportedPolygonClick,
   selectionMode,
   showLabels,
   disableClicks,
@@ -498,6 +505,9 @@ function GeoJsonInner({
   >
   selectedKeys?: Set<string>
   onToggleSelect?: (feature: Feature<Polygon, ParcelFeatureProperties>) => void
+  onImportedPolygonClick?: (
+    feature: Feature<Polygon, ParcelFeatureProperties>,
+  ) => void
   selectionMode?: boolean
   showLabels: boolean
   disableClicks?: boolean
@@ -671,6 +681,16 @@ function GeoJsonInner({
   // クリック時のポップアップ (lazy 生成)。
   // - selectionMode=false: 属性表示のみの読み取り popup を開く。取込済みなら緑バッジ
   // - selectionMode=true : popup を開かず、そのまま onToggleSelect が呼ばれる (別ハンドラ)
+  // ペイント 描画 の pane (zIndex 500-650) より 上 に 出す ため の 専用 popup pane
+  // Leaflet の 既定 popupPane は 700 だが、 iOS で 稀に 描画 要素 の 下 に 入る 挙動
+  // が 報告 された の で 800 で 明示 的 に 上 に 置く
+  useEffect(() => {
+    if (!map.getPane('parcel-info-popup')) {
+      const p = map.createPane('parcel-info-popup')
+      p.style.zIndex = '800'
+    }
+  }, [map])
+
   const openInfoPopup = useCallback(
     (
       feature: Feature<Polygon, ParcelFeatureProperties>,
@@ -724,7 +744,10 @@ function GeoJsonInner({
           }
         </div>
       `
-      L.popup({ maxWidth: 320 }).setLatLng(latlng).setContent(container).openOn(map)
+      L.popup({ maxWidth: 320, pane: 'parcel-info-popup' })
+        .setLatLng(latlng)
+        .setContent(container)
+        .openOn(map)
     },
     [map, importedParcelKeys, importedParcelInfo],
   )
@@ -762,15 +785,19 @@ function GeoJsonInner({
           }
           const feature = layer?.feature
           if (!feature) return
-          // 取込済みは常に情報表示 (誤って再選択しないように)
           const isImported = !!importedParcelKeys?.has(
             parcelImportKey(feature.properties),
           )
+          if (isImported && onImportedPolygonClick) {
+            // PC: 取込済 ポリゴン を クリック したら 右パネル に 地番 を 選択 させる
+            onImportedPolygonClick(feature)
+            return
+          }
           if (selectionMode && !isImported && onToggleSelect) {
             // 選択モード: 即トグル (popup は開かない)
             onToggleSelect(feature)
           } else {
-            // 通常モード or 取込済み: 情報表示 popup
+            // モバイル or 取込前: 情報 popup
             openInfoPopup(feature, e.latlng)
           }
         },

@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useMemo, useRef } from 'react'
+import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react'
 import {
   Plus,
   Trash2,
@@ -68,6 +68,18 @@ import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { useParcelViewsStore } from '@/stores/parcelViewsStore'
 import { touchParcelView } from '@/lib/parcelViews'
 import { useLandHistoryStore } from '@/stores/landHistoryStore'
+import { calculateAreaByCoordinateMethod } from '@/lib/area-calculation'
+import type { Feature, Polygon } from 'geojson'
+import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
+
+// 法務省地図 の 取込済 ポリゴン を クリック した 時 に 右パネル で 対応 する
+// 筆 を 選択 する 処理 を、 consumer (BoundarySurveyWorkAreaPage の ParcelMapLayer)
+// から 呼べる よう に 公開 する コンテキスト。 PC では この callback を 使い、
+// モバイル は 未配線 なの で popup が 出る。
+export const ParcelMapClickContext = React.createContext<
+  | ((feature: Feature<Polygon, ParcelFeatureProperties>) => void)
+  | null
+>(null)
 
 // メイン工事区域ページコンポーネント
 interface GenericWorkAreaPageProps {
@@ -784,6 +796,40 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
       }
     },
     [isBoundarySurvey, bumpParcelView],
+  )
+
+  // 法務省地図 の 取込済 ポリゴン を クリック した 時 に、 そこ に 紐付く work_area を
+  // 右パネル に 選択 させる コールバック。 ParcelMapClickContext 経由 で mapChildren
+  // 内 の ParcelMapLayer に 渡す (= PC だけ の 挙動)。 モバイル は context 未設定 で
+  // ポリゴン情報 popup に なる。
+  const handleImportedParcelMapClick = useCallback(
+    (feature: Feature<Polygon, ParcelFeatureProperties>) => {
+      const key = `${feature.properties.location ?? ''}|${feature.properties.parcel_number}`
+      // 1) parcels.location + parcel_number で 一致 する parcel から work_area_id を 引く
+      for (const p of parcelByWorkAreaId.values()) {
+        if (!p.parcel_number) continue
+        if (`${p.location ?? ''}|${p.parcel_number}` === key) {
+          selectArea(p.work_area_id)
+          return
+        }
+      }
+      // 2) feature.location が null の 場合 の 救済 (parcel_number だけ で 突合)
+      for (const p of parcelByWorkAreaId.values()) {
+        if (!p.parcel_number) continue
+        if (p.parcel_number === feature.properties.parcel_number) {
+          selectArea(p.work_area_id)
+          return
+        }
+      }
+      // 3) parcel が 無い 場合 の work_area 直接 突合 (name / zoneNumber)
+      for (const a of areas) {
+        if (a.name === feature.properties.parcel_number || a.zoneNumber === feature.properties.parcel_number) {
+          selectArea(a.id)
+          return
+        }
+      }
+    },
+    [areas, parcelByWorkAreaId, selectArea],
   )
 
   /**
@@ -1515,11 +1561,17 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                 .map((p) => [p.lat as number, p.lng as number] as [number, number])}
               tick={zoomTick}
             />
-            {mapChildren}
-            {/* デフォルト法務省地図レイヤ (consumer が拡張版を渡す場合は suppress) */}
-            {hasActiveParcelDataset && showParcelMap && !suppressDefaultParcelMapLayer && (
-              <ParcelMapLayer visible={true} bbox={null} />
-            )}
+            <ParcelMapClickContext.Provider value={handleImportedParcelMapClick}>
+              {mapChildren}
+              {/* デフォルト法務省地図レイヤ (consumer が拡張版を渡す場合は suppress) */}
+              {hasActiveParcelDataset && showParcelMap && !suppressDefaultParcelMapLayer && (
+                <ParcelMapLayer
+                  visible={true}
+                  bbox={null}
+                  onImportedPolygonClick={handleImportedParcelMapClick}
+                />
+              )}
+            </ParcelMapClickContext.Provider>
           </CoordinateMap>
           {/* 地図左下: 法務省地図トグル (常時) + consumer の追加ボタン (地番データ取込 等)。
               右下は CoordinateMap 内 HUD の領域なので棲み分け。 */}
@@ -1884,6 +1936,26 @@ export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapB
                       <span className="font-medium">{kPerim?.toFixed(2)} m</span>
                     </div>
                   </div>
+                </div>
+              )
+            })()}
+
+            {/* 直角座標法面積 — 現在 の 構成点 から リアルタイム 計算 (小数点 7 位) */}
+            {(() => {
+              const validPts = currentAreaPoints.filter(
+                (p) => Number.isFinite(p.x) && Number.isFinite(p.y),
+              )
+              if (validPts.length < 3) return null
+              const result = calculateAreaByCoordinateMethod(
+                validPts.map((p) => ({ x: p.x, y: p.y, pointNumber: p.pointNumber })),
+              )
+              return (
+                <div className="mt-2 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs">
+                  <span className="text-muted-foreground">直角座標法面積:</span>{' '}
+                  <span className="font-medium font-mono">
+                    {result.areaSqm.toFixed(7)}
+                  </span>
+                  <span className="text-muted-foreground"> m²</span>
                 </div>
               )
             })()}
