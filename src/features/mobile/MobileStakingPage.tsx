@@ -2411,24 +2411,27 @@ export function MobileStakingPage() {
     }
     return s
   }, [parcelsByWorkAreaId, workAreasAll])
-  // 取込済 ポリゴン を タップ した 時 に 出す popup 用 の 詳細 情報 (地目 / 地積 / 所有者)
+  // 取込済 ポリゴン を タップ した 時 に 出す popup 用 の 詳細 情報
+  // (登記地目 / 登記地積 / 変更地目 / 変更地積 / 登記所有者氏名)
   const importedParcelInfo = useMemo(() => {
     const m = new Map<
       string,
-      { landCategory: string | null; areaSqm: number | null; ownerName: string | null }
+      {
+        registeredLandCategory: string | null
+        registeredAreaSqm: number | null
+        updatedLandCategory: string | null
+        updatedAreaSqm: number | null
+        ownerName: string | null
+      }
     >()
     for (const p of parcelsByWorkAreaId.values()) {
       if (!p.parcel_number) continue
       const key = `${p.location ?? ''}|${p.parcel_number}`
       m.set(key, {
-        // 確定地目 / 確定地積 が あれば それ を 優先、 なければ 登記値
-        landCategory: p.updated_land_category ?? p.registered_land_category ?? null,
-        areaSqm:
-          p.updated_area_sqm != null
-            ? p.updated_area_sqm
-            : p.registered_area_sqm != null
-              ? p.registered_area_sqm
-              : null,
+        registeredLandCategory: p.registered_land_category ?? null,
+        registeredAreaSqm: p.registered_area_sqm ?? null,
+        updatedLandCategory: p.updated_land_category ?? null,
+        updatedAreaSqm: p.updated_area_sqm ?? null,
         ownerName: p.registered_owner_name ?? null,
       })
     }

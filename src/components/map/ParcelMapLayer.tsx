@@ -56,13 +56,15 @@ interface Props {
   bbox: Bbox | null
   /** 取込済の "所在|地番" 複合キー集合。所在の異なる同名地番を別物として扱う */
   importedParcelKeys?: Set<string>
-  /** 取込済 地番 の 詳細 情報 ルックアップ。 popup 表示 時 に 地目 / 地積 / 所有者 を 引く。
+  /** 取込済 地番 の 詳細 情報 ルックアップ。 popup 表示 時 に 登記 / 変更 を 引く。
    *  key は importedParcelKeys と 同じ "所在|地番" 形式。 */
   importedParcelInfo?: Map<
     string,
     {
-      landCategory: string | null
-      areaSqm: number | null
+      registeredLandCategory: string | null
+      registeredAreaSqm: number | null
+      updatedLandCategory: string | null
+      updatedAreaSqm: number | null
       ownerName: string | null
     }
   >
@@ -487,8 +489,10 @@ function GeoJsonInner({
   importedParcelInfo?: Map<
     string,
     {
-      landCategory: string | null
-      areaSqm: number | null
+      registeredLandCategory: string | null
+      registeredAreaSqm: number | null
+      updatedLandCategory: string | null
+      updatedAreaSqm: number | null
       ownerName: string | null
     }
   >
@@ -675,17 +679,27 @@ function GeoJsonInner({
       const props = feature.properties
       const key = parcelImportKey(props)
       const isImported = !!importedParcelKeys?.has(key)
-      // 取込済 なら 現場 の parcels DB の 値 を 優先 (地目 / 地積 / 所有者)。
-      // 未取込 は GeoJSON feature の props だけ 使う (地目 は 元 データ に 無い ので
-      // 空欄 の まま)。
+      // 取込済 なら 現場 の parcels DB の 値 を 使う。 未取込 は GeoJSON feature の
+      // 元 データ (登記地積 / 所有者) だけ 使う。
       const info = isImported ? importedParcelInfo?.get(key) ?? null : null
-      const landCategory = info?.landCategory ?? null
-      const areaSqm = info?.areaSqm ?? props.registered_area_sqm
+      const registeredLandCategory = info?.registeredLandCategory ?? null
+      const registeredAreaSqm = info?.registeredAreaSqm ?? props.registered_area_sqm
+      const updatedLandCategory = info?.updatedLandCategory ?? null
+      const updatedAreaSqm = info?.updatedAreaSqm ?? null
       const ownerName = info?.ownerName ?? props.owner_name
+      const fieldRow = (label: string, value: string | null, unit?: string) => {
+        if (value) {
+          return `<div><span style="color:#64748b;">${label}:</span> ${escapeHtml(value)}${unit ?? ''}</div>`
+        }
+        if (isImported) {
+          return `<div><span style="color:#64748b;">${label}:</span> <span style="color:#94a3b8;">未入力</span></div>`
+        }
+        return ''
+      }
       const container = document.createElement('div')
-      container.style.minWidth = '220px'
+      container.style.minWidth = '240px'
       container.innerHTML = `
-        <div style="font-size:12px;line-height:1.5;">
+        <div style="font-size:12px;line-height:1.55;">
           <div style="font-weight:600;font-size:13px;margin-bottom:4px;">
             地番 ${escapeHtml(props.parcel_number || '(不明)')}
           </div>
@@ -694,27 +708,11 @@ function GeoJsonInner({
               ? `<div><span style="color:#64748b;">所在:</span> ${escapeHtml(props.location)}</div>`
               : ''
           }
-          ${
-            landCategory
-              ? `<div><span style="color:#64748b;">地目:</span> ${escapeHtml(landCategory)}</div>`
-              : isImported
-                ? `<div><span style="color:#64748b;">地目:</span> <span style="color:#94a3b8;">未入力</span></div>`
-                : ''
-          }
-          ${
-            areaSqm != null
-              ? `<div><span style="color:#64748b;">地積:</span> ${areaSqm.toLocaleString()} m²</div>`
-              : isImported
-                ? `<div><span style="color:#64748b;">地積:</span> <span style="color:#94a3b8;">未入力</span></div>`
-                : ''
-          }
-          ${
-            ownerName
-              ? `<div><span style="color:#64748b;">所有者:</span> ${escapeHtml(ownerName)}</div>`
-              : isImported
-                ? `<div><span style="color:#64748b;">所有者:</span> <span style="color:#94a3b8;">未入力</span></div>`
-                : ''
-          }
+          ${fieldRow('登記地目', registeredLandCategory)}
+          ${fieldRow('登記地積', registeredAreaSqm != null ? registeredAreaSqm.toLocaleString() : null, ' m²')}
+          ${fieldRow('変更地目', updatedLandCategory)}
+          ${fieldRow('変更地積', updatedAreaSqm != null ? updatedAreaSqm.toLocaleString() : null, ' m²')}
+          ${fieldRow('登記所有者氏名', ownerName)}
           ${
             !isImported
               ? `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#f1f5f9;color:#64748b;font-size:11px;text-align:center;">「地番データ取込」を押してから選択してください</div>`
@@ -722,7 +720,7 @@ function GeoJsonInner({
           }
         </div>
       `
-      L.popup({ maxWidth: 300 }).setLatLng(latlng).setContent(container).openOn(map)
+      L.popup({ maxWidth: 320 }).setLatLng(latlng).setContent(container).openOn(map)
     },
     [map, importedParcelKeys, importedParcelInfo],
   )
