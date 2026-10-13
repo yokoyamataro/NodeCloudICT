@@ -56,6 +56,16 @@ interface Props {
   bbox: Bbox | null
   /** 取込済の "所在|地番" 複合キー集合。所在の異なる同名地番を別物として扱う */
   importedParcelKeys?: Set<string>
+  /** 取込済 地番 の 詳細 情報 ルックアップ。 popup 表示 時 に 地目 / 地積 / 所有者 を 引く。
+   *  key は importedParcelKeys と 同じ "所在|地番" 形式。 */
+  importedParcelInfo?: Map<
+    string,
+    {
+      landCategory: string | null
+      areaSqm: number | null
+      ownerName: string | null
+    }
+  >
   /** 選択中の feature キー集合 (parcelFeatureKey で作る) */
   selectedKeys?: Set<string>
   /** 選択トグル (selectionMode=true で polygon クリック時、または popup ボタン) */
@@ -173,12 +183,17 @@ export function ParcelMapLayer({
   visible,
   bbox,
   importedParcelKeys,
+  importedParcelInfo,
   selectedKeys,
   onToggleSelect,
   selectionMode = false,
   showLabels = true,
   disableClicks = false,
 }: Props) {
+  // 取込済 の 地番 が ある なら、 「法務省地図」 トグル OFF でも その 筆 だけ は 表示 する
+  // (ユーザー 要望: 取込済 ポリゴン を 常時 表示)
+  const hasImported = (importedParcelKeys?.size ?? 0) > 0
+  const effectiveVisible = visible || hasImported
   const map = useMap()
   const datasets = useParcelMapDatasetStore((s) => s.datasets)
   const cache = useParcelMapDatasetStore((s) => s.geoJsonCache)
@@ -206,7 +221,7 @@ export function ParcelMapLayer({
   // viewport がそのバッファ内に収まっている間は state を更新しない
   // (= filteredFc の再計算と <GeoJSON> の remount を抑制する)。
   useEffect(() => {
-    if (!visible || zoomHidden) {
+    if (!effectiveVisible || zoomHidden) {
       setViewportBbox(null)
       return
     }
@@ -242,7 +257,7 @@ export function ParcelMapLayer({
       if (t) clearTimeout(t)
       map.off('moveend', debounced)
     }
-  }, [map, visible, bbox, zoomHidden])
+  }, [map, effectiveVisible, bbox, zoomHidden])
 
   const effectiveBbox = bbox ?? viewportBbox
 
@@ -252,12 +267,12 @@ export function ParcelMapLayer({
   // 100ms 遅延を入れて先に UI (「地番マップ読込中…」インジケータ等) を描画させる。
   // これで toggle 直後の 1 フレーム目でスピナが出てから DL / パースが始まる。
   useEffect(() => {
-    if (!visible || !effectiveBbox) return
+    if (!effectiveVisible || !effectiveBbox) return
     const t = setTimeout(() => {
       void ensureLoadedForBbox(effectiveBbox)
     }, 100)
     return () => clearTimeout(t)
-  }, [visible, effectiveBbox, ensureLoadedForBbox, datasets])
+  }, [effectiveVisible, effectiveBbox, ensureLoadedForBbox, datasets])
 
   // bbox に交差する active dataset のうち、cache に載っているものの feature を合体
   const filteredFc = useMemo((): ParcelFeatureCollection | null => {
@@ -335,7 +350,7 @@ export function ParcelMapLayer({
   useEffect(() => {
     const container = map.getContainer()
     const update = () => {
-      if (!visible || !showLabels) {
+      if (!effectiveVisible || !showLabels) {
         container.classList.remove('parcel-labels-visible')
         return
       }
@@ -351,7 +366,7 @@ export function ParcelMapLayer({
       map.off('zoomend', update)
       container.classList.remove('parcel-labels-visible')
     }
-  }, [map, visible, showLabels])
+  }, [map, effectiveVisible, showLabels])
 
   // 地番名ラベルのバインド進捗 ({done, total} または null)。バインド中は
   // インジケータを「地番名 X/Y 適用中…」表示にする。
@@ -377,7 +392,7 @@ export function ParcelMapLayer({
   // 差替え待ち (renderPending) 中 or 地番名バインド中に、地図右上に固定表示する。
   // 地図操作は塞がない (pointer-events-none)。
   const showLoadingIndicator =
-    visible &&
+    effectiveVisible &&
     !zoomHidden &&
     (loadingIds.size > 0 ||
       renderPending ||
@@ -405,7 +420,21 @@ export function ParcelMapLayer({
       )
     : null
 
-  if (!visible || zoomHidden || !displayFc) {
+  if (!effectiveVisible || zoomHidden || !displayFc) {
+    return <>{indicator}</>
+  }
+
+  // visible=false (トグル OFF) で も hasImported なら 取込済 の feature だけ 描画 する。
+  // visible=true の 時 は 全部 の feature を 描画 (従来 挙動)。
+  const renderFc: ParcelFeatureCollection = visible
+    ? displayFc
+    : {
+        type: 'FeatureCollection',
+        features: displayFc.features.filter((f) =>
+          importedParcelKeys?.has(parcelImportKey(f.properties)),
+        ),
+      }
+  if (renderFc.features.length === 0) {
     return <>{indicator}</>
   }
 
@@ -413,9 +442,10 @@ export function ParcelMapLayer({
     <>
       {indicator}
       <GeoJsonInner
-        data={displayFc}
+        data={renderFc}
         renderer={renderer}
         importedParcelKeys={importedParcelKeys}
+        importedParcelInfo={importedParcelInfo}
         selectedKeys={selectedKeys}
         selectionMode={selectionMode}
         showLabels={showLabels}
@@ -443,6 +473,7 @@ function GeoJsonInner({
   data,
   renderer,
   importedParcelKeys,
+  importedParcelInfo,
   selectedKeys,
   onToggleSelect,
   selectionMode,
@@ -453,6 +484,14 @@ function GeoJsonInner({
   data: ParcelFeatureCollection
   renderer: L.Renderer
   importedParcelKeys?: Set<string>
+  importedParcelInfo?: Map<
+    string,
+    {
+      landCategory: string | null
+      areaSqm: number | null
+      ownerName: string | null
+    }
+  >
   selectedKeys?: Set<string>
   onToggleSelect?: (feature: Feature<Polygon, ParcelFeatureProperties>) => void
   selectionMode?: boolean
@@ -634,42 +673,58 @@ function GeoJsonInner({
       latlng: L.LatLng,
     ) => {
       const props = feature.properties
-      const isImported = !!importedParcelKeys?.has(parcelImportKey(props))
+      const key = parcelImportKey(props)
+      const isImported = !!importedParcelKeys?.has(key)
+      // 取込済 なら 現場 の parcels DB の 値 を 優先 (地目 / 地積 / 所有者)。
+      // 未取込 は GeoJSON feature の props だけ 使う (地目 は 元 データ に 無い ので
+      // 空欄 の まま)。
+      const info = isImported ? importedParcelInfo?.get(key) ?? null : null
+      const landCategory = info?.landCategory ?? null
+      const areaSqm = info?.areaSqm ?? props.registered_area_sqm
+      const ownerName = info?.ownerName ?? props.owner_name
       const container = document.createElement('div')
-      container.style.minWidth = '200px'
+      container.style.minWidth = '220px'
       container.innerHTML = `
-        <div style="font-size:12px;line-height:1.4;">
+        <div style="font-size:12px;line-height:1.5;">
           <div style="font-weight:600;font-size:13px;margin-bottom:4px;">
             地番 ${escapeHtml(props.parcel_number || '(不明)')}
           </div>
           ${
             props.location
-              ? `<div>所在: ${escapeHtml(props.location)}</div>`
+              ? `<div><span style="color:#64748b;">所在:</span> ${escapeHtml(props.location)}</div>`
               : ''
           }
           ${
-            props.owner_name
-              ? `<div>所有者: ${escapeHtml(props.owner_name)}</div>`
-              : ''
+            landCategory
+              ? `<div><span style="color:#64748b;">地目:</span> ${escapeHtml(landCategory)}</div>`
+              : isImported
+                ? `<div><span style="color:#64748b;">地目:</span> <span style="color:#94a3b8;">未入力</span></div>`
+                : ''
           }
           ${
-            props.registered_area_sqm != null
-              ? `<div>登記面積: ${props.registered_area_sqm.toLocaleString()} m²</div>`
-              : ''
+            areaSqm != null
+              ? `<div><span style="color:#64748b;">地積:</span> ${areaSqm.toLocaleString()} m²</div>`
+              : isImported
+                ? `<div><span style="color:#64748b;">地積:</span> <span style="color:#94a3b8;">未入力</span></div>`
+                : ''
           }
-          <div style="color:#64748b;font-size:11px;margin-top:2px;">
-            第 ${props.source_zone} 系
-          </div>
           ${
-            isImported
-              ? `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#d1fae5;color:#065f46;font-size:12px;font-weight:600;text-align:center;">取込済み</div>`
-              : `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#f1f5f9;color:#64748b;font-size:11px;text-align:center;">「地番データ取込」を押してから選択してください</div>`
+            ownerName
+              ? `<div><span style="color:#64748b;">所有者:</span> ${escapeHtml(ownerName)}</div>`
+              : isImported
+                ? `<div><span style="color:#64748b;">所有者:</span> <span style="color:#94a3b8;">未入力</span></div>`
+                : ''
+          }
+          ${
+            !isImported
+              ? `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#f1f5f9;color:#64748b;font-size:11px;text-align:center;">「地番データ取込」を押してから選択してください</div>`
+              : ''
           }
         </div>
       `
-      L.popup({ maxWidth: 280 }).setLatLng(latlng).setContent(container).openOn(map)
+      L.popup({ maxWidth: 300 }).setLatLng(latlng).setContent(container).openOn(map)
     },
-    [map, importedParcelKeys],
+    [map, importedParcelKeys, importedParcelInfo],
   )
 
   return (
