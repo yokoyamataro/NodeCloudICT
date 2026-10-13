@@ -2,9 +2,10 @@
 //
 // 必要な環境変数（supabase secrets set ...）:
 //   RESEND_API_KEY   ... Resend の API キー（必須）
+//   WEBHOOK_SECRET   ... 必須。ヘッダ x-webhook-secret と照合して不正呼び出しを防ぐ。
+//                        未設定だと誰でも Resend 課金を燃やせるため、未設定時は 500 で全拒否。
 //   NOTIFY_TO        ... 通知先メール（省略時 yokoyama1980@gmail.com）
 //   NOTIFY_FROM      ... 送信元（省略時 onboarding@resend.dev＝ドメイン未設定でも可）
-//   WEBHOOK_SECRET   ... 任意。設定するとヘッダ x-webhook-secret と照合して不正呼び出しを防ぐ
 //
 // デプロイ: supabase functions deploy notify-signup --no-verify-jwt
 
@@ -36,9 +37,14 @@ Deno.serve(async (req) => {
     return new Response('Method Not Allowed', { status: 405 })
   }
 
-  // 任意のシークレット照合
+  // シークレット照合は必須。未設定だと誰でも DB webhook URL を叩いて
+  // Resend 送信 (= 課金) を無限ループで走らせられるため、未設定時は 500。
   const secret = Deno.env.get('WEBHOOK_SECRET')
-  if (secret && req.headers.get('x-webhook-secret') !== secret) {
+  if (!secret) {
+    console.error('WEBHOOK_SECRET が 未設定 です (本番 で は 必須)')
+    return new Response('Server not configured', { status: 500 })
+  }
+  if (req.headers.get('x-webhook-secret') !== secret) {
     return new Response('Forbidden', { status: 403 })
   }
 

@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { BlueprintCorners, MarketingLayout, type NavItem } from './MarketingLayout'
+import { TurnstileWidget } from '@/components/TurnstileWidget'
 
 const NAV: NavItem[] = [
   { kind: 'route', to: '/#workflow', label: '機能' },
@@ -46,6 +47,10 @@ export function SupportPage() {
   const [sent, setSent] = useState<{ ticketId: string } | null>(null)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Turnstile の 応答 token。 VITE_TURNSTILE_SITE_KEY が 未設定 なら widget は
+  // 出ない の で 常に null、 その 時 は サーバー 側 の 検証 も スキップ される。
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
+  const turnstileEnabled = Boolean(import.meta.env.VITE_TURNSTILE_SITE_KEY)
 
   // ページ 内 アンカー に 対応 (SPA 遷移 で も # に スクロール)
   useEffect(() => {
@@ -75,6 +80,11 @@ export function SupportPage() {
       setSent({ ticketId: 'NC-00000000-0000' })
       return
     }
+    // Turnstile を 有効 に して いる 時 は token 必須
+    if (turnstileEnabled && !turnstileToken) {
+      setError('認証 (Captcha) を 完了 して ください。')
+      return
+    }
     setSending(true)
     try {
       const res = await fetch('/api/contact', {
@@ -87,6 +97,7 @@ export function SupportPage() {
           email: form.email.trim(),
           phone: form.phone.trim(),
           message: form.message.trim(),
+          turnstileToken: turnstileToken ?? undefined,
         }),
       })
       if (!res.ok) {
@@ -451,6 +462,13 @@ export function SupportPage() {
                   </div>
                 )}
 
+                {turnstileEnabled && (
+                  <TurnstileWidget
+                    onToken={setTurnstileToken}
+                    className="mkt-turnstile"
+                  />
+                )}
+
                 <div
                   style={{
                     display: 'flex',
@@ -462,7 +480,7 @@ export function SupportPage() {
                   <button
                     className="btn btn-primary"
                     type="submit"
-                    disabled={sending}
+                    disabled={sending || (turnstileEnabled && !turnstileToken)}
                     style={{ padding: '12px 26px', fontSize: 15 }}
                   >
                     {sending ? '送信中…' : '送信する'}

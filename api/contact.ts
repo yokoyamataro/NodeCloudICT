@@ -38,6 +38,8 @@ interface ContactPayload {
   email?: string
   phone?: string
   message?: string
+  /** Cloudflare Turnstile の クライアント 応答トークン */
+  turnstileToken?: string
 }
 
 interface SuccessResponse {
@@ -87,6 +89,36 @@ function fillTemplate(src: string, vars: Record<string, string>): string {
  * (メール 送信 は 試行 する ので、 社内 通知 で 失注 は 防げる)。
  * UNIQUE 衝突 (同じ ticket_id) は 呼び 側 で 再生成 して リトライ できる よう エラー 投げる。
  */
+/**
+ * Cloudflare Turnstile の 応答 token を siteverify API で 検証 する。
+ * 成功 (success=true) なら true を 返す。 失敗 や ネットワーク エラー は false。
+ */
+async function verifyTurnstile(
+  secret: string,
+  token: string,
+  remoteIp: string,
+): Promise<boolean> {
+  try {
+    const form = new URLSearchParams()
+    form.set('secret', secret)
+    form.set('response', token)
+    if (remoteIp) form.set('remoteip', remoteIp)
+    const res = await fetch(
+      'https://challenges.cloudflare.com/turnstile/v0/siteverify',
+      { method: 'POST', body: form },
+    )
+    if (!res.ok) {
+      console.error('[contact] Turnstile siteverify HTTP', res.status)
+      return false
+    }
+    const data = (await res.json()) as { success?: boolean }
+    return data.success === true
+  } catch (err) {
+    console.error('[contact] Turnstile verify failed', err)
+    return false
+  }
+}
+
 async function insertContactRow(args: {
   ticketId: string
   topic: string
@@ -217,6 +249,23 @@ export default async function handler(
   const headers = req.headers ?? {}
   const userAgent = (headers['user-agent'] ?? '') + ''
   const ipAddress = ((headers['x-forwarded-for'] ?? '') + '').split(',')[0].trim()
+
+  // Cloudflare Turnstile 検証 (bot 送信 / 課金攻撃 対策)。
+  // TURNSTILE_SECRET が 未設定 の 時 は 検証 を スキップ (開発環境 向け)。
+  // 本番 では 必ず 設定 する こと。
+  const turnstileSecret = process.env.TURNSTILE_SECRET
+  if (turnstileSecret) {
+    const token = (body.turnstileToken ?? '').trim()
+    if (!token) {
+      res.status(400).json({ error: '認証 (Captcha) の 入力 が ありません。' })
+      return
+    }
+    const ok = await verifyTurnstile(turnstileSecret, token, ipAddress)
+    if (!ok) {
+      res.status(400).json({ error: '認証 (Captcha) に 失敗 しました。 再度 お試し ください。' })
+      return
+    }
+  }
 
   // DB の UNIQUE 衝突 (まれ) に 備えて 3 回 まで リトライ して ticket_id を 発番 する
   let ticketId = ''
