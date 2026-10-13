@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Clipboard, Download, FileText, Image as ImageIcon, Loader2, Upload, X, AlertTriangle } from 'lucide-react'
 import { COORDINATE_TYPE_NAMES, type CoordinateType } from '../../lib/coordinates'
+import { supabase } from '@/lib/supabase'
 
 const TYPE_OPTIONS = Object.entries(COORDINATE_TYPE_NAMES) as Array<[CoordinateType, string]>
 
@@ -160,9 +161,19 @@ export function OcrCoordinatesModal({ open, onClose, onImport, onOpenTransform, 
     setError(null)
     setPoints([])
     try {
+      // Supabase 認証 を 付けて 送る (サーバー 側 で JWT 検証 必須)
+      const { data: sess } = await supabase.auth.getSession()
+      const token = sess.session?.access_token
+      if (!token) {
+        setError('ログイン が 必要 です。 再 ログイン して ください')
+        return
+      }
       const res = await fetch('/api/ocr-coordinates', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           files: files.map((f) => ({ mimeType: f.mimeType, dataBase64: f.dataBase64 })),
         }),

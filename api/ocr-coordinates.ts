@@ -111,8 +111,47 @@ type ContentBlock =
       source: { type: 'base64'; media_type: 'application/pdf'; data: string }
     }
 
+/**
+ * Authorization: Bearer <access_token> ヘッダ を Supabase に 検証 させる。
+ * 有効 な ログイン ユーザー なら user_id を 返し、 無効 なら null。
+ */
+async function verifySupabaseJwt(
+  authHeader: string | undefined,
+): Promise<{ userId: string } | null> {
+  if (!authHeader) return null
+  const m = /^Bearer\s+(.+)$/.exec(authHeader)
+  if (!m) return null
+  const token = m[1]
+  const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL
+  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY
+  if (!url || !anonKey) {
+    // 環境 不備 の 時 は 「認証 不可」 扱い (= 拒否) に する
+    console.error('[ocr-coordinates] SUPABASE_URL / SUPABASE_ANON_KEY 未設定')
+    return null
+  }
+  try {
+    const res = await fetch(`${url}/auth/v1/user`, {
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${token}`,
+      },
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as { id?: string }
+    return data.id ? { userId: data.id } : null
+  } catch (err) {
+    console.error('[ocr-coordinates] JWT verify failed', err)
+    return null
+  }
+}
+
+/** 1 回 の リクエスト で 受理 する 入力 base64 の 合計 サイズ 上限 (約 15 MB)。
+ *  Claude API の 制限 と Vercel の body size (4.5 MB) を 跨ぎ うる が、
+ *  この 関数 では データ 到着 後 に も 絞って DoS を 防ぐ。 */
+const MAX_TOTAL_BASE64_BYTES = 15 * 1024 * 1024
+
 export default async function handler(
-  req: { method?: string; body?: OcrRequest | string },
+  req: { method?: string; body?: OcrRequest | string; headers?: Record<string, string | string[] | undefined> },
   res: {
     status: (code: number) => {
       json: (data: SuccessResponse | ErrorResponse) => void
@@ -124,6 +163,18 @@ export default async function handler(
     res.status(405).json({ error: 'Method Not Allowed' })
     return
   }
+  // 認証: Supabase JWT を 必須 に する (無認証 で ANTHROPIC_API_KEY を 使い 放題 に させない)
+  const authHeader = ((): string | undefined => {
+    const h = req.headers?.authorization ?? req.headers?.Authorization
+    if (Array.isArray(h)) return h[0]
+    return h
+  })()
+  const auth = await verifySupabaseJwt(authHeader)
+  if (!auth) {
+    res.status(401).json({ error: 'ログイン が 必要 です' })
+    return
+  }
+
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     res.status(500).json({
@@ -144,6 +195,15 @@ export default async function handler(
   const files = body.files ?? []
   if (files.length === 0) {
     res.status(400).json({ error: '画像 / PDF ファイル が ありません' })
+    return
+  }
+  // base64 の 合計 サイズ 上限 で DoS 対策
+  const totalBytes = files.reduce((acc, f) => acc + (f.dataBase64?.length ?? 0), 0)
+  if (totalBytes > MAX_TOTAL_BASE64_BYTES) {
+    res.status(413).json({
+      error: 'ファイル の 合計 サイズ が 大きすぎ ます',
+      detail: `base64 合計 ${(totalBytes / 1024 / 1024).toFixed(1)} MB > 上限 15 MB`,
+    })
     return
   }
   // 1 リクエスト あたり ファイル は 多すぎ ない よう 制限
