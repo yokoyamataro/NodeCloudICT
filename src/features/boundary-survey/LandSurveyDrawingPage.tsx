@@ -20,7 +20,7 @@ import type { ParcelOption } from './floorPlanTypes'
 import { calcParcelArea, n2, type LandSurveyDrawing } from './landDrawTypes'
 import type { ControlPointForDraw } from './landDrawSheet'
 import { LandStepControls, LandStepFrame, LandStepParcels } from './LandDrawSteps'
-import { BOUNDARY_KIND_LABEL, BOUNDARY_KIND_ORDER, type BoundaryKind } from '@/lib/boundaryKind'
+import type { BoundaryKind } from '@/lib/boundaryKind'
 
 const STEPS = [
   { key: 1, label: '対象地番', hint: '地番と表題' },
@@ -104,26 +104,26 @@ export function LandSurveyDrawingPage() {
   }, [drawings, selectedId])
   const currentId = selected?.id ?? null
 
-  // 選択 中 の 図面 の 筆界種別 (未指定 なら 旧 挙動: 確定 が あれば 確定、 なけ れば 仮)
-  const selectedBoundaryKind: BoundaryKind | null = selected?.spec.boundaryKind ?? null
+  // 筆 ごと の 筆界種別 (未指定 の 筆 は 「確定 が あれば 確定、 なけ れば 仮」 の 従来挙動)
+  const parcelKinds = selected?.spec.parcelBoundaryKinds ?? {}
 
   // 地番 は 構成点 を 持つ 工事区域 と 地籍属性 を 持つ parcels の 2 枚
   const parcels: ParcelOption[] = workAreas.map((wa) => {
     const p = byWorkAreaId.get(wa.id) ?? null
-    // 筆界種別 の 選択 に 応じて 構成点 を 切り替える。
-    // 旧 データ (選択 無し) は 「確定 が あれば 確定、 なけ れば 仮」 の 従来 挙動。
+    const parcelId = p?.id && p.id !== 'pending' ? p.id : null
+    const kind: BoundaryKind | null = parcelId ? parcelKinds[parcelId] ?? null : null
     let srcPoints = wa.points
     let srcPointIds = wa.pointIds
-    if (selectedBoundaryKind === 'confirmed') {
+    if (kind === 'confirmed') {
       srcPoints = wa.confirmedPoints
       srcPointIds = wa.confirmedPointIds
-    } else if (selectedBoundaryKind === 'subdivision') {
+    } else if (kind === 'subdivision') {
       srcPoints = wa.subdivisionPoints
       srcPointIds = wa.subdivisionPointIds
-    } else if (selectedBoundaryKind === 'consolidation') {
+    } else if (kind === 'consolidation') {
       srcPoints = wa.consolidationPoints
       srcPointIds = wa.consolidationPointIds
-    } else if (selectedBoundaryKind === 'provisional') {
+    } else if (kind === 'provisional') {
       srcPoints = wa.points
       srcPointIds = wa.pointIds
     } else {
@@ -131,7 +131,7 @@ export function LandSurveyDrawingPage() {
       srcPointIds = wa.confirmedPoints.length > 0 ? wa.confirmedPointIds : wa.pointIds
     }
     return {
-      parcelId: p?.id && p.id !== 'pending' ? p.id : null,
+      parcelId,
       workAreaId: wa.id,
       label: p?.parcel_number || wa.name || wa.zoneNumber || wa.id.slice(0, 8),
       location: p?.location ?? null,
@@ -325,41 +325,15 @@ export function LandSurveyDrawingPage() {
 
               <div className="flex-1 min-h-0 overflow-auto p-4">
                 {step === 1 && (
-                  <>
-                    {/* 筆界種別 の 選択。 選ぶ と parcels の 構成点 が 切り替わる。 */}
-                    <div className="mb-3 flex items-center gap-2 p-2 border rounded bg-slate-50">
-                      <label className="text-xs text-slate-600 shrink-0">使用 する 筆界:</label>
-                      <select
-                        value={selected.spec.boundaryKind ?? ''}
-                        onChange={(e) => {
-                          const v = e.target.value
-                          const next: BoundaryKind | undefined =
-                            v === '' ? undefined : (v as BoundaryKind)
-                          onPatch({ spec: { ...selected.spec, boundaryKind: next } })
-                        }}
-                        className="flex-1 px-2 py-1 text-sm border rounded bg-white"
-                      >
-                        <option value="">自動 (確定 が あれば 確定、 なけ れば 仮)</option>
-                        {BOUNDARY_KIND_ORDER.map((k) => (
-                          <option key={k} value={k}>
-                            {BOUNDARY_KIND_LABEL[k]} 筆界
-                          </option>
-                        ))}
-                      </select>
-                      <span className="text-[10px] text-slate-500 shrink-0">
-                        求積・境界標・図 全てに 影響
-                      </span>
-                    </div>
-                    <LandStepParcels
-                      plan={selected}
-                      parcels={parcels}
-                      stakeById={stakeById}
-                      farmId={farmId}
-                      zone={zone}
-                      conv={conv}
-                      onPatch={onPatch}
-                    />
-                  </>
+                  <LandStepParcels
+                    plan={selected}
+                    parcels={parcels}
+                    stakeById={stakeById}
+                    farmId={farmId}
+                    zone={zone}
+                    conv={conv}
+                    onPatch={onPatch}
+                  />
                 )}
                 {step === 2 && (
                   <LandStepControls

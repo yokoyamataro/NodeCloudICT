@@ -32,6 +32,7 @@ import { FloorPlanSheetEditor } from './FloorPlanSheetEditor'
 import { FloorPlanSiteMap } from './FloorPlanSiteMap'
 import type { CoordinateConverter } from '@/lib/coordinates'
 import { MakerFields } from './FloorPlanSteps'
+import { BOUNDARY_KIND_LABEL, BOUNDARY_KIND_ORDER, type BoundaryKind } from '@/lib/boundaryKind'
 
 type Patch = (patch: LandDrawPatch) => void
 
@@ -338,6 +339,21 @@ export function LandStepParcels({
       chosen.includes(parcelId) ? chosen.filter((x) => x !== parcelId) : [...chosen, parcelId],
     )
 
+  // 1 筆 ごと の 筆界種別 を 変更。 空値 なら 自動 (= map から 当該 key を 削除)。
+  const setParcelKind = (parcelId: string, kind: BoundaryKind | undefined) => {
+    const current = { ...(spec.parcelBoundaryKinds ?? {}) }
+    if (kind) current[parcelId] = kind
+    else delete current[parcelId]
+    // 筆界種別 が 変わる と 構成点 が 入れ替わる → 境界標 の 表 も 取り直す
+    onPatch({
+      spec: {
+        ...spec,
+        parcelBoundaryKinds: current,
+        markerColumns: spec.markerAuto === false ? spec.markerColumns : markersOf(chosen),
+      },
+    })
+  }
+
   return (
     <div className="flex gap-4 h-full min-h-0">
       <div className="w-[21rem] shrink-0 flex flex-col min-h-0 overflow-auto">
@@ -353,19 +369,52 @@ export function LandStepParcels({
               地番がありません。地番管理で取り込んでください。
             </li>
           )}
-          {parcels.map((p) => (
-            <li key={p.workAreaId}>
-              <label className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-slate-50">
-                <input
-                  type="checkbox"
-                  checked={p.parcelId != null && chosen.includes(p.parcelId)}
-                  onChange={() => p.parcelId && toggle(p.parcelId)}
-                />
-                <span className="flex-1 min-w-0 truncate">{p.label}</span>
-                <span className="text-[11px] text-slate-400">{p.points.length} 点</span>
-              </label>
-            </li>
-          ))}
+          {parcels.map((p) => {
+            const isChecked = p.parcelId != null && chosen.includes(p.parcelId)
+            const kind = p.parcelId
+              ? spec.parcelBoundaryKinds?.[p.parcelId] ?? ''
+              : ''
+            return (
+              <li key={p.workAreaId}>
+                <label className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-slate-50">
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() => p.parcelId && toggle(p.parcelId)}
+                  />
+                  <span className="flex-1 min-w-0 truncate">{p.label}</span>
+                  <span className="text-[11px] text-slate-400">{p.points.length} 点</span>
+                </label>
+                {/* 筆界種別 の 選択。 選択済 の 筆 だけ 表示 */}
+                {isChecked && p.parcelId && (
+                  <div
+                    className="px-7 pb-1.5 flex items-center gap-1 text-[11px] text-slate-500"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <span className="shrink-0">筆界:</span>
+                    <select
+                      value={kind}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setParcelKind(
+                          p.parcelId!,
+                          v === '' ? undefined : (v as BoundaryKind),
+                        )
+                      }}
+                      className="flex-1 px-1 py-0.5 border rounded bg-white text-[11px]"
+                    >
+                      <option value="">自動 (確定 → 仮)</option>
+                      {BOUNDARY_KIND_ORDER.map((k) => (
+                        <option key={k} value={k}>
+                          {BOUNDARY_KIND_LABEL[k]} 筆界
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </li>
+            )
+          })}
         </ul>
 
         {/* 図面 の 表題 と 注記、作製者 / 申請人 */}
