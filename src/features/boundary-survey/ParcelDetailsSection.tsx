@@ -21,6 +21,11 @@ import { useAttachmentStore } from '@/stores/attachmentStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { REGISTRY_PDF_CATEGORY } from './RegistryPdfImportModal'
 import { RegistryPdfViewerModal } from './RegistryPdfViewerModal'
+import {
+  useParcelAttributeTypesStore,
+  UNSELECTED_ATTRIBUTE,
+  EMPTY_ATTRIBUTES,
+} from '@/stores/parcelAttributeTypesStore'
 
 interface Props {
   workAreaId: string
@@ -175,6 +180,14 @@ export function ParcelDetailsSection({ workAreaId: _workAreaId, parcel, onPatch,
     'px-1.5 py-0.5 border rounded text-xs bg-white disabled:bg-slate-100'
   const numInputCls =
     'flex-1 px-1.5 py-0.5 border rounded text-xs font-mono bg-white disabled:bg-slate-100'
+
+  // 地番 属性 (申請地 / 隣接地 / 道路 / 河川 / その他 / ユーザー 追加)
+  const attributeTypes = useParcelAttributeTypesStore((s) =>
+    projectId ? s.byProject.get(projectId) ?? EMPTY_ATTRIBUTES : EMPTY_ATTRIBUTES,
+  )
+  const currentAttribute = parcel?.attribute_code
+    ? attributeTypes.find((t) => t.code === parcel.attribute_code)
+    : undefined
 
   // CSV メタ or 分筆 / 合筆 情報 が ある か (= セクション を 出す か の 判定)
   const hasMeta =
@@ -381,6 +394,38 @@ export function ParcelDetailsSection({ workAreaId: _workAreaId, parcel, onPatch,
             />
             <span className="text-slate-400 text-[10px]">m²</span>
           </div>
+        </div>
+      </fieldset>
+
+      {/* 地番 属性 (申請地 / 隣接地 / 道路 / 河川 / その他)。 ポリゴン の 塗り色 の 元。 */}
+      <fieldset className="border border-slate-300 rounded p-2 pt-1 bg-white">
+        <legend className="px-1 text-[10px] text-slate-500 font-medium uppercase tracking-wide">
+          属性
+        </legend>
+        <div className="flex items-center gap-2">
+          <span
+            className="w-3 h-6 shrink-0 rounded border border-slate-300"
+            style={{
+              backgroundColor: currentAttribute?.color ?? UNSELECTED_ATTRIBUTE.color,
+            }}
+            title={currentAttribute?.label ?? UNSELECTED_ATTRIBUTE.label}
+          />
+          <select
+            value={parcel?.attribute_code ?? ''}
+            onChange={(e) => {
+              const v = e.target.value
+              commit({ attribute_code: v ? v : null })
+            }}
+            disabled={readOnly}
+            className="flex-1 px-1.5 py-0.5 text-xs border rounded bg-white disabled:bg-slate-100"
+          >
+            <option value="">未選択</option>
+            {attributeTypes.map((t) => (
+              <option key={t.id} value={t.code}>
+                {t.label}
+              </option>
+            ))}
+          </select>
         </div>
       </fieldset>
 

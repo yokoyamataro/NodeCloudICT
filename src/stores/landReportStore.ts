@@ -367,16 +367,22 @@ export const useLandReportStore = create<State>((set, get) => ({
   },
 
   createReport: async (farmId, title = '無題の調査報告書') => {
-    // 報告書番号を自動採番:
-    //   * 同じ farm 内の 既存 land_reports の body.meta.reportNo を全走査
-    //   * 純数値だけ抽出して max+1、既存の桁数を維持
-    //   * 既存がなければ YY00001 (YY = 現在の西暦下 2 桁)
+    // 現在 の ログイン ユーザー ID (created_by と 採番 スコープ に 使う)
+    const { data: userRes } = await supabase.auth.getUser()
+    const uid = userRes.user?.id ?? null
+
+    // 報告書番号 を 自動 採番:
+    //   * スコープ は **自分 が 作った land_reports** (全 工区 を 横断)
+    //   * body.meta.reportNo の 純数値 を 全 走査 し max+1、 既存 の 桁数 を 維持
+    //   * 既存 が 無けれ ば YY00001 (YY = 現在 の 西暦 下 2 桁)
+    // created_by 列 が 旧 データ で null の 行 (マイグレ 前) は スコープ に 入ら ない。
     let reportNo = ''
     try {
-      const { data: existing } = await supabase
-        .from('land_reports')
-        .select('body')
-        .eq('farm_id', farmId)
+      const query = supabase.from('land_reports').select('body')
+      // uid が 取れ ない 時 は 自分 だけ の 件数 が 0 件 の 想定 で 新規 発番
+      const { data: existing } = uid
+        ? await query.eq('created_by', uid)
+        : { data: [] as { body: unknown }[] }
       const nums: { num: number; digits: number }[] = []
       for (const row of ((existing ?? []) as { body: unknown }[])) {
         const b = row.body as { meta?: { reportNo?: unknown } } | null
@@ -395,7 +401,7 @@ export const useLandReportStore = create<State>((set, get) => ({
         reportNo = String(nextNum).padStart(maxEntry.digits, '0')
       }
     } catch {
-      // 採番失敗しても 作成自体は進める
+      // 採番 失敗 して も 作成 自体 は 進める
     }
 
     const initialBody: LandReportBody = {
@@ -406,6 +412,7 @@ export const useLandReportStore = create<State>((set, get) => ({
       farm_id: farmId,
       title,
       body: initialBody as unknown as Record<string, unknown>,
+      created_by: uid,
     }
     const { data, error } = await supabase
       .from('land_reports')

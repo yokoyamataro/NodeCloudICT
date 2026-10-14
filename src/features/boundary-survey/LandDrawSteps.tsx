@@ -59,22 +59,93 @@ function Field({
   )
 }
 
+/** 「251-1, 251-2」 の コンマ 区切り 文字列 を トリム して 配列化 (空 は 除外) */
+function parseTitleTags(s: string | null | undefined): string[] {
+  if (!s) return []
+  return s
+    .split(/[,、，]/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+}
+
+function serializeTitleTags(tags: string[]): string {
+  return tags.join(', ')
+}
+
 /** 図面 の 表題 と 注記。 対象地番 の 段 の 中 に 置く */
 function InfoFields({ plan, onPatch }: { plan: LandSurveyDrawing; onPatch: Patch }) {
   const spec = plan.spec
   const setSpec = (p: Partial<typeof spec>) => onPatch({ spec: { ...spec, ...p } })
 
+  const tags = parseTitleTags(plan.title)
+  const [tagInput, setTagInput] = useState('')
+  const commitTitle = (next: string[]) => {
+    onPatch({ title: serializeTitleTags(next), spec: { ...spec, headerAuto: false } })
+  }
+  const addTag = () => {
+    const t = tagInput.trim()
+    if (!t) return
+    if (tags.includes(t)) {
+      setTagInput('')
+      return
+    }
+    commitTitle([...tags, t])
+    setTagInput('')
+  }
+  const removeTag = (idx: number) => {
+    commitTitle(tags.filter((_, i) => i !== idx))
+  }
+
   return (
     <div className="space-y-1">
-      <Field label="地番" hint="選んだ地番から入ります。直すと以後は自動で書き換えません。">
-        <input
-          className={inputCls}
-          value={plan.title ?? ''}
-          onChange={(e) =>
-            onPatch({ title: e.target.value, spec: { ...spec, headerAuto: false } })
-          }
-          placeholder="例: 251-1, 251-2"
-        />
+      <Field label="地番" hint="選んだ地番から自動で入ります。手入力は Enter / コンマで確定、× で削除。">
+        <div className="w-full px-1.5 py-1 border rounded bg-white flex flex-wrap items-center gap-1 min-h-[32px]">
+          {tags.map((t, i) => (
+            <span
+              key={`${t}-${i}`}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-slate-100 border border-slate-300 rounded"
+            >
+              <span className="font-mono">{t}</span>
+              <button
+                type="button"
+                onClick={() => removeTag(i)}
+                className="text-slate-400 hover:text-red-600 leading-none"
+                aria-label="削除"
+                title="削除"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          <input
+            value={tagInput}
+            onChange={(e) => {
+              const v = e.target.value
+              // コンマ/読点 入力 で 即 コミット
+              if (/[,、，]$/.test(v)) {
+                const t = v.replace(/[,、，]+$/, '').trim()
+                if (t && !tags.includes(t)) commitTitle([...tags, t])
+                setTagInput('')
+              } else {
+                setTagInput(v)
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                addTag()
+              } else if (e.key === 'Backspace' && tagInput === '' && tags.length > 0) {
+                e.preventDefault()
+                removeTag(tags.length - 1)
+              }
+            }}
+            onBlur={() => {
+              if (tagInput.trim()) addTag()
+            }}
+            placeholder={tags.length === 0 ? '例: 251-1' : ''}
+            className="flex-1 min-w-[80px] px-1 py-0.5 text-sm bg-transparent outline-none"
+          />
+        </div>
       </Field>
       <Field label="土地の所在">
         <input
@@ -322,22 +393,80 @@ export function LandStepParcels({
       .filter((p): p is ParcelOption => p != null)
     const head = headerFromParcels(picked)
     onPatch({
-      // 地番 を 変えたら 表題 も 取り直す (手 で 直して いた 場合 は そのまま)
-      ...(spec.headerAuto === false
-        ? {}
-        : { title: head.title, location: head.location || null }),
+      // 地番 を 選び直したら 常に 表題 を 取り直す (タグ UI の 都合 で
+      // 「手入力 の 時 は 触らない」 の 旧 挙動 は 廃止。 必要 なら ×ボタン で
+      // 個別 削除 or 「頭文字 追加」 で 混在 させる)。
+      title: head.title,
+      location: head.location || plan.location || null,
       spec: {
         ...spec,
         parcelIds: ids,
+        headerAuto: true,
         // 境界標 も 同じ 扱い
         markerColumns: spec.markerAuto === false ? spec.markerColumns : markersOf(ids),
       },
     })
   }
-  const toggle = (parcelId: string) =>
-    setParcels(
-      chosen.includes(parcelId) ? chosen.filter((x) => x !== parcelId) : [...chosen, parcelId],
-    )
+  /**
+   * 筆 を 選んだ 時 に 自動 で 確定 する 筆界 種別 を 決める。
+   *   - 1 種類 のみ → それ
+   *   - 仮 + 確定 (他 無し) → 確定
+   *   - その他 (分筆 / 合筆 を 含む 複数) → null (ダイアログ で 選択 を 促す)
+   */
+  const autoKindFor = (available: BoundaryKind[]): BoundaryKind | null => {
+    if (available.length === 0) return null
+    if (available.length === 1) return available[0]
+    const set = new Set(available)
+    if (available.length === 2 && set.has('provisional') && set.has('confirmed')) {
+      return 'confirmed'
+    }
+    return null
+  }
+
+  const [kindPicker, setKindPicker] = useState<{
+    parcelId: string
+    label: string
+    available: BoundaryKind[]
+  } | null>(null)
+
+  /** parcelIds / parcelBoundaryKinds を 同時 に 更新 する (toggle 内 で 使い回す) */
+  const addParcelWithKind = (parcelId: string, kind: BoundaryKind | undefined) => {
+    const nextIds = [...chosen, parcelId]
+    const picked = nextIds
+      .map((id) => parcels.find((p) => p.parcelId === id))
+      .filter((p): p is ParcelOption => p != null)
+    const head = headerFromParcels(picked)
+    const nextKinds = { ...(spec.parcelBoundaryKinds ?? {}) }
+    if (kind) nextKinds[parcelId] = kind
+    onPatch({
+      title: head.title,
+      location: head.location || plan.location || null,
+      spec: {
+        ...spec,
+        parcelIds: nextIds,
+        parcelBoundaryKinds: nextKinds,
+        headerAuto: true,
+        markerColumns: spec.markerAuto === false ? spec.markerColumns : markersOf(nextIds),
+      },
+    })
+  }
+
+  const toggle = (parcelId: string) => {
+    if (chosen.includes(parcelId)) {
+      setParcels(chosen.filter((x) => x !== parcelId))
+      return
+    }
+    // 新規 追加 時 に 筆界 種別 を 決める
+    const option = parcels.find((p) => p.parcelId === parcelId)
+    const available = option?.availableKinds ?? []
+    const auto = autoKindFor(available)
+    if (auto !== null) {
+      addParcelWithKind(parcelId, auto)
+    } else {
+      // 分筆 / 合筆 を 含む 複数 → ダイアログ で 選ばせる
+      setKindPicker({ parcelId, label: option?.label ?? parcelId, available })
+    }
+  }
 
   // 1 筆 ごと の 筆界種別 を 変更。 空値 なら 自動 (= map から 当該 key を 削除)。
   const setParcelKind = (parcelId: string, kind: BoundaryKind | undefined) => {
@@ -444,6 +573,60 @@ export function LandStepParcels({
           highlightVertex={[]}
         />
       </div>
+
+      {/* 筆界 種別 の 選択 ダイアログ (分筆 / 合筆 を 含む 複数 の 時 だけ 出る) */}
+      {kindPicker && (
+        <div
+          className="fixed inset-0 bg-black/40 z-[3000] flex items-center justify-center p-4"
+          onClick={() => setKindPicker(null)}
+        >
+          <div
+            className="bg-white rounded shadow-lg w-full max-w-xs"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b">
+              <div className="font-medium text-sm">筆界 の 種別 を 選択</div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                {kindPicker.label} に は 複数 の 筆界 が あります。 どれ を 使い ますか？
+              </div>
+            </div>
+            <div className="p-3 space-y-1.5">
+              {kindPicker.available.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => {
+                    const parcelId = kindPicker.parcelId
+                    setKindPicker(null)
+                    addParcelWithKind(parcelId, k)
+                  }}
+                  className="w-full px-3 py-2 text-sm text-left border rounded hover:bg-slate-50 flex items-center justify-between"
+                >
+                  <span>{BOUNDARY_KIND_LABEL[k]} 筆界</span>
+                  <span className="text-[10px] text-slate-400">
+                    ({k === 'provisional'
+                      ? '仮'
+                      : k === 'confirmed'
+                      ? '確定'
+                      : k === 'subdivision'
+                      ? '分筆'
+                      : '合筆'})
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="px-3 py-2 border-t flex justify-end">
+              <button
+                type="button"
+                onClick={() => setKindPicker(null)}
+                className="px-3 py-1 text-xs border rounded hover:bg-slate-50"
+              >
+                キャンセル
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -514,13 +697,34 @@ export function LandStepControls({
       </div>
 
       <div className="flex-1 min-w-0 overflow-auto">
-        <div className="flex items-center gap-2 mb-1">
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
           <span className="text-xs font-semibold text-slate-500">与点の成果</span>
           <input
             className="flex-1 min-w-0 max-w-md px-2 py-1 text-xs border rounded"
             value={spec.datumTitle}
             onChange={(e) => onPatch({ spec: { ...spec, datumTitle: e.target.value } })}
           />
+          {/* 任意列 の 表示切替。 点名/X/Y は 必須 */}
+          <label className="flex items-center gap-1 text-[11px] text-slate-600 shrink-0">
+            <input
+              type="checkbox"
+              checked={spec.datumShowCategory !== false}
+              onChange={(e) =>
+                onPatch({ spec: { ...spec, datumShowCategory: e.target.checked } })
+              }
+            />
+            区分
+          </label>
+          <label className="flex items-center gap-1 text-[11px] text-slate-600 shrink-0">
+            <input
+              type="checkbox"
+              checked={spec.datumShowNote !== false}
+              onChange={(e) =>
+                onPatch({ spec: { ...spec, datumShowNote: e.target.checked } })
+              }
+            />
+            備考
+          </label>
         </div>
         {spec.datums.length === 0 ? (
           <div className="text-xs text-slate-400">
@@ -530,24 +734,30 @@ export function LandStepControls({
           <table className="w-full text-xs border-collapse">
             <thead className="bg-slate-50">
               <tr>
-                <th className="px-2 py-1 border text-left">区分</th>
+                {spec.datumShowCategory !== false && (
+                  <th className="px-2 py-1 border text-left">区分</th>
+                )}
                 <th className="px-2 py-1 border text-left">点名</th>
                 <th className="px-2 py-1 border text-right w-28">X座標</th>
                 <th className="px-2 py-1 border text-right w-28">Y座標</th>
-                <th className="px-2 py-1 border text-left">備考</th>
+                {spec.datumShowNote !== false && (
+                  <th className="px-2 py-1 border text-left">備考</th>
+                )}
               </tr>
             </thead>
             <tbody>
               {spec.datums.map((d) => (
                 <tr key={d.id}>
-                  <td className="px-1 py-0.5 border">
-                    <input
-                      className="w-full px-1.5 py-1 text-xs border rounded"
-                      value={d.category}
-                      onChange={(e) => setDatum(d.id, { category: e.target.value })}
-                      placeholder="例: 基本三角点等"
-                    />
-                  </td>
+                  {spec.datumShowCategory !== false && (
+                    <td className="px-1 py-0.5 border">
+                      <input
+                        className="w-full px-1.5 py-1 text-xs border rounded"
+                        value={d.category}
+                        onChange={(e) => setDatum(d.id, { category: e.target.value })}
+                        placeholder="例: 基本三角点等"
+                      />
+                    </td>
+                  )}
                   <td className="px-1 py-0.5 border">
                     <input
                       className="w-full px-1.5 py-1 text-xs border rounded"
@@ -557,16 +767,18 @@ export function LandStepControls({
                   </td>
                   <td className="px-1 py-0.5 border text-right font-mono">{d.x.toFixed(3)}</td>
                   <td className="px-1 py-0.5 border text-right font-mono">{d.y.toFixed(3)}</td>
-                  <td className="px-1 py-0.5 border">
-                    <textarea
-                      rows={2}
-                      className="w-full px-1.5 py-1 text-xs border rounded resize-y"
-                      value={d.note}
-                      onChange={(e) => setDatum(d.id, { note: e.target.value })}
-                      placeholder={'ネットワーク型RTK法\nによる単点観測法'}
-                      title="改行で 2 行に分けられます"
-                    />
-                  </td>
+                  {spec.datumShowNote !== false && (
+                    <td className="px-1 py-0.5 border">
+                      <textarea
+                        rows={2}
+                        className="w-full px-1.5 py-1 text-xs border rounded resize-y"
+                        value={d.note}
+                        onChange={(e) => setDatum(d.id, { note: e.target.value })}
+                        placeholder={'ネットワーク型RTK法\nによる単点観測法'}
+                        title="改行で 2 行に分けられます"
+                      />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

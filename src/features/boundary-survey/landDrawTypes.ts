@@ -141,6 +141,10 @@ export interface LandDrawSpec {
   controlPointIds: string[]
   /** 与点 の 成果 の 表。 基準点 から 作る が 手 で も 直せる */
   datums: DatumRow[]
+  /** 与点 の 成果 表 で 「区分」 列 を 表示 する か (既定 true) */
+  datumShowCategory?: boolean
+  /** 与点 の 成果 表 で 「備考」 列 を 表示 する か (既定 true) */
+  datumShowNote?: boolean
   /** 地図番号 */
   mapNumber: string
   /** 境界標 の 種類 と 点名。 選んだ 地番 の 杭種 から 作る */
@@ -176,6 +180,8 @@ export const DEFAULT_LAND_SPEC: LandDrawSpec = {
   parcelBoundaryKinds: {},
   controlPointIds: [],
   datums: [],
+  datumShowCategory: true,
+  datumShowNote: true,
   mapNumber: '',
   markerColumns: defaultMarkerColumns(),
   markerAuto: true,

@@ -404,8 +404,8 @@ function ProjectCard({
   const done = p.completed_at != null
 
   const editBtnClass = perm.canEdit
-    ? 'absolute top-1.5 right-1.5 p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-white/80 opacity-70 group-hover:opacity-100'
-    : 'absolute top-1.5 right-1.5 p-1 rounded text-slate-300 cursor-not-allowed opacity-40'
+    ? 'p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-white/80 opacity-70 group-hover:opacity-100'
+    : 'p-1 rounded text-slate-300 cursor-not-allowed opacity-40'
 
   return (
     <div
@@ -414,24 +414,39 @@ function ProjectCard({
         done ? 'bg-emerald-50 hover:border-emerald-400' : 'bg-white hover:border-blue-400'
       }`}
     >
-      {/* 右上: 編集ボタン (現場情報編集モーダルを開く) - 権限がなければ disabled */}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          if (perm.canEdit) onEdit(p)
-        }}
-        disabled={!perm.canEdit}
-        className={editBtnClass}
-        title={
-          perm.canEdit
-            ? '現場情報を編集'
-            : '閲覧権限のみです (編集にはオーナーまたは編集者権限が必要)'
-        }
+      {/* 右上: 役割バッジ + 編集ボタン を 横並び で 配置 (バッジ は 編集ボタン の 左) */}
+      <div
+        className="absolute top-1.5 right-1.5 flex items-center gap-1"
+        onClick={(e) => e.stopPropagation()}
       >
-        <Edit3 className="h-3.5 w-3.5" />
-      </button>
-      <div className="flex items-center gap-1.5 mb-1 pr-6">
+        {perm.role && (
+          <span
+            className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+              ROLE_BADGE_CLASS[perm.role]
+            }`}
+            title={`あなたの役割: ${ROLE_LABEL[perm.role]}`}
+          >
+            {ROLE_LABEL[perm.role]}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            if (perm.canEdit) onEdit(p)
+          }}
+          disabled={!perm.canEdit}
+          className={editBtnClass}
+          title={
+            perm.canEdit
+              ? '現場情報を編集'
+              : '閲覧権限のみです (編集にはオーナーまたは編集者権限が必要)'
+          }
+        >
+          <Edit3 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="flex items-center gap-1.5 mb-1 pr-20">
         <Folder
           className={`h-4 w-4 flex-shrink-0 ${done ? 'text-emerald-600' : 'text-blue-600'}`}
         />
@@ -450,19 +465,6 @@ function ProjectCard({
           </span>
         )}
       </div>
-      {/* 自分の役割バッジ (owner/editor/viewer)。null (public 閲覧のみ) は非表示 */}
-      {perm.role && (
-        <div className="mb-1">
-          <span
-            className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border font-medium ${
-              ROLE_BADGE_CLASS[perm.role]
-            }`}
-            title={`あなたの役割: ${ROLE_LABEL[perm.role]}`}
-          >
-            {ROLE_LABEL[perm.role]}
-          </span>
-        </div>
-      )}
       {p.description && (
         <div className="text-xs text-slate-500 mb-2 line-clamp-2">
           {p.description}

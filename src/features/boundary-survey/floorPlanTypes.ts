@@ -357,6 +357,9 @@ export interface ParcelOption {
   /** 敷地 を 描く 構成点 (確定境界 が あれば そちら) */
   points: { id: string; pointNumber: string; x: number; y: number }[]
   pointIds: string[]
+  /** その 筆 で 利用 可能 な 筆界 種別 (構成点 を 持つ もの だけ)。
+   *  'provisional' | 'confirmed' | 'subdivision' | 'consolidation' */
+  availableKinds?: Array<'provisional' | 'confirmed' | 'subdivision' | 'consolidation'>
 }
 
 // ========================================================================

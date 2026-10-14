@@ -155,6 +155,9 @@ function drawFrame(out: DrawItem[], line: LineFn, text: TextFn, plan: LandSurvey
   // 縦罫。 左 は 通し、右 は 段違い の ぶん 下 から
   line(S.left, S.frameTop, S.left, S.frameBottom)
   line(S.right, S.headMid, S.right, S.frameBottom)
+  // 地番 の 値 の 行 (上段) の 右端 を 閉じる 縦線。
+  // 下段 (土地の所在) は S.right まで 伸びる の で この 線 は headTop〜headMid のみ。
+  line(S.hnValueRight, S.headTop, S.hnValueRight, S.headMid)
   for (const x of S.hx) line(x, S.frameTop, x, S.headBottom)
   // 種類 の 列 の 仕切り は 表題 の 行 を 跨がない
   for (const x of markerDividers(spec)) line(x, S.markerRow1, x, S.headBottom)
@@ -356,38 +359,52 @@ function drawCalc(
   y += 7.1
 
   const datums = spec.datums.length > 0 ? spec.datums : datumsFromControls(controls)
-  const datumRows: { h: number; cells: TCell[] }[] = [
-    {
-      h: 3.5,
-      cells: [
-        { text: '' },
-        { text: '点 名' },
-        { text: 'X座標' },
-        { text: 'Y座標' },
-        { text: '備 考' },
-      ],
-    },
-  ]
+  const showCat = spec.datumShowCategory !== false
+  const showNote = spec.datumShowNote !== false
+  // 既定 の 列幅: [区分, 点名, X座標, Y座標, 備考] = [27.56, 28.45, 24.51, 24.51, 24.51]
+  // 任意列 を 隠した 時 は 残り の 列幅 は そのまま で、 表 全体 の 幅 を 縮める。
+  const DATUM_LEFT = 48.7
+  const wCat = 27.56
+  const wName = 28.45
+  const wX = 24.51
+  const wY = 24.51
+  const wNote = 24.51
+  const datumXs: number[] = [DATUM_LEFT]
+  if (showCat) datumXs.push(datumXs[datumXs.length - 1] + wCat)
+  datumXs.push(datumXs[datumXs.length - 1] + wName)
+  datumXs.push(datumXs[datumXs.length - 1] + wX)
+  datumXs.push(datumXs[datumXs.length - 1] + wY)
+  if (showNote) datumXs.push(datumXs[datumXs.length - 1] + wNote)
+
+  const headerCells: TCell[] = []
+  if (showCat) headerCells.push({ text: '' })
+  headerCells.push({ text: '点 名' })
+  headerCells.push({ text: 'X座標' })
+  headerCells.push({ text: 'Y座標' })
+  if (showNote) headerCells.push({ text: '備 考' })
+  const datumRows: { h: number; cells: TCell[] }[] = [{ h: 3.5, cells: headerCells }]
   for (const d of datums) {
     // 備考 は 改行 で 2 行 に できる (実物 も 「ネットワーク型RTK法 / による単点観測法」)
     const note = (d.note ?? '').split('\n')
+    const cells: TCell[] = []
+    if (showCat) cells.push({ text: d.category, align: 'start', id: `land:datum:${d.id}:c` })
+    cells.push({ text: d.name, align: 'start', id: `land:datum:${d.id}:n` })
+    cells.push({ text: n3(d.x), align: 'end', id: `land:datum:${d.id}:x` })
+    cells.push({ text: n3(d.y), align: 'end', id: `land:datum:${d.id}:y` })
+    if (showNote) {
+      cells.push({
+        text: note[0] ?? '',
+        sub: note[1],
+        align: 'start',
+        id: `land:datum:${d.id}:r`,
+      })
+    }
     datumRows.push({
-      h: (ROW + 0.06) * Math.max(note.length, 1),
-      cells: [
-        { text: d.category, align: 'start', id: `land:datum:${d.id}:c` },
-        { text: d.name, align: 'start', id: `land:datum:${d.id}:n` },
-        { text: n3(d.x), align: 'end', id: `land:datum:${d.id}:x` },
-        { text: n3(d.y), align: 'end', id: `land:datum:${d.id}:y` },
-        {
-          text: note[0] ?? '',
-          sub: note[1],
-          align: 'start',
-          id: `land:datum:${d.id}:r`,
-        },
-      ],
+      h: (ROW + 0.06) * Math.max(showNote ? note.length : 1, 1),
+      cells,
     })
   }
-  y = drawTable(out, text, [48.7, 76.26, 104.71, 129.22, 153.73, 178.24], y, datumRows, L.calc)
+  y = drawTable(out, text, datumXs, y, datumRows, L.calc)
 
   if (spec.observationNote) {
     y += 4

@@ -50,6 +50,7 @@ import { CoordinateConverter } from '@/lib/coordinates'
 import { useFarmStore } from './farmStore'
 import { useSettingsStore } from './settingsStore'
 import { useExportRouteStore, type RoutePoint as ExportRoutePoint } from './exportRouteStore'
+import { useWorkAreaStore } from './workAreaStore'
 
 // ローカル状態用の座標型
 export interface CoordinateRow {
@@ -444,6 +445,12 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         }
       }),
     }))
+    // x / y / 点名 が 変わった 行 を work_area 側 に も 反映 → 面積 再計算
+    const sync = useWorkAreaStore.getState().syncCoordinateUpdate
+    for (const r of rows) {
+      if (r.x === undefined && r.y === undefined && r.pointNumber === undefined) continue
+      sync(r.id, { x: r.x, y: r.y, pointNumber: r.pointNumber })
+    }
     try {
       const { data: { user } } = await supabase.auth.getUser()
       const uid = user?.id ?? null
@@ -566,6 +573,16 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     set({
       coordinates: state.coordinates.map((c) => (c.id === id ? updated : c)),
     })
+
+    // x / y / 点名 が 変わった ら 、 この 座標 を 使って いる work_area の
+    // 構成点 と 面積 を 同期 する (他 の 列 編集 では 走らせない)
+    if (field === 'x' || field === 'y' || field === 'pointNumber') {
+      useWorkAreaStore.getState().syncCoordinateUpdate(id, {
+        x: field === 'x' ? (updated.x as number | undefined) : undefined,
+        y: field === 'y' ? (updated.y as number | undefined) : undefined,
+        pointNumber: field === 'pointNumber' ? (updated.pointNumber as string | undefined) : undefined,
+      })
+    }
 
     // 手動保存モードに統一: 変更を pendingChanges に積み、保存ボタンを有効化
     const newPendingChanges = new Map(state.pendingChanges)

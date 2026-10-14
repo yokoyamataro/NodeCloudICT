@@ -130,6 +130,12 @@ export function LandSurveyDrawingPage() {
       srcPoints = wa.confirmedPoints.length > 0 ? wa.confirmedPoints : wa.points
       srcPointIds = wa.confirmedPoints.length > 0 ? wa.confirmedPointIds : wa.pointIds
     }
+    // 利用 可能 な 筆界 種別 (構成点 を 1 つ 以上 持って いる もの)
+    const availableKinds: BoundaryKind[] = []
+    if (wa.points.length > 0) availableKinds.push('provisional')
+    if (wa.confirmedPoints.length > 0) availableKinds.push('confirmed')
+    if (wa.subdivisionPoints.length > 0) availableKinds.push('subdivision')
+    if (wa.consolidationPoints.length > 0) availableKinds.push('consolidation')
     return {
       parcelId,
       workAreaId: wa.id,
@@ -137,6 +143,7 @@ export function LandSurveyDrawingPage() {
       location: p?.location ?? null,
       points: srcPoints.map((q) => ({ id: q.id, pointNumber: q.pointNumber, x: q.x, y: q.y })),
       pointIds: srcPointIds,
+      availableKinds,
     }
   })
 

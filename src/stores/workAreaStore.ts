@@ -201,6 +201,16 @@ interface WorkAreaState {
   // 面積計算
   calculateArea: (workAreaId: string, kind?: BoundaryKind) => AreaCalculationSheet | null
 
+  /**
+   * 座標 (design_coordinates) の 値 が 変わった 時 に、 その 座標 を 使って いる
+   * 全 work_area の 構成点 (全 kind) の x/y/pointNumber を 同期 し、 面積 を 再計算 する。
+   * 座標管理 画面 で x/y を 編集 した 時 に 呼ぶ 想定。
+   */
+  syncCoordinateUpdate: (
+    id: string,
+    patch: { x?: number; y?: number; pointNumber?: string },
+  ) => void
+
   // 保存
   saveWorkArea: (id: string) => Promise<void>
   saveAllWorkAreas: () => Promise<void>
@@ -670,6 +680,70 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
     })
 
     return sheet
+  },
+
+  syncCoordinateUpdate: (id, patch) => {
+    const zone = getCurrentZone()
+    const converter = new CoordinateConverter(zone)
+    const KINDS: BoundaryKind[] = ['provisional', 'confirmed', 'subdivision', 'consolidation']
+    const touchedByKind: Record<string, Set<BoundaryKind>> = {}
+
+    set((state) => {
+      let farmChanged = false
+      const workAreasRecord: WorkAreasRecord = {}
+      for (const workType of Object.keys(state.workAreas) as WorkType[]) {
+        const rows = state.workAreas[workType]
+        if (!rows) continue
+        const newRows = rows.map((row) => {
+          let rowChanged = false
+          let newRow = row
+          for (const kind of KINDS) {
+            const points = pointsOfKind(row, kind)
+            if (!points.some((p) => p.id === id)) continue
+            const nextPoints = points.map((p) => {
+              if (p.id !== id) return p
+              const nx = patch.x !== undefined ? patch.x : p.x
+              const ny = patch.y !== undefined ? patch.y : p.y
+              let lat: number | null = p.lat
+              let lng: number | null = p.lng
+              if (nx !== null && ny !== null && (patch.x !== undefined || patch.y !== undefined)) {
+                const r = converter.toLatLng(nx, ny)
+                lat = r.lat
+                lng = r.lng
+              }
+              return {
+                ...p,
+                x: nx,
+                y: ny,
+                lat,
+                lng,
+                pointNumber: patch.pointNumber ?? p.pointNumber,
+              }
+            })
+            newRow = withKind(newRow, kind, { points: nextPoints })
+            rowChanged = true
+            if (!touchedByKind[row.id]) touchedByKind[row.id] = new Set()
+            touchedByKind[row.id].add(kind)
+          }
+          if (rowChanged) farmChanged = true
+          return newRow
+        })
+        workAreasRecord[workType] = newRows
+      }
+      if (!farmChanged) return state
+      return { workAreas: workAreasRecord }
+    })
+
+    // 影響 を 受けた work_area を kind 別 に 面積 再計算 (3 点 以上 の 時 のみ)
+    for (const [waId, kinds] of Object.entries(touchedByKind)) {
+      for (const kind of kinds) {
+        const area = get().getWorkAreaById(waId)
+        if (!area) continue
+        if (pointsOfKind(area, kind).length >= 3) {
+          get().calculateArea(waId, kind)
+        }
+      }
+    }
   },
 
   saveWorkArea: async (id) => {
