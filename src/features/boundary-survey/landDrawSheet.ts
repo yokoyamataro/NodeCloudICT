@@ -365,10 +365,22 @@ function drawCalc(
   // 任意列 を 隠した 時 は 残り の 列幅 は そのまま で、 表 全体 の 幅 を 縮める。
   const DATUM_LEFT = 48.7
   const wCat = 27.56
-  const wName = 28.45
+  const BASE_W_NAME = 28.45
   const wX = 24.51
   const wY = 24.51
   const wNote = 24.51
+  // 点名 列 は 最長 の 点名 に 合わせて 広げる (はみ出し 防止)。
+  // セル の 字高 2.2mm、 全角 ×1.0 / 半角 ×0.6、 左右 の 内側 余白 2.4mm、
+  // ちょっと の 余裕 を 足して 計算。
+  const CELL_H = 2.2
+  const nameWidthOf = (s: string): number => {
+    let w = 0
+    for (const ch of s ?? '') w += /[\x20-\x7e]/.test(ch) ? CELL_H * 0.6 : CELL_H
+    return w
+  }
+  const maxNameWidth = datums.reduce((m, d) => Math.max(m, nameWidthOf(d.name)), 0)
+  const requiredNameW = maxNameWidth + 2.4 /* 左右 余白 */ + 0.6 /* 余裕 */
+  const wName = Math.max(BASE_W_NAME, requiredNameW)
   const datumXs: number[] = [DATUM_LEFT]
   if (showCat) datumXs.push(datumXs[datumXs.length - 1] + wCat)
   datumXs.push(datumXs[datumXs.length - 1] + wName)
@@ -590,7 +602,17 @@ function drawMap(
 
   const rings = parcels
     .filter((p) => p.points.length >= 3)
-    .map((p) => ({ label: p.label, pts: p.points.map((q) => ({ e: q.y, n: q.x })) }))
+    .map((p) => ({
+      label: p.label,
+      // 辺長 / 点名 に 安定 ID を 付けて 選択・移動 を 可能 に する ため、
+      // 元 の 点 ID と 点名 を 伝搬 する。
+      pts: p.points.map((q) => ({
+        id: q.id,
+        pointNumber: q.pointNumber,
+        e: q.y,
+        n: q.x,
+      })),
+    }))
   if (rings.length === 0) return
 
   const wk = plan.spec.whisker ?? { show: true, lengthMm: 10 }
@@ -650,8 +672,12 @@ function drawMap(
       let deg = (-Math.atan2(sb.y - sa.y, sb.x - sa.x) * 180) / Math.PI
       if (deg > 90 || deg < -90) deg += 180
       const rad = (-deg * Math.PI) / 180
+      // 辺長 の 安定 ID。 点 ID の 順不同 ペア (小 → 大) で 生成 → 筆 を 跨い で
+      // 同じ 辺 を 二重 で 描い て も 位置 が ズレ ない。
+      const edgeId = [a.id, b.id].sort().join('-')
       out.push({
         kind: 'text',
+        id: `land:dim:${edgeId}`,
         x: (sa.x + sb.x) / 2 + Math.sin(rad) * 1.0,
         y: (sa.y + sb.y) / 2 - Math.cos(rad) * 1.0,
         text: n3(len),
@@ -668,6 +694,7 @@ function drawMap(
       out.push({ kind: 'circle', cx: s.x, cy: s.y, r: 0.5, w: LW, layer: L.site })
       out.push({
         kind: 'text',
+        id: `land:pointName:${q.id}`,
         x: s.x + 1.0,
         y: s.y - 1.0,
         text: q.pointNumber,

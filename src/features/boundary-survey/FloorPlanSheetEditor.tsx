@@ -30,10 +30,21 @@ function svgDash(style: LineStyle | undefined): string | undefined {
   return undefined
 }
 
-/** 要素 の 当たり判定 に 使う おおよそ の 幅 */
+/** 要素 の 当たり判定 に 使う おおよそ の 幅。
+ *  日本語 全角 は 字高 ×1.0、 ASCII / 数字 は だいたい 字高 ×0.6 で 見積もる。
+ *  混在 の 場合 は 文字 ごと に 加算 する の で、 箱 サイズ が 実文字 に 近い。 */
 function textWidth(it: Extract<DrawItem, { kind: 'text' }>): number {
-  const n = Array.from(it.text).length
-  return it.pitch && it.pitch > 0 ? it.pitch * (n - 1) + it.h : it.h * n
+  const chars = Array.from(it.text)
+  if (it.pitch && it.pitch > 0) {
+    // pitch が 明示 の 時 は 等間隔 文字 (地番名 等) → pitch × (n-1) + 末尾 1 字 分
+    const last = /[\x20-\x7e]/.test(chars[chars.length - 1] ?? '') ? it.h * 0.6 : it.h
+    return it.pitch * Math.max(chars.length - 1, 0) + last
+  }
+  let w = 0
+  for (const c of chars) {
+    w += /[\x20-\x7e]/.test(c) ? it.h * 0.6 : it.h
+  }
+  return w
 }
 
 export function FloorPlanSheetEditor({
@@ -264,7 +275,15 @@ export function FloorPlanSheetEditor({
           : selected.anchor === 'end'
           ? selected.x - w
           : selected.x
-      return { x: x - 0.6, y: selected.y - selected.h - 0.4, w: w + 1.2, h: selected.h + 1.4 }
+      // 文字 サイズ に 合わせた 余白 (旧 実装 は 固定 値 で 小さい 文字 だと 箱 が 2 倍 以上 に 見えて いた)
+      const padX = Math.max(selected.h * 0.1, 0.15)
+      const padY = Math.max(selected.h * 0.1, 0.15)
+      return {
+        x: x - padX,
+        y: selected.y - selected.h - padY * 0.3,
+        w: w + padX * 2,
+        h: selected.h + padY * 1.4,
+      }
     }
     if (selected.kind === 'line') {
       return {
