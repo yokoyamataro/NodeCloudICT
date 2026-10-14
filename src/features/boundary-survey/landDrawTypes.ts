@@ -8,6 +8,7 @@
 // 図面 に は 途中 の 数字 も そのまま 載せる ので、行 ごと に 残す。
 
 import type { FloorPlanFrame } from './floorPlanTypes'
+import type { BoundaryKind } from '@/lib/boundaryKind'
 
 /**
  * 境界標 の 種類。 用紙 上部 の 表 の 列 に なる。
@@ -126,6 +127,16 @@ export interface DatumRow {
 export interface LandDrawSpec {
   /** 対象 の 地番 (parcels.id)。 1 筆 でも 数筆 でも */
   parcelIds: string[]
+  /**
+   * 使用 する 筆界 の 種類。
+   *   provisional   … 仮筆界 (地図 XML 由来 の 当初 の 形)
+   *   confirmed     … 確定筆界 (立会・確定測量 の 成果) ★既定
+   *   subdivision   … 分筆筆界 (分筆 予定 の 内側 の 境界)
+   *   consolidation … 合筆筆界 (隣接筆 と 合わせる 予定 の 境界)
+   * 旧 データ (フィールド 無し) は 「確定 が あれば 確定、 なけ れば 仮」 の
+   * 従来 挙動 を 残す ため boundaryKind 未指定 で 表現。
+   */
+  boundaryKind?: BoundaryKind
   /** 使用 した 基準点 (design_coordinates.id) */
   controlPointIds: string[]
   /** 与点 の 成果 の 表。 基準点 から 作る が 手 で も 直せる */
@@ -162,6 +173,7 @@ export interface LandDrawSpec {
 
 export const DEFAULT_LAND_SPEC: LandDrawSpec = {
   parcelIds: [],
+  boundaryKind: 'confirmed',
   controlPointIds: [],
   datums: [],
   mapNumber: '',

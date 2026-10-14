@@ -427,21 +427,23 @@ export function ParcelMapLayer({
       )
     : null
 
-  if (!effectiveVisible || zoomHidden || !displayFc) {
-    return <>{indicator}</>
-  }
-
   // visible=false (トグル OFF) で も hasImported なら 取込済 の feature だけ 描画 する。
   // visible=true の 時 は 全部 の feature を 描画 (従来 挙動)。
-  const renderFc: ParcelFeatureCollection = visible
-    ? displayFc
-    : {
-        type: 'FeatureCollection',
-        features: displayFc.features.filter((f) =>
-          importedParcelKeys?.has(parcelImportKey(f.properties)),
-        ),
-      }
-  if (renderFc.features.length === 0) {
+  //
+  // useMemo で 参照 を 固定 しないと 親 の 再 render 毎 に 新しい 配列 に なり、
+  // GeoJsonInner の key が 変わって <GeoJSON> が 全部 再マウント → ラベル が
+  // unbind / rebind を 繰り返して 「地番名 の 点滅」 に なる。
+  const renderFc = useMemo((): ParcelFeatureCollection | null => {
+    if (!displayFc) return null
+    if (visible) return displayFc
+    const filtered = displayFc.features.filter((f) =>
+      importedParcelKeys?.has(parcelImportKey(f.properties)),
+    )
+    if (filtered.length === 0) return null
+    return { type: 'FeatureCollection', features: filtered }
+  }, [displayFc, visible, importedParcelKeys])
+
+  if (!effectiveVisible || zoomHidden || !renderFc) {
     return <>{indicator}</>
   }
 
@@ -521,10 +523,18 @@ function GeoJsonInner({
   // FeatureCollection が変わったら key を変えて再マウント
   // disableClicks も 混ぜる: Leaflet の interactive は 生成時にしか 効かない ので、
   // ペイント中に クリックを 素通し させる には 作り直す 必要が ある
-  const key = useMemo(
-    () => `parcel-map-${data.features.length}-${Date.now()}-${disableClicks ? 'noclick' : 'click'}`,
-    [data, disableClicks],
-  )
+  //
+  // 旧 実装 は Date.now() を 混ぜて いた が、 その せい で data 参照 が 変わる 度 に
+  // 新 key に なり 全再マウント → ラベル が unbind / rebind を 繰り返して
+  // 「地番名 点滅」 の 原因 だった。 data 参照 が 変わった 時 だけ インクリメント
+  // する カウンタ を key に 使う。
+  const dataRevRef = useRef(0)
+  const dataRevKey = useMemo(() => {
+    dataRevRef.current += 1
+    return dataRevRef.current
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data])
+  const key = `parcel-map-${dataRevKey}-${disableClicks ? 'noclick' : 'click'}`
 
   // 選択 / 取込済セットが変わったら明示的に setStyle して再描画する
   // (<GeoJSON> の style prop は初回のみ評価されるため、選択切替時は手動更新が必要)
