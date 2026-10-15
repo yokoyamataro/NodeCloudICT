@@ -345,8 +345,6 @@ export function LandSurveyDrawingPage() {
                 {step === 2 && (
                   <LandStepControls
                     plan={selected}
-                    parcels={parcels}
-                    stakeById={stakeById}
                     controls={controls}
                     onPatch={onPatch}
                   />

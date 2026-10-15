@@ -73,6 +73,65 @@ export interface MarkerSourcePoint {
   stakeStatus: string
 }
 
+/** 境界標 の 1 点 (入力 UI の 1 行)。
+ *  図面 の 表 (杭種 列 × 既設/新設 行) に 変換 して から 描く。 */
+export interface MarkerRow {
+  /** 点名 (dedup する ため 一意) */
+  pointNumber: string
+  /** 杭種。 直接 書き換え 可能 */
+  stakeType: string
+  /** 設置区分。 新設 or 既設 or 空 (空 は 図面 に 出さない) */
+  category: '新設' | '既設' | ''
+}
+
+/** 筆界点 の stakeStatus を 新設 / 既設 / 空 に 分類 する */
+export function categoryFromStatus(status: string): MarkerRow['category'] {
+  if (status === 'new' || status === 'replaced' || status === 'temporary') return '新設'
+  if (status === 'existing') return '既設'
+  return ''
+}
+
+/** 選んだ 地番 の 筆界点 を そのまま 境界標 の 行 に する。 点名 で 重複 を 除く */
+export function markerRowsFromPoints(points: MarkerSourcePoint[]): MarkerRow[] {
+  const seen = new Set<string>()
+  const rows: MarkerRow[] = []
+  for (const p of points) {
+    const pn = p.pointNumber?.trim()
+    if (!pn || seen.has(pn)) continue
+    seen.add(pn)
+    rows.push({
+      pointNumber: pn,
+      stakeType: (p.stakeType ?? '').trim(),
+      category: categoryFromStatus(p.stakeStatus),
+    })
+  }
+  return rows
+}
+
+/** 行 と して の 境界標 を、 図面 用 の 列 (杭種 × 既設/新設) に 畳む。
+ *  区分 が 空 の 点 は 図面 に 出さない。 杭種 の 順 は 行 の 初出 順。 */
+export function markerColumnsFromRows(rows: MarkerRow[]): MarkerColumn[] {
+  const order: string[] = []
+  const byKind = new Map<string, { existing: string[]; created: string[] }>()
+  for (const r of rows) {
+    const kind = r.stakeType.trim()
+    if (!kind || r.category === '') continue
+    if (!byKind.has(kind)) {
+      byKind.set(kind, { existing: [], created: [] })
+      order.push(kind)
+    }
+    const slot = byKind.get(kind)!
+    const bucket = r.category === '既設' ? slot.existing : slot.created
+    if (!bucket.includes(r.pointNumber)) bucket.push(r.pointNumber)
+  }
+  return order.map((kind, i) => ({
+    id: `auto-${i + 1}`,
+    kind,
+    existing: byKind.get(kind)!.existing.join(','),
+    created: byKind.get(kind)!.created.join(','),
+  }))
+}
+
 /**
  * 選んだ 地番 の 筆界点 から 境界標 の 表 を 作る。
  *
@@ -147,8 +206,10 @@ export interface LandDrawSpec {
   datumShowNote?: boolean
   /** 地図番号 */
   mapNumber: string
-  /** 境界標 の 種類 と 点名。 選んだ 地番 の 杭種 から 作る */
+  /** 境界標 の 種類 と 点名 (図面 側 の 表 形式)。 markerRows から 畳んで 作る */
   markerColumns: MarkerColumn[]
+  /** 境界標 の 入力 (点ごと)。 UI の 編集 単位。 markerColumns は これ から 導出 */
+  markerRows?: MarkerRow[]
   /**
    * true (既定) の 間 は 地番 を 変える たび に 境界標 を 取り直す。
    * 手 で 直した ら false に して、以後 は 触らない。
@@ -184,6 +245,7 @@ export const DEFAULT_LAND_SPEC: LandDrawSpec = {
   datumShowNote: true,
   mapNumber: '',
   markerColumns: defaultMarkerColumns(),
+  markerRows: [],
   markerAuto: true,
   headerAuto: true,
   surveyedOn: null,

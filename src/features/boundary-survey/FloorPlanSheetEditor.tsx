@@ -12,6 +12,8 @@ import { MousePointer2, Pencil, Trash2, Type, Undo2 } from 'lucide-react'
 import {
   SHEET,
   applyOverlay,
+  measureRichWidth,
+  parseRichText,
   type DrawItem,
   type LineStyle,
   type SheetOverlay,
@@ -34,6 +36,7 @@ function svgDash(style: LineStyle | undefined): string | undefined {
  *  日本語 全角 は 字高 ×1.0、 ASCII / 数字 は だいたい 字高 ×0.6 で 見積もる。
  *  混在 の 場合 は 文字 ごと に 加算 する の で、 箱 サイズ が 実文字 に 近い。 */
 function textWidth(it: Extract<DrawItem, { kind: 'text' }>): number {
+  if (it.rich) return measureRichWidth(parseRichText(it.text), it.h)
   const chars = Array.from(it.text)
   if (it.pitch && it.pitch > 0) {
     // pitch が 明示 の 時 は 等間隔 文字 (地番名 等) → pitch × (n-1) + 末尾 1 字 分
@@ -132,8 +135,10 @@ export function FloorPlanSheetEditor({
   const isExtra = sel != null && extras.some((e) => e.id === sel)
 
   const patch = (p: Partial<SheetOverlay>) => onChange({ ...(overlay ?? {}), ...p })
-  const patchMove = (id: string, m: { dx?: number; dy?: number; h?: number; rot?: number }) =>
-    patch({ moves: { ...moves, [id]: { ...(moves[id] ?? {}), ...m } } })
+  const patchMove = (
+    id: string,
+    m: { dx?: number; dy?: number; h?: number; rot?: number; text?: string },
+  ) => patch({ moves: { ...moves, [id]: { ...(moves[id] ?? {}), ...m } } })
   const patchExtra = (id: string, next: Partial<DrawItem>) =>
     patch({
       extras: extras.map((e) => (e.id === id ? ({ ...e, ...next } as DrawItem) : e)),
@@ -335,13 +340,11 @@ export function FloorPlanSheetEditor({
                 <input
                   className="w-40 px-2 py-1 text-xs border rounded"
                   value={selected.text}
-                  onChange={(e) =>
-                    isExtra
-                      ? patchExtra(selected.id!, { text: e.target.value } as Partial<DrawItem>)
-                      : undefined
-                  }
-                  disabled={!isExtra}
-                  title={isExtra ? '文字' : '中身は「1 建物情報」などで直します'}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (isExtra) patchExtra(selected.id!, { text: v } as Partial<DrawItem>)
+                    else patchMove(selected.id!, { text: v })
+                  }}
                 />
                 <label className="text-[11px] text-slate-500">大きさ</label>
                 <input
@@ -507,6 +510,43 @@ export function FloorPlanSheetEditor({
             const anchor =
               it.anchor === 'middle' ? 'middle' : it.anchor === 'end' ? 'end' : 'start'
             const transform = it.rot ? `rotate(${-it.rot} ${it.x} ${it.y})` : undefined
+            if (it.rich) {
+              // 上付 文字 を 分割 して 1 字 ずつ 置く
+              const segs = parseRichText(it.text)
+              const total = measureRichWidth(segs, it.h)
+              const start =
+                it.anchor === 'middle'
+                  ? it.x - total / 2
+                  : it.anchor === 'end'
+                  ? it.x - total
+                  : it.x
+              let cur = start
+              const nodes: React.ReactNode[] = []
+              segs.forEach((seg, k) => {
+                const sh = seg.sup ? it.h * 0.6 : it.h
+                const sy = seg.sup ? it.y - it.h * 0.4 : it.y
+                nodes.push(
+                  <text
+                    key={k}
+                    x={cur}
+                    y={sy}
+                    fontSize={sh}
+                    fontWeight={it.bold ? 'bold' : undefined}
+                    fill="#0f172a"
+                  >
+                    {seg.text}
+                  </text>,
+                )
+                for (const c of seg.text) {
+                  cur += /[\x20-\x7e]/.test(c) ? sh * 0.6 : sh
+                }
+              })
+              return (
+                <g key={i} transform={transform} {...common}>
+                  {nodes}
+                </g>
+              )
+            }
             if (it.pitch && it.pitch > 0) {
               const chars = Array.from(it.text)
               const total = it.pitch * (chars.length - 1)

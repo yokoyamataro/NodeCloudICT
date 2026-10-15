@@ -8,7 +8,14 @@
 // 画面 の フォント しか 無い ので、文字 は 画布 に 描いて 画素 に する。
 // p21 だけ は 文字 も 文字 の まま 出せる。
 
-import { SHEET, type DrawItem, type DrawText, type LineStyle } from './floorPlanDraw'
+import {
+  SHEET,
+  measureRichWidth,
+  parseRichText,
+  type DrawItem,
+  type DrawText,
+  type LineStyle,
+} from './floorPlanDraw'
 import { writeStepAp202 } from '@/lib/sxf/writeStepAp202'
 
 /** 線種 ごと の 刻み (mm)。 一点鎖線 は 長・短 の 繰り返し */
@@ -94,7 +101,23 @@ function drawTextOnCanvas(g: CanvasRenderingContext2D, it: DrawText, pxPerMm: nu
   g.textAlign = it.anchor === 'middle' ? 'center' : it.anchor === 'end' ? 'right' : 'left'
   g.translate(it.x * pxPerMm, it.y * pxPerMm)
   if (it.rot) g.rotate((-it.rot * Math.PI) / 180)
-  if (it.pitch && it.pitch > 0) {
+  if (it.rich) {
+    // 上付 文字 を 分割 して 1 字 ずつ 置く (「N[10]4-1」 など)
+    const segs = parseRichText(it.text)
+    const total = measureRichWidth(segs, it.h) * pxPerMm
+    const start = it.anchor === 'middle' ? -total / 2 : it.anchor === 'end' ? -total : 0
+    g.textAlign = 'left'
+    let cur = start
+    for (const seg of segs) {
+      const sh = (seg.sup ? it.h * 0.6 : it.h) * pxPerMm
+      const dy = seg.sup ? -it.h * 0.4 * pxPerMm : 0
+      g.font = `${it.bold ? 'bold ' : ''}${sh}px ${FONT}`
+      g.fillText(seg.text, cur, dy)
+      for (const c of seg.text) {
+        cur += /[\x20-\x7e]/.test(c) ? sh * 0.6 : sh
+      }
+    }
+  } else if (it.pitch && it.pitch > 0) {
     // 字間 を 空ける 指定 は 1 文字 ずつ 置く
     const chars = Array.from(it.text)
     const step = it.pitch * pxPerMm
@@ -342,6 +365,29 @@ export function buildFeatureP21(items: DrawItem[], title: string): string {
       body.push(
         `CIRCLE_FEATURE(${lay},1,1,${widthNo(it.w)},${n3(it.cx)},${n3(Y(it.cy))},${n3(it.r)})`,
       )
+    } else if (it.rich) {
+      // 上付 文字 を 分割 して 1 字列 ずつ TEXT_STRING_FEATURE を 吐く
+      const segs = parseRichText(it.text)
+      const total = measureRichWidth(segs, it.h)
+      const rad = (-it.rot * Math.PI) / 180
+      const cos = Math.cos(rad)
+      const sin = Math.sin(rad)
+      let cur = it.anchor === 'middle' ? -total / 2 : it.anchor === 'end' ? -total : 0
+      for (const seg of segs) {
+        if (!seg.text) continue
+        const sh = seg.sup ? it.h * 0.6 : it.h
+        const dy = seg.sup ? -it.h * 0.4 : 0
+        const px = it.x + cos * cur - sin * dy
+        const py = it.y + sin * cur + cos * dy
+        body.push(
+          `TEXT_STRING_FEATURE(${lay},1,1,'${esc(seg.text)}',` +
+            `${n3(px)},${n3(Y(py))},${n3(sh)},${n3(sh)},0.000,` +
+            `${n3(it.rot)},0.000,1,1,1)`,
+        )
+        for (const c of seg.text) {
+          cur += /[\x20-\x7e]/.test(c) ? sh * 0.6 : sh
+        }
+      }
     } else {
       // 字間 を 空ける 指定 は 1 文字 ずつ に 割る
       const chars = it.pitch && it.pitch > 0 ? Array.from(it.text) : [it.text]

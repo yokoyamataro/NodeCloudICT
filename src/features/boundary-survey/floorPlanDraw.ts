@@ -87,8 +87,58 @@ export interface DrawText extends DrawBase {
   /** 字間 を 空ける とき の 1 文字 あたり の 送り (mm) */
   pitch?: number
   bold?: boolean
+  /** true の 時 は text 中 の `[xxx]` を 上付 文字 と して 描く
+   *  (地図番号 の 「N[10]4-1」 など)。 pitch は 一緒 に 使え ない。 */
+  rich?: boolean
 }
 export type DrawItem = DrawLine | DrawPoly | DrawCircle | DrawText
+
+/** 上付 文字 を 混ぜ た 文字列 の 分割。 renderer が 字 の 高さ と Y オフセット を 使い分ける */
+export interface RichSegment {
+  text: string
+  /** 上付 (縮小 + 上 に ずらす) か */
+  sup: boolean
+}
+
+/** 「N[10]4-1」 の `[...]` を 上付 と して 分割。
+ *  「N[10]20-1, M[9]25-1」 の よう に 複数 の 上付 が あって も そのまま 通る。 */
+export function parseRichText(s: string): RichSegment[] {
+  const out: RichSegment[] = []
+  let i = 0
+  while (i < s.length) {
+    const o = s.indexOf('[', i)
+    if (o < 0) {
+      if (i < s.length) out.push({ text: s.slice(i), sup: false })
+      break
+    }
+    const c = s.indexOf(']', o + 1)
+    if (c < 0) {
+      // 閉じ が 無い → 残り は 全部 通常 文字
+      out.push({ text: s.slice(i), sup: false })
+      break
+    }
+    if (o > i) out.push({ text: s.slice(i, o), sup: false })
+    const inner = s.slice(o + 1, c)
+    if (inner.length > 0) out.push({ text: inner, sup: true })
+    i = c + 1
+  }
+  return out.filter((p) => p.text.length > 0)
+}
+
+/** 字 の およそ の 幅 (mm)。 全角 ×1.0 / ASCII ×0.6 で 見積もる */
+export function approxCharWidth(ch: string, h: number): number {
+  return /[\x20-\x7e]/.test(ch) ? h * 0.6 : h
+}
+
+/** rich 分 を 畳んだ 全体 の 幅 (mm)。 上付 は 字高 60% */
+export function measureRichWidth(segments: RichSegment[], h: number): number {
+  let w = 0
+  for (const seg of segments) {
+    const ch = seg.sup ? h * 0.6 : h
+    for (const c of seg.text) w += approxCharWidth(c, ch)
+  }
+  return w
+}
 
 /**
  * 図枠 を 組んだ 後 の 手直し。
@@ -98,8 +148,12 @@ export type DrawItem = DrawLine | DrawPoly | DrawCircle | DrawText
  * 当てる。 元 の 並べ方 は 触らない ので、中身 を 直せば また 追従 する。
  */
 export interface SheetOverlay {
-  /** 要素 の 識別子 → ずらし 量 と、文字 なら 大きさ / 角度 */
-  moves?: Record<string, { dx?: number; dy?: number; h?: number; rot?: number }>
+  /** 要素 の 識別子 → ずらし 量 / 大きさ / 角度 / 文字 の 差し替え。
+   *  `text` は 自動生成 の 文字 を 画面 上 で 直す ため の もの (元 データ は 触らない)。 */
+  moves?: Record<
+    string,
+    { dx?: number; dy?: number; h?: number; rot?: number; text?: string }
+  >
   /** 後から 足した 線 と 文字 */
   extras?: DrawItem[]
   /** 消した 要素 の 識別子 */
@@ -122,7 +176,14 @@ export function applyOverlay(items: DrawItem[], overlay: SheetOverlay | undefine
     const dx = m.dx ?? 0
     const dy = m.dy ?? 0
     if (it.kind === 'text') {
-      out.push({ ...it, x: it.x + dx, y: it.y + dy, h: m.h ?? it.h, rot: m.rot ?? it.rot })
+      out.push({
+        ...it,
+        x: it.x + dx,
+        y: it.y + dy,
+        h: m.h ?? it.h,
+        rot: m.rot ?? it.rot,
+        text: m.text ?? it.text,
+      })
     } else if (it.kind === 'line') {
       out.push({ ...it, x1: it.x1 + dx, y1: it.y1 + dy, x2: it.x2 + dx, y2: it.y2 + dy })
     } else if (it.kind === 'circle') {

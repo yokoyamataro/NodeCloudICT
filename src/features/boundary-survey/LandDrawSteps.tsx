@@ -14,9 +14,11 @@ import {
   LAND_SCALES,
   MARKER_PRESETS,
   headerFromParcels,
-  markersFromPoints,
+  markerColumnsFromRows,
+  markerRowsFromPoints,
   type LandSurveyDrawing,
   type MarkerColumn,
+  type MarkerRow,
 } from './landDrawTypes'
 import { buildLandSheet, type ControlPointForDraw, type LandParcelForDraw } from './landDrawSheet'
 import { applyOverlay } from './floorPlanDraw'
@@ -72,7 +74,8 @@ function serializeTitleTags(tags: string[]): string {
   return tags.join(', ')
 }
 
-/** 図面 の 表題 と 注記。 対象地番 の 段 の 中 に 置く */
+/** 図面 の 表題 と 注記。 対象地番 の 段 の 中 に 置く。
+ *  地図番号 / 測量年月日 / 作製者 / 申請人 / 備考 は 「2 基準点 境界情報」 側 に 移した。 */
 function InfoFields({ plan, onPatch }: { plan: LandSurveyDrawing; onPatch: Patch }) {
   const spec = plan.spec
   const setSpec = (p: Partial<typeof spec>) => onPatch({ spec: { ...spec, ...p } })
@@ -157,21 +160,6 @@ function InfoFields({ plan, onPatch }: { plan: LandSurveyDrawing; onPatch: Patch
           placeholder="例: 目梨郡羅臼町知昭町"
         />
       </Field>
-      <Field label="地図番号">
-        <input
-          className={inputCls}
-          value={spec.mapNumber}
-          onChange={(e) => setSpec({ mapNumber: e.target.value })}
-        />
-      </Field>
-      <Field label="測量年月日">
-        <input
-          type="date"
-          className={inputCls}
-          value={spec.surveyedOn ?? ''}
-          onChange={(e) => setSpec({ surveyedOn: e.target.value || null })}
-        />
-      </Field>
       <Field label="座標系" hint="工区のプロジェクト設定から取り込んでいます。">
         <div className="flex items-center gap-1">
           <input
@@ -183,12 +171,6 @@ function InfoFields({ plan, onPatch }: { plan: LandSurveyDrawing; onPatch: Patch
           <span className="text-xs text-slate-500">系</span>
         </div>
       </Field>
-
-      {/* 作製者 / 申請人 は 建物図面 と 同じ 部品 */}
-      <MakerFields
-        frame={plan.frame}
-        onFrame={(frame) => onPatch({ frame })}
-      />
     </div>
   )
 }
@@ -235,8 +217,11 @@ function ParamFields({ plan, onPatch }: { plan: LandSurveyDrawing; onPatch: Patc
 }
 
 /**
- * 境界標 の 表。 選んだ 地番 の 筆界点 が 持つ 杭種 と 設置状態 から 作る。
- * 境界 に ついて の 話 な ので 「基準点・境界情報」 の 段 に 置く。
+ * 境界標 の 表 (点 ごと の 行 UI)。
+ * 列 は 「点名 / 杭種 / 新設・既設 の 別」 の 3 列。
+ * 点名 と 杭種 は 選んだ 地番 の 筆界点 (design_coordinates) から 自動 で 入れ、
+ * どちら も 直接 直せる。 設置区分 は 新設・入替・仮杭 → 新設、 既設 → 既設 に 寄せる。
+ * 図面 側 は 「杭種 列 × 既設/新設 行」 の 形式 な ので markerColumns に 畳んで 保存。
  */
 function MarkerFields({
   plan,
@@ -251,9 +236,9 @@ function MarkerFields({
 }) {
   const spec = plan.spec
   const chosen = spec.parcelIds
-  const markersOf = (ids: string[]): MarkerColumn[] => {
+  const rowsOf = (ids: string[]): MarkerRow[] => {
     const pts = ids.flatMap((id) => parcels.find((p) => p.parcelId === id)?.points ?? [])
-    return markersFromPoints(
+    return markerRowsFromPoints(
       pts.map((q) => ({
         pointNumber: q.pointNumber,
         stakeType: stakeById.get(q.id)?.stakeType ?? null,
@@ -261,92 +246,124 @@ function MarkerFields({
       })),
     )
   }
-  const setMarkers = (cols: MarkerColumn[]) =>
-    onPatch({ spec: { ...spec, markerColumns: cols, markerAuto: false } })
+  const rows: MarkerRow[] =
+    spec.markerAuto === false && spec.markerRows ? spec.markerRows : rowsOf(chosen)
+
+  const setRows = (next: MarkerRow[]) =>
+    onPatch({
+      spec: {
+        ...spec,
+        markerRows: next,
+        markerColumns: markerColumnsFromRows(next),
+        markerAuto: false,
+      },
+    })
+
+  const resetFromParcels = () => {
+    const next = rowsOf(chosen)
+    onPatch({
+      spec: {
+        ...spec,
+        markerRows: next,
+        markerColumns: markerColumnsFromRows(next),
+        markerAuto: true,
+      },
+    })
+  }
 
   return (
     <div className="max-w-2xl">
-      <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-semibold text-slate-500">
-              境界標の種類及び筆界点の記号
-            </span>
-            <button
-              type="button"
-              onClick={() =>
-                onPatch({ spec: { ...spec, markerColumns: markersOf(chosen), markerAuto: true } })
-              }
-              className="px-2 py-0.5 text-[11px] border rounded hover:bg-slate-50"
-              title="選んだ地番の杭種・設置状態から作り直します"
-            >
-              地番から取り直す
-            </button>
-          </div>
-          <div className="text-[11px] text-slate-400 mb-1">
-            杭種が列、設置状態（既設／新設・入替）が行になります。
-            {spec.markerAuto === false && (
-              <span className="ml-1 text-amber-700">手入力に切り替わっています。</span>
-            )}
-          </div>
-          {spec.markerColumns.length === 0 ? (
-            <div className="text-[11px] text-slate-400">
-              杭種・設置状態が入っていません。座標管理で筆界点に設定してください。
-            </div>
-          ) : (
-            <table className="w-full text-[11px] border-collapse">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="px-1 py-1 border w-10" />
-                  {spec.markerColumns.map((c) => (
-                    <th key={c.id} className="px-1 py-1 border font-medium">
-                      <input
-                        className="w-full px-1 py-0.5 text-[11px] border rounded"
-                        list="marker-presets"
-                        value={c.kind}
-                        onChange={(e) =>
-                          setMarkers(
-                            spec.markerColumns.map((x) =>
-                              x.id === c.id ? { ...x, kind: e.target.value } : x,
-                            ),
-                          )
-                        }
-                      />
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(['existing', 'created'] as const).map((row) => (
-                  <tr key={row}>
-                    <td className="px-1 py-1 border bg-slate-50 text-center">
-                      {row === 'existing' ? '既設' : '新設'}
-                    </td>
-                    {spec.markerColumns.map((c) => (
-                      <td key={c.id} className="px-1 py-0.5 border">
-                        <input
-                          className="w-full px-1 py-0.5 text-[11px] border rounded"
-                          value={c[row]}
-                          onChange={(e) =>
-                            setMarkers(
-                              spec.markerColumns.map((x) =>
-                                x.id === c.id ? { ...x, [row]: e.target.value } : x,
-                              ),
-                            )
-                          }
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          <datalist id="marker-presets">
-            {MARKER_PRESETS.map((m) => (
-              <option key={m} value={m} />
-            ))}
-          </datalist>
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-xs font-semibold text-slate-500">
+          境界標の種類及び筆界点の記号
+        </span>
+        <button
+          type="button"
+          onClick={resetFromParcels}
+          className="px-2 py-0.5 text-[11px] border rounded hover:bg-slate-50"
+          title="選んだ地番の筆界点から点名・杭種・区分を作り直します"
+        >
+          地番から取り直す
+        </button>
+      </div>
+      <div className="text-[11px] text-slate-400 mb-1">
+        1 行 = 1 点。 杭種と区分は直接書き換えられます。 区分が空の行は図面に出ません。
+        {spec.markerAuto === false && (
+          <span className="ml-1 text-amber-700">手入力に切り替わっています。</span>
+        )}
+      </div>
+      {rows.length === 0 ? (
+        <div className="text-[11px] text-slate-400">
+          点がありません。地番を選び、座標管理で筆界点に杭種・設置状態を入れてください。
         </div>
+      ) : (
+        <table className="w-full text-[11px] border-collapse">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="px-1 py-1 border text-left w-20">点名</th>
+              <th className="px-1 py-1 border text-left">杭種</th>
+              <th className="px-1 py-1 border text-left w-24">新設/既設</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={`${r.pointNumber}-${i}`}>
+                <td className="px-1 py-0.5 border">
+                  <input
+                    className="w-full px-1 py-0.5 text-[11px] border rounded font-mono"
+                    value={r.pointNumber}
+                    onChange={(e) =>
+                      setRows(
+                        rows.map((x, k) =>
+                          k === i ? { ...x, pointNumber: e.target.value } : x,
+                        ),
+                      )
+                    }
+                  />
+                </td>
+                <td className="px-1 py-0.5 border">
+                  <input
+                    className="w-full px-1 py-0.5 text-[11px] border rounded"
+                    list="marker-presets"
+                    value={r.stakeType}
+                    onChange={(e) =>
+                      setRows(
+                        rows.map((x, k) =>
+                          k === i ? { ...x, stakeType: e.target.value } : x,
+                        ),
+                      )
+                    }
+                  />
+                </td>
+                <td className="px-1 py-0.5 border">
+                  <select
+                    className="w-full px-1 py-0.5 text-[11px] border rounded bg-white"
+                    value={r.category}
+                    onChange={(e) =>
+                      setRows(
+                        rows.map((x, k) =>
+                          k === i
+                            ? { ...x, category: e.target.value as MarkerRow['category'] }
+                            : x,
+                        ),
+                      )
+                    }
+                  >
+                    <option value="">—</option>
+                    <option value="新設">新設</option>
+                    <option value="既設">既設</option>
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <datalist id="marker-presets">
+        {MARKER_PRESETS.map((m) => (
+          <option key={m} value={m} />
+        ))}
+      </datalist>
     </div>
   )
 }
@@ -375,16 +392,24 @@ export function LandStepParcels({
   const spec = plan.spec
   const chosen = spec.parcelIds
 
-  /** 選んだ 地番 の 筆界点 から 境界標 の 表 を 作る */
-  const markersOf = (ids: string[]): MarkerColumn[] => {
+  /** 選んだ 地番 の 筆界点 から 境界標 の 行 を 作る (手入力 中 は 触らない) */
+  const markerRowsOf = (ids: string[]): MarkerRow[] => {
     const pts = ids.flatMap((id) => parcels.find((p) => p.parcelId === id)?.points ?? [])
-    return markersFromPoints(
+    return markerRowsFromPoints(
       pts.map((q) => ({
         pointNumber: q.pointNumber,
         stakeType: stakeById.get(q.id)?.stakeType ?? null,
         stakeStatus: stakeById.get(q.id)?.stakeStatus ?? '',
       })),
     )
+  }
+  /** 行 と 列 を 同時 に 返す。 既存 の patch 呼び出し に 1 行 で 流し込める */
+  const markersOf = (ids: string[]): { markerRows: MarkerRow[]; markerColumns: MarkerColumn[] } => {
+    if (spec.markerAuto === false) {
+      return { markerRows: spec.markerRows ?? [], markerColumns: spec.markerColumns }
+    }
+    const r = markerRowsOf(ids)
+    return { markerRows: r, markerColumns: markerColumnsFromRows(r) }
   }
 
   const setParcels = (ids: string[]) => {
@@ -403,7 +428,7 @@ export function LandStepParcels({
         parcelIds: ids,
         headerAuto: true,
         // 境界標 も 同じ 扱い
-        markerColumns: spec.markerAuto === false ? spec.markerColumns : markersOf(ids),
+        ...markersOf(ids),
       },
     })
   }
@@ -446,7 +471,7 @@ export function LandStepParcels({
         parcelIds: nextIds,
         parcelBoundaryKinds: nextKinds,
         headerAuto: true,
-        markerColumns: spec.markerAuto === false ? spec.markerColumns : markersOf(nextIds),
+        ...markersOf(nextIds),
       },
     })
   }
@@ -478,7 +503,7 @@ export function LandStepParcels({
       spec: {
         ...spec,
         parcelBoundaryKinds: current,
-        markerColumns: spec.markerAuto === false ? spec.markerColumns : markersOf(chosen),
+        ...markersOf(chosen),
       },
     })
   }
@@ -546,9 +571,14 @@ export function LandStepParcels({
           })}
         </ul>
 
-        {/* 図面 の 表題 と 注記、作製者 / 申請人 */}
+        {/* 図面 の 表題 と 注記 */}
         <div className="mt-3 pt-3 border-t">
           <InfoFields plan={plan} onPatch={onPatch} />
+        </div>
+
+        {/* 境界標 の 表 (選んだ 地番 の 筆界点 の 杭種 から) */}
+        <div className="mt-3 pt-3 border-t">
+          <MarkerFields plan={plan} parcels={parcels} stakeById={stakeById} onPatch={onPatch} />
         </div>
       </div>
 
@@ -636,31 +666,41 @@ export function LandStepParcels({
 // ========================================================================
 export function LandStepControls({
   plan,
-  parcels,
-  stakeById,
   controls,
   onPatch,
 }: {
   plan: LandSurveyDrawing
-  parcels: ParcelOption[]
-  stakeById: Map<string, { stakeType: string | null; stakeStatus: string }>
   controls: ControlPointForDraw[]
   onPatch: Patch
 }) {
   const spec = plan.spec
   const chosen = spec.controlPointIds
+  const setSpec = (p: Partial<typeof spec>) => onPatch({ spec: { ...spec, ...p } })
 
-  const toggle = (id: string) => {
-    const next = chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id]
-    // 表 の 行 も 合わせる (既に 手 で 直した 行 は 残す)
-    const keep = spec.datums.filter((d) => next.includes(d.id))
-    const added = next
-      .filter((x) => !keep.some((d) => d.id === x))
-      .map((x) => {
-        const c = controls.find((p) => p.id === x)!
-        return { id: x, category: '', name: c.pointNumber, x: c.x, y: c.y, note: '' }
-      })
-    onPatch({ spec: { ...spec, controlPointIds: next, datums: [...keep, ...added] } })
+  // 行 の 追加 / 削除。 旧 左 リスト の 代わり に 表 の 上 の プルダウン で 選ぶ。
+  const addDatum = (id: string) => {
+    if (!id || chosen.includes(id)) return
+    const c = controls.find((p) => p.id === id)
+    if (!c) return
+    onPatch({
+      spec: {
+        ...spec,
+        controlPointIds: [...chosen, id],
+        datums: [
+          ...spec.datums,
+          { id, category: '', name: c.pointNumber, x: c.x, y: c.y, note: '' },
+        ],
+      },
+    })
+  }
+  const removeDatum = (id: string) => {
+    onPatch({
+      spec: {
+        ...spec,
+        controlPointIds: chosen.filter((x) => x !== id),
+        datums: spec.datums.filter((d) => d.id !== id),
+      },
+    })
   }
 
   const setDatum = (id: string, p: Partial<(typeof spec.datums)[number]>) =>
@@ -668,50 +708,25 @@ export function LandStepControls({
       spec: { ...spec, datums: spec.datums.map((d) => (d.id === id ? { ...d, ...p } : d)) },
     })
 
-  return (
-    <div className="flex gap-4 h-full min-h-0">
-      <div className="w-72 shrink-0 flex flex-col min-h-0">
-        <div className="text-xs font-semibold text-slate-500 mb-1">使用した基準点</div>
-        <ul className="border rounded divide-y overflow-auto flex-1 min-h-0">
-          {controls.length === 0 && (
-            <li className="p-3 text-xs text-slate-400">
-              基準点がありません。座標管理で点種を「基準点」にしてください。
-            </li>
-          )}
-          {controls.map((c) => (
-            <li key={c.id}>
-              <label className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-slate-50">
-                <input
-                  type="checkbox"
-                  checked={chosen.includes(c.id)}
-                  onChange={() => toggle(c.id)}
-                />
-                <span className="flex-1 min-w-0 truncate">{c.pointNumber}</span>
-                <span className="text-[10px] text-slate-400 font-mono">
-                  {c.x.toFixed(2)} / {c.y.toFixed(2)}
-                </span>
-              </label>
-            </li>
-          ))}
-        </ul>
-      </div>
+  const unused = controls.filter((c) => !chosen.includes(c.id))
 
-      <div className="flex-1 min-w-0 overflow-auto">
+  return (
+    <div className="h-full min-h-0 overflow-auto space-y-4">
+      {/* 与点 の 成果 */}
+      <div>
         <div className="flex items-center gap-2 mb-1 flex-wrap">
           <span className="text-xs font-semibold text-slate-500">与点の成果</span>
           <input
             className="flex-1 min-w-0 max-w-md px-2 py-1 text-xs border rounded"
             value={spec.datumTitle}
-            onChange={(e) => onPatch({ spec: { ...spec, datumTitle: e.target.value } })}
+            onChange={(e) => setSpec({ datumTitle: e.target.value })}
           />
           {/* 任意列 の 表示切替。 点名/X/Y は 必須 */}
           <label className="flex items-center gap-1 text-[11px] text-slate-600 shrink-0">
             <input
               type="checkbox"
               checked={spec.datumShowCategory !== false}
-              onChange={(e) =>
-                onPatch({ spec: { ...spec, datumShowCategory: e.target.checked } })
-              }
+              onChange={(e) => setSpec({ datumShowCategory: e.target.checked })}
             />
             区分
           </label>
@@ -719,16 +734,34 @@ export function LandStepControls({
             <input
               type="checkbox"
               checked={spec.datumShowNote !== false}
-              onChange={(e) =>
-                onPatch({ spec: { ...spec, datumShowNote: e.target.checked } })
-              }
+              onChange={(e) => setSpec({ datumShowNote: e.target.checked })}
             />
             備考
           </label>
+          {/* 基準点 を 行 と して 追加 (旧 左 リスト の 代替) */}
+          <select
+            className="px-2 py-1 text-xs border rounded shrink-0 bg-white"
+            value=""
+            onChange={(e) => {
+              addDatum(e.target.value)
+              // 選択 を 元 に 戻して 再度 同じ 候補 を 選べる ように
+              e.currentTarget.value = ''
+            }}
+            disabled={unused.length === 0}
+          >
+            <option value="">
+              + 基準点を追加 ({unused.length}){controls.length === 0 ? ' - 未登録' : ''}
+            </option>
+            {unused.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.pointNumber}（{c.x.toFixed(2)} / {c.y.toFixed(2)}）
+              </option>
+            ))}
+          </select>
         </div>
         {spec.datums.length === 0 ? (
           <div className="text-xs text-slate-400">
-            基準点を選ぶと表に入ります。区分と備考はここで書き足せます。備考は改行で 2 行に分けられます。
+            右上の「+ 基準点を追加」から行を入れます。区分と備考はここで書き足せます。備考は改行で 2 行に分けられます。
           </div>
         ) : (
           <table className="w-full text-xs border-collapse">
@@ -743,6 +776,7 @@ export function LandStepControls({
                 {spec.datumShowNote !== false && (
                   <th className="px-2 py-1 border text-left">備考</th>
                 )}
+                <th className="px-1 py-1 border w-8" />
               </tr>
             </thead>
             <tbody>
@@ -779,21 +813,47 @@ export function LandStepControls({
                       />
                     </td>
                   )}
+                  <td className="px-1 py-0.5 border text-center">
+                    <button
+                      type="button"
+                      onClick={() => removeDatum(d.id)}
+                      className="text-slate-400 hover:text-red-600 text-sm leading-none"
+                      aria-label="行を削除"
+                      title="行を削除"
+                    >
+                      ×
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
+      </div>
 
-        {/* 座標変換 の パラメータ と 観測 の 注記 */}
-        <div className="mt-4 pt-3 border-t">
-          <ParamFields plan={plan} onPatch={onPatch} />
-        </div>
+      {/* 座標変換 の パラメータ と 観測 の 注記 */}
+      <div className="pt-3 border-t">
+        <ParamFields plan={plan} onPatch={onPatch} />
+      </div>
 
-        {/* 境界標 の 表 */}
-        <div className="mt-4 pt-3 border-t">
-          <MarkerFields plan={plan} parcels={parcels} stakeById={stakeById} onPatch={onPatch} />
-        </div>
+      {/* 地図番号 / 測量年月日 と 作製者 / 申請人 / 備考 (旧 Step 1 から 移設) */}
+      <div className="pt-3 border-t max-w-2xl">
+        <Field label="地図番号">
+          <input
+            className={inputCls}
+            value={spec.mapNumber}
+            onChange={(e) => setSpec({ mapNumber: e.target.value })}
+          />
+        </Field>
+        <Field label="測量年月日">
+          <input
+            type="date"
+            className={inputCls}
+            value={spec.surveyedOn ?? ''}
+            onChange={(e) => setSpec({ surveyedOn: e.target.value || null })}
+          />
+        </Field>
+        <MakerFields frame={plan.frame} onFrame={(frame) => onPatch({ frame })} />
       </div>
     </div>
   )

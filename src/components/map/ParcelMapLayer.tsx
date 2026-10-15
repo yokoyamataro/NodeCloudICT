@@ -93,6 +93,36 @@ function parcelImportKey(props: ParcelFeatureProperties): string {
   return `${props.location ?? ''}|${props.parcel_number}`
 }
 
+/** 点が ring の 中 に あるか (ray casting)。 ring は [lng, lat][] の 閉じた 列。 */
+function pointInRing(lng: number, lat: number, ring: number[][]): boolean {
+  let inside = false
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+    const xi = ring[i][0]
+    const yi = ring[i][1]
+    const xj = ring[j][0]
+    const yj = ring[j][1]
+    if (yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
+/** 点が polygon feature の 中 に あるか (外周 ∧ ¬穴)。 */
+function pointInPolygonFeature(
+  lat: number,
+  lng: number,
+  f: Feature<Polygon, ParcelFeatureProperties>,
+): boolean {
+  const rings = f.geometry.coordinates
+  if (!rings || rings.length === 0) return false
+  if (!pointInRing(lng, lat, rings[0])) return false
+  for (let i = 1; i < rings.length; i += 1) {
+    if (pointInRing(lng, lat, rings[i])) return false
+  }
+  return true
+}
+
 /** feature 個別のユニークキー。parcel_name + 第 1 頂点座標 で構成 */
 export function parcelFeatureKey(
   f: Feature<Polygon, ParcelFeatureProperties>,
@@ -519,6 +549,9 @@ function GeoJsonInner({
 }) {
   const map = useMap()
   const layerRef = useRef<L.GeoJSON | null>(null)
+  // 重なる 地番 を 連続 クリック で 回す ため の 状態。
+  // 直前 の 候補 列 (順不同 比較用) と、 その 中 で 今 選んで いる index を 持つ。
+  const cycleRef = useRef<{ keys: string[]; index: number } | null>(null)
 
   // FeatureCollection が変わったら key を変えて再マウント
   // disableClicks も 混ぜる: Leaflet の interactive は 生成時にしか 効かない ので、
@@ -793,8 +826,37 @@ function GeoJsonInner({
           const layer = e.propagatedFrom as L.Layer & {
             feature?: Feature<Polygon, ParcelFeatureProperties>
           }
-          const feature = layer?.feature
-          if (!feature) return
+          const topFeature = layer?.feature
+          if (!topFeature) return
+
+          // 同じ 位置 の 2 回目 以降 は 下 の 地番 に 回す (重なり 対応)。
+          // 候補 は クリック 点 を 含む 全 feature。 同じ 候補 群 で 続けて
+          // 押された とき だけ cycle、 違う 場所 を 押した ら 先頭 に リセット。
+          const candidates = data.features.filter((f) =>
+            pointInPolygonFeature(e.latlng.lat, e.latlng.lng, f),
+          )
+          const topKey = parcelFeatureKey(topFeature)
+          // propagatedFrom が 先頭 (今 見えて いる 一番 上) に 来る 並び を 作る
+          const ordered =
+            candidates.length > 0
+              ? [
+                  topFeature,
+                  ...candidates.filter((f) => parcelFeatureKey(f) !== topKey),
+                ]
+              : [topFeature]
+          const keys = ordered.map(parcelFeatureKey)
+          const prev = cycleRef.current
+          let index = 0
+          if (
+            prev &&
+            prev.keys.length === keys.length &&
+            prev.keys.every((k, i) => k === keys[i])
+          ) {
+            index = (prev.index + 1) % keys.length
+          }
+          cycleRef.current = { keys, index }
+          const feature = ordered[index]
+
           const isImported = !!importedParcelKeys?.has(
             parcelImportKey(feature.properties),
           )

@@ -112,6 +112,7 @@ export function buildLandSheet(
       rot: opts.rot ?? 0,
       pitch: opts.pitch,
       bold: opts.bold,
+      rich: opts.rich,
       layer: opts.layer ?? L.title,
     })
   }
@@ -135,7 +136,15 @@ type TextFn = (
   t: string,
   h: number,
   anchor?: DrawText['anchor'],
-  opts?: { rot?: number; pitch?: number; bold?: boolean; layer?: string; id?: string },
+  opts?: {
+    rot?: number
+    pitch?: number
+    bold?: boolean
+    layer?: string
+    id?: string
+    /** [...] を 上付 文字 と して 解釈 する */
+    rich?: boolean
+  },
 ) => void
 
 function drawFrame(out: DrawItem[], line: LineFn, text: TextFn, plan: LandSurveyDrawing) {
@@ -168,7 +177,7 @@ function drawFrame(out: DrawItem[], line: LineFn, text: TextFn, plan: LandSurvey
   // ---- ヘッダ の 中身 ----
   const mapNoCx = (S.left + S.hx[0]) / 2
   text(mapNoCx, 16.5, '地図番号', 2.8, 'middle', { pitch: 3.4, id: 'land:mapNoLabel' })
-  text(mapNoCx, 27.5, spec.mapNumber, 3.4, 'middle', { id: 'land:mapNo' })
+  text(mapNoCx, 27.5, spec.mapNumber, 3.4, 'middle', { id: 'land:mapNo', rich: true })
 
   text((S.markerLeft + S.markerRight) / 2, 13.6, '境界標の種類及び筆界点の記号または点名', 2.4,
     'middle', { id: 'land:markerTitle' })
@@ -205,17 +214,19 @@ function drawFrame(out: DrawItem[], line: LineFn, text: TextFn, plan: LandSurvey
   void out
 }
 
-/** 境界標 の 表 の 列 の 境目 (左端 から 右端 まで) */
+/** 境界標 の 表 の 列 の 境目 (左端 から 右端 まで)。
+ *  実物 の 書式 に 合わせて 最低 3 列 は 出す (3 以下 なら 均等 3 列、 4 以上 は 列 を 足す)。 */
 function markerEdges(spec: LandDrawSpec): number[] {
   const S = LSHEET
-  const n = Math.max(spec.markerColumns.length, 1)
+  const n = Math.max(spec.markerColumns.length, 3)
   const w = (S.markerRight - S.markerLabelRight) / n
   return Array.from({ length: n + 1 }, (_, i) => S.markerLabelRight + w * i)
 }
 
-/** 列 を 分ける 縦罫 (両端 は 枠 の 線 な ので 除く) */
+/** 列 を 分ける 縦罫 (左端 は 「種類/既設/新設」 列 の 右罫、 右端 は 外枠)。
+ *  外枠 は 別途 引いて いる ので ここ は 右端 だけ 除く。 */
 function markerDividers(spec: LandDrawSpec): number[] {
-  return markerEdges(spec).slice(1, -1)
+  return markerEdges(spec).slice(0, -1)
 }
 
 /** ヘッダ に 出す 地番 の 並び */
@@ -633,7 +644,7 @@ function drawMap(
     y: by + bh / 2 - (n - cn) * mmPerM,
   })
 
-  for (const r of rings) {
+  rings.forEach((r, ri) => {
     out.push({
       kind: 'poly',
       pts: r.pts.map((p) => toSheet(p.e, p.n)),
@@ -641,7 +652,7 @@ function drawMap(
       w: LW_FIG,
       layer: L.site,
     })
-    // 地番名
+    // 地番名。 頭 に 求積表 と 同じ 丸数字 (①②…) を 付けて 対応 を 分かり やすく。
     const c = {
       e: r.pts.reduce((s, p) => s + p.e, 0) / r.pts.length,
       n: r.pts.reduce((s, p) => s + p.n, 0) / r.pts.length,
@@ -652,13 +663,13 @@ function drawMap(
       id: `land:map:parcel:${r.label}`,
       x: p.x,
       y: p.y,
-      text: r.label,
+      text: `${circled(ri + 1)} ${r.label}`,
       h: 2.8,
       anchor: 'middle',
       rot: 0,
       layer: L.site,
     })
-  }
+  })
 
   // 筆界点 の 点名 と 辺長
   for (const r of rings) {
