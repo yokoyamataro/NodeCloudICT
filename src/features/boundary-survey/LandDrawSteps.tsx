@@ -17,6 +17,7 @@ import {
   headerFromParcels,
   markerColumnsFromRows,
   markerRowsFromPoints,
+  type AreaRounding,
   type LandSurveyDrawing,
   type MarkerColumn,
   type MarkerRow,
@@ -582,68 +583,108 @@ export function LandStepParcels({
     })
   }
 
+  /** 1 筆 ごと の 地積 切捨 方式 を 変更。 既定 (floor100) に 戻す なら key を 削除。 */
+  const setParcelRounding = (parcelId: string, r: AreaRounding) => {
+    const current = { ...(spec.parcelAreaRounding ?? {}) }
+    if (r === 'floor100') delete current[parcelId]
+    else current[parcelId] = r
+    onPatch({ spec: { ...spec, parcelAreaRounding: current } })
+  }
+
   return (
     <div className="flex gap-4 h-full min-h-0">
-      <div className="w-[21rem] shrink-0 flex flex-col min-h-0 overflow-auto">
+      <div className="w-[26rem] shrink-0 flex flex-col min-h-0 overflow-auto">
         <div className="text-xs font-semibold text-slate-500 mb-1">
           対象の地番（1 筆でも数筆でも）
         </div>
         <div className="text-[11px] text-slate-400 mb-1">
           一覧のほか、右の地図の地番を押しても選べます。
         </div>
-        <ul className="border rounded divide-y max-h-56 overflow-auto">
-          {parcels.length === 0 && (
-            <li className="p-3 text-xs text-slate-400">
+        <div className="border rounded max-h-72 overflow-auto">
+          {parcels.length === 0 ? (
+            <div className="p-3 text-xs text-slate-400">
               地番がありません。地番管理で取り込んでください。
-            </li>
+            </div>
+          ) : (
+            <table className="w-full text-[11px] border-collapse">
+              <thead className="bg-slate-50 sticky top-0">
+                <tr>
+                  <th className="px-1 py-1 border w-6" />
+                  <th className="px-2 py-1 border text-left">地番</th>
+                  <th className="px-1 py-1 border w-10 text-right">点数</th>
+                  <th className="px-1 py-1 border w-24 text-left">筆界</th>
+                  <th className="px-1 py-1 border w-28 text-left">地積切捨</th>
+                </tr>
+              </thead>
+              <tbody>
+                {parcels.map((p) => {
+                  const isChecked = p.parcelId != null && chosen.includes(p.parcelId)
+                  const kind = p.parcelId
+                    ? spec.parcelBoundaryKinds?.[p.parcelId] ?? ''
+                    : ''
+                  const rounding: AreaRounding =
+                    (p.parcelId && spec.parcelAreaRounding?.[p.parcelId]) || 'floor100'
+                  return (
+                    <tr key={p.workAreaId} className={isChecked ? 'bg-blue-50/40' : ''}>
+                      <td className="px-1 py-0.5 border text-center">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => p.parcelId && toggle(p.parcelId)}
+                        />
+                      </td>
+                      <td className="px-2 py-0.5 border truncate max-w-[9rem]">{p.label}</td>
+                      <td className="px-1 py-0.5 border text-right text-slate-500 font-mono">
+                        {p.points.length}
+                      </td>
+                      <td className="px-1 py-0.5 border">
+                        {isChecked && p.parcelId ? (
+                          <select
+                            value={kind}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              setParcelKind(
+                                p.parcelId!,
+                                v === '' ? undefined : (v as BoundaryKind),
+                              )
+                            }}
+                            className="w-full px-1 py-0.5 border rounded bg-white text-[11px]"
+                          >
+                            <option value="">自動</option>
+                            {BOUNDARY_KIND_ORDER.map((k) => (
+                              <option key={k} value={k}>
+                                {BOUNDARY_KIND_LABEL[k]}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+                      <td className="px-1 py-0.5 border">
+                        {isChecked && p.parcelId ? (
+                          <select
+                            value={rounding}
+                            onChange={(e) =>
+                              setParcelRounding(p.parcelId!, e.target.value as AreaRounding)
+                            }
+                            className="w-full px-1 py-0.5 border rounded bg-white text-[11px]"
+                            title="図面の「地 積」行の切り捨て方"
+                          >
+                            <option value="floor100">小数点2位切捨</option>
+                            <option value="floor1">整数切捨</option>
+                          </select>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           )}
-          {parcels.map((p) => {
-            const isChecked = p.parcelId != null && chosen.includes(p.parcelId)
-            const kind = p.parcelId
-              ? spec.parcelBoundaryKinds?.[p.parcelId] ?? ''
-              : ''
-            return (
-              <li key={p.workAreaId}>
-                <label className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-slate-50">
-                  <input
-                    type="checkbox"
-                    checked={isChecked}
-                    onChange={() => p.parcelId && toggle(p.parcelId)}
-                  />
-                  <span className="flex-1 min-w-0 truncate">{p.label}</span>
-                  <span className="text-[11px] text-slate-400">{p.points.length} 点</span>
-                </label>
-                {/* 筆界種別 の 選択。 選択済 の 筆 だけ 表示 */}
-                {isChecked && p.parcelId && (
-                  <div
-                    className="px-7 pb-1.5 flex items-center gap-1 text-[11px] text-slate-500"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <span className="shrink-0">筆界:</span>
-                    <select
-                      value={kind}
-                      onChange={(e) => {
-                        const v = e.target.value
-                        setParcelKind(
-                          p.parcelId!,
-                          v === '' ? undefined : (v as BoundaryKind),
-                        )
-                      }}
-                      className="flex-1 px-1 py-0.5 border rounded bg-white text-[11px]"
-                    >
-                      <option value="">自動 (確定 → 仮)</option>
-                      {BOUNDARY_KIND_ORDER.map((k) => (
-                        <option key={k} value={k}>
-                          {BOUNDARY_KIND_LABEL[k]} 筆界
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </li>
-            )
-          })}
-        </ul>
+        </div>
 
         {/* 図面 の 表題 と 注記 */}
         <div className="mt-3 pt-3 border-t">
@@ -1038,14 +1079,14 @@ function useLandSheetData(
       plan.spec.parcelIds
         .map((id) => parcels.find((p) => p.parcelId === id))
         .filter((p): p is ParcelOption => p != null)
-        .map((p) => ({ label: p.label, points: p.points })),
+        .map((p) => ({ parcelId: p.parcelId ?? undefined, label: p.label, points: p.points })),
     [plan.spec.parcelIds, parcels],
   )
   const neighbors: LandParcelForDraw[] = useMemo(
     () =>
       parcels
         .filter((p) => p.parcelId != null && !plan.spec.parcelIds.includes(p.parcelId))
-        .map((p) => ({ label: p.label, points: p.points })),
+        .map((p) => ({ parcelId: p.parcelId ?? undefined, label: p.label, points: p.points })),
     [parcels, plan.spec.parcelIds],
   )
   const used = useMemo(

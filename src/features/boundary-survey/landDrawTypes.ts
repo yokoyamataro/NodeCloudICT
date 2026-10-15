@@ -195,9 +195,16 @@ export interface DatumRow {
 export type ParamCellValue = '-' | '○' | '実測'
 export const PARAM_CELL_VALUES: ParamCellValue[] = ['-', '○', '実測']
 
+/** 地積 の 切り捨て 方式 */
+export type AreaRounding = 'floor100' | 'floor1'
+
 export interface LandDrawSpec {
   /** 対象 の 地番 (parcels.id)。 1 筆 でも 数筆 でも */
   parcelIds: string[]
+  /** 地番 ごと の 地積 の 切り捨て 方式。
+   *    floor100 (既定) … 小数点 2 位 で 切り捨て (19239.152860 → 19239.15)
+   *    floor1          … 整数 で 切り捨て (19239.152860 → 19239) */
+  parcelAreaRounding?: Record<string, AreaRounding>
   /**
    * 筆 ごと の 使用 する 筆界 の 種類。 キー = parcel_id。
    *   provisional   … 仮筆界 (地図 XML 由来 の 当初 の 形)
@@ -329,6 +336,7 @@ export interface ParcelAreaCalc {
 export function calcParcelArea(
   parcelLabel: string,
   points: { pointNumber: string; x: number; y: number }[],
+  rounding: AreaRounding = 'floor100',
 ): ParcelAreaCalc {
   const n = points.length
   const rows: AreaCalcRow[] = []
@@ -343,13 +351,8 @@ export function calcParcelArea(
     rows.push({ name: p.pointNumber, x: p.x, y: p.y, dy, product })
   }
   const area = Math.abs(sum) / 2
-  return {
-    parcelLabel,
-    rows,
-    sum,
-    area,
-    registered: Math.floor(area * 100) / 100,
-  }
+  const registered = rounding === 'floor1' ? Math.floor(area) : Math.floor(area * 100) / 100
+  return { parcelLabel, rows, sum, area, registered }
 }
 
 /** 図面 に 出す 桁。 座標 は 3 桁、途中 の 積 は 6 桁 */

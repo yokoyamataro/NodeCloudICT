@@ -76,6 +76,8 @@ const L = {
 } as const
 
 export interface LandParcelForDraw {
+  /** parcels.id。 spec.parcelAreaRounding の 引き に 使う (無ければ 既定 の 2 位 切捨) */
+  parcelId?: string
   label: string
   /** 平面直角座標 の 構成点 (X=北 / Y=東) */
   points: { id: string; pointNumber: string; x: number; y: number }[]
@@ -251,6 +253,10 @@ interface TCell {
   /** 右 へ 何 列 ぶん 伸ばす か (仕切り を 引かない) */
   span?: number
   id?: string
+  /** 末尾 に 固定 で 置く 単位 (例: '㎡')。 align='end' の 時 だけ 効く。
+   *  text を 本来 の end-align 位置 で 止めて、 その 右 に 少し 離して 置く ので、
+   *  上下 の 行 で 数字 の 右端 が 揃う (「合計面積」 と 「地積」 の 桁 位置)。 */
+  suffix?: string
 }
 
 function drawTable(
@@ -300,11 +306,21 @@ function drawTable(
       const align = cell.align ?? 'middle'
       const tx = align === 'start' ? left + 1.2 : align === 'end' ? right - 1.2 : (left + right) / 2
       const h = cell.h ?? 2.2
+      const cy = ys[ri] + r.h / 2 + h * 0.38
       if (cell.sub) {
         text(tx, ys[ri] + r.h / 2 - 0.3, cell.text, h, align, { layer, id: cell.id })
         text(tx, ys[ri] + r.h / 2 + h + 0.4, cell.sub, h, align, { layer })
+      } else if (cell.suffix && align === 'end') {
+        // 数字 と 単位 (㎡) を 分離 して 描く。 単位 が cell の 中 に 収まる よう、
+        // 数字 の 右端 を 本来 の tx より (単位 幅 + 隙間) だけ 左 に 寄せる。
+        // suffix を 持つ 全部 の 行 (合計面積 / 地積 / 総合計面積) で 同じ 分 だけ 寄せる
+        // ので 行 どうし の 数字 (= 小数点) の 位置 は 揃う。
+        const suffixOffset = h + 0.3 // 単位 '㎡' の 幅 ≒ h、 隙間 0.3
+        const numEnd = tx - suffixOffset
+        text(numEnd, cy, cell.text, h, 'end', { layer, id: cell.id })
+        text(numEnd + 0.3, cy, cell.suffix, h, 'start', { layer })
       } else {
-        text(tx, ys[ri] + r.h / 2 + h * 0.38, cell.text, h, align, { layer, id: cell.id })
+        text(tx, cy, cell.text, h, align, { layer, id: cell.id })
       }
       ci += span
     }
@@ -455,14 +471,17 @@ function drawCalc(
   }
 
   // ---- 求積表 ----
-  y += 6.5
-  text(103.4, y, '求積表', 3.2, 'middle', { bold: true, id: 'land:areaTitle' })
+  // 見出し は 与点 の 成果 と 同じ 字高 / 字体 (非太字)。 位置 は 少し 下げる
+  y += 7.5
+  text(103.4, y, '求積表', 3.0, 'middle', { id: 'land:areaTitle' })
   y += 6.1
 
   const xs = [48.39, 65.34, 85.34, 105.35, 125.35, 158.37]
   let total = 0
   parcels.forEach((p, pi) => {
-    const calc = calcParcelArea(p.label, p.points)
+    const rounding =
+      (p.parcelId && spec.parcelAreaRounding?.[p.parcelId]) || 'floor100'
+    const calc = calcParcelArea(p.label, p.points, rounding)
     total += calc.area
 
     const rows: { h: number; cells: TCell[] }[] = [
@@ -514,14 +533,26 @@ function drawCalc(
       h: 3.49,
       cells: [
         { text: '合 計 面 積', align: 'end', span: 4 },
-        { text: n6(calc.area), align: 'end', id: `land:area:${pi}:area` },
+        { text: n6(calc.area), align: 'end', id: `land:area:${pi}:area`, suffix: '㎡' },
       ],
     })
+    // 「合計面積」 と 小数点 の 位置 を 揃える ため、 末尾 に 数字幅 の 空白 (U+2007
+     // = FIGURE SPACE) を 詰めて n6 と 同じ 幅 に する。 整数 切り捨て は 小数点 も 無い
+     // ので 1 文字 余分 に 詰める。
+    const n6Str = n6(calc.area) // 例: "19239.152860"
+    const raw = rounding === 'floor1' ? String(calc.registered) : n2(calc.registered)
+    const pad = Math.max(0, n6Str.length - raw.length)
+    const regText = raw + ' '.repeat(pad)
     rows.push({
       h: 3.49,
       cells: [
         { text: '地 積', align: 'end', span: 4 },
-        { text: `${n2(calc.registered)} ㎡`, align: 'end', id: `land:area:${pi}:reg` },
+        {
+          text: regText,
+          align: 'end',
+          id: `land:area:${pi}:reg`,
+          suffix: '㎡',
+        },
       ],
     })
     y = drawTable(out, text, xs, y, rows, L.calc) + 3.5
@@ -539,7 +570,7 @@ function drawCalc(
           h: 5.02,
           cells: [
             { text: '総合計面積', h: 2.6, id: 'land:grandLabel' },
-            { text: `${n6(total)} ㎡`, align: 'end', h: 2.6, id: 'land:grand' },
+            { text: n6(total), align: 'end', h: 2.6, id: 'land:grand', suffix: '㎡' },
           ],
         },
       ],
