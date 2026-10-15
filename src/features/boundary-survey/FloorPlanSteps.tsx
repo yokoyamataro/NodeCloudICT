@@ -367,9 +367,12 @@ function ParcelPicker({
 export function MakerFields({
   frame,
   onFrame,
+  landownerOptions,
 }: {
   frame: FloorPlanFrame
   onFrame: (frame: FloorPlanFrame) => void
+  /** 申請人 の 選択肢 と して 差し込む 地権者 の 一覧 (地積測量図 で 使う) */
+  landownerOptions?: { id: string; name: string }[]
 }) {
   const setFrame = (p: Partial<FloorPlanFrame>) => onFrame({ ...frame, ...p })
   const { surveyors, loading } = useOrganizationSurveyors()
@@ -490,7 +493,7 @@ export function MakerFields({
       </div>
 
       <div className="pt-2 mt-2 border-t text-xs font-semibold text-slate-500">申請人</div>
-      <ApplicantFields frame={frame} setFrame={setFrame} />
+      <ApplicantFields frame={frame} setFrame={setFrame} landownerOptions={landownerOptions} />
 
       <div className="pt-2 mt-2 border-t" />
       <Field label="備考">
@@ -511,12 +514,26 @@ export function MakerFields({
 function ApplicantFields({
   frame,
   setFrame,
+  landownerOptions,
 }: {
   frame: FloorPlanFrame
   setFrame: (p: Partial<FloorPlanFrame>) => void
+  /** 地権者 の 一覧。 選ぶ と 申請人 氏名 に 入れる (joint なら 行 を 足す) */
+  landownerOptions?: { id: string; name: string }[]
 }) {
   const kind = frame.applicantKind ?? 'individual'
   const names = frame.applicantNames ?? []
+
+  const pickLandowner = (id: string) => {
+    const o = landownerOptions?.find((x) => x.id === id)
+    if (!o || !o.name) return
+    if (kind === 'joint') {
+      if (names.includes(o.name)) return
+      setFrame({ applicantNames: [...names, o.name] })
+    } else {
+      setFrame({ applicantName: o.name })
+    }
+  }
 
   return (
     <>
@@ -533,6 +550,26 @@ function ApplicantFields({
           <option value="corporate">法人</option>
         </select>
       </Field>
+
+      {landownerOptions && landownerOptions.length > 0 && (
+        <Field label="地権者から" hint="選ぶと氏名欄に入ります（共有は末尾に追加）。">
+          <select
+            className={inputCls}
+            value=""
+            onChange={(e) => {
+              pickLandowner(e.target.value)
+              e.currentTarget.value = ''
+            }}
+          >
+            <option value="">（地権者を選択）</option>
+            {landownerOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
 
       {kind === 'individual' && (
         <Field label="氏名">

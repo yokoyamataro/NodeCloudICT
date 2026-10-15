@@ -341,6 +341,12 @@ function drawCalc(
   // ---- 座標変換 の パラメータ ----
   let y = 41.76
   if (spec.paramNote.tky2jgd || spec.paramNote.patchjgd) {
+    const g = spec.paramGrid ?? {
+      tkyBase: '-' as const,
+      patBase: '-' as const,
+      tkyBoundary: '-' as const,
+      patBoundary: '-' as const,
+    }
     y = drawTable(
       out,
       text,
@@ -355,8 +361,22 @@ function drawCalc(
             { text: 'PatchJGD', sub: spec.paramNote.patchjgd, id: 'land:param:2' },
           ],
         },
-        { h: 3.55, cells: [{ text: '基準点' }, { text: '－' }, { text: '－' }] },
-        { h: 3.50, cells: [{ text: '筆界点' }, { text: '－' }, { text: '－' }] },
+        {
+          h: 3.55,
+          cells: [
+            { text: '基準点' },
+            { text: g.tkyBase, id: 'land:paramGrid:tkyBase' },
+            { text: g.patBase, id: 'land:paramGrid:patBase' },
+          ],
+        },
+        {
+          h: 3.50,
+          cells: [
+            { text: '筆界点' },
+            { text: g.tkyBoundary, id: 'land:paramGrid:tkyBoundary' },
+            { text: g.patBoundary, id: 'land:paramGrid:patBoundary' },
+          ],
+        },
       ],
       L.calc,
     )
@@ -699,10 +719,19 @@ function drawMap(
       })
     }
   }
+  // 点名 ごと の マーカー 設定 (none / standard / custom)。 既定 は standard。
+  const markerByPn = new Map<string, string>()
+  for (const r of plan.spec.markerRows ?? []) {
+    if (r.pointNumber) markerByPn.set(r.pointNumber, r.marker ?? 'standard')
+  }
   for (const p of parcels) {
     for (const q of p.points) {
       const s = toSheet(q.y, q.x)
-      out.push({ kind: 'circle', cx: s.x, cy: s.y, r: 0.5, w: LW, layer: L.site })
+      const marker = markerByPn.get(q.pointNumber) ?? 'standard'
+      if (marker !== 'none') {
+        // custom は 将来 色・記号 を 変える。 当面 は standard と 同じ ○ で 描く
+        out.push({ kind: 'circle', cx: s.x, cy: s.y, r: 0.5, w: LW, layer: L.site })
+      }
       out.push({
         kind: 'text',
         id: `land:pointName:${q.id}`,

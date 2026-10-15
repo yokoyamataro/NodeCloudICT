@@ -82,7 +82,14 @@ export interface MarkerRow {
   stakeType: string
   /** 設置区分。 新設 or 既設 or 空 (空 は 図面 に 出さない) */
   category: '新設' | '既設' | ''
+  /** 図 上 の マーカー 描画。
+   *   standard: ○ を 描く (既定)
+   *   none    : 描か ない
+   *   custom  : 色・記号 を 個別 に 指定 (今 は standard と 同じ、 将来 拡張) */
+  marker?: MarkerSymbol
 }
+
+export type MarkerSymbol = 'none' | 'standard' | 'custom'
 
 /** 筆界点 の stakeStatus を 新設 / 既設 / 空 に 分類 する */
 export function categoryFromStatus(status: string): MarkerRow['category'] {
@@ -103,6 +110,7 @@ export function markerRowsFromPoints(points: MarkerSourcePoint[]): MarkerRow[] {
       pointNumber: pn,
       stakeType: (p.stakeType ?? '').trim(),
       category: categoryFromStatus(p.stakeStatus),
+      marker: 'standard',
     })
   }
   return rows
@@ -183,6 +191,10 @@ export interface DatumRow {
   note: string
 }
 
+/** 座標変換 パラメータ 表 の 1 マス の 値 (「-」「○」「実測」 の 3 択) */
+export type ParamCellValue = '-' | '○' | '実測'
+export const PARAM_CELL_VALUES: ParamCellValue[] = ['-', '○', '実測']
+
 export interface LandDrawSpec {
   /** 対象 の 地番 (parcels.id)。 1 筆 でも 数筆 でも */
   parcelIds: string[]
@@ -228,6 +240,14 @@ export interface LandDrawSpec {
   datumTitle: string
   /** 座標変換 パラメータ の 注記 (TKY2JGD / PatchJGD) */
   paramNote: { tky2jgd: string; patchjgd: string }
+  /** 「TKY2JGD / PatchJGD × 基準点 / 筆界点」 の 4 マス。
+   *  それぞれ `-` / `○` / `実測` を 選ぶ。 既定 は 全部 `-`。 */
+  paramGrid?: {
+    tkyBase: ParamCellValue
+    patBase: ParamCellValue
+    tkyBoundary: ParamCellValue
+    patBoundary: ParamCellValue
+  }
   /** 観測 に ついて の 注記 */
   observationNote: string
   /** 図 に 添える 隣接地 の 地番 など */
@@ -252,6 +272,7 @@ export const DEFAULT_LAND_SPEC: LandDrawSpec = {
   zone: 13,
   datumTitle: '与点の成果　世界測地系　測地成果2024',
   paramNote: { tky2jgd: '', patchjgd: '' },
+  paramGrid: { tkyBase: '-', patBase: '-', tkyBoundary: '-', patBoundary: '-' },
   observationNote: '',
   notes: [],
   whisker: { show: true, lengthMm: 10 },

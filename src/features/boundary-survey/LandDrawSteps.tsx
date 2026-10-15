@@ -13,12 +13,15 @@ import type { LandDrawPatch } from '@/stores/landDrawStore'
 import {
   LAND_SCALES,
   MARKER_PRESETS,
+  PARAM_CELL_VALUES,
   headerFromParcels,
   markerColumnsFromRows,
   markerRowsFromPoints,
   type LandSurveyDrawing,
   type MarkerColumn,
   type MarkerRow,
+  type MarkerSymbol,
+  type ParamCellValue,
 } from './landDrawTypes'
 import { buildLandSheet, type ControlPointForDraw, type LandParcelForDraw } from './landDrawSheet'
 import { applyOverlay } from './floorPlanDraw'
@@ -33,6 +36,7 @@ import {
 import { FloorPlanSheetEditor } from './FloorPlanSheetEditor'
 import { FloorPlanSiteMap } from './FloorPlanSiteMap'
 import type { CoordinateConverter } from '@/lib/coordinates'
+import { useLandownerStore } from '@/stores/landownerStore'
 import { MakerFields } from './FloorPlanSteps'
 import { BOUNDARY_KIND_LABEL, BOUNDARY_KIND_ORDER, type BoundaryKind } from '@/lib/boundaryKind'
 
@@ -203,6 +207,57 @@ function ParamFields({ plan, onPatch }: { plan: LandSurveyDrawing; onPatch: Patc
           placeholder="例: tokachi2003B"
         />
       </Field>
+      {/* 基準点 / 筆界点 × TKY2JGD / PatchJGD の 4 マス。 既定 は 全部 「-」 */}
+      {(() => {
+        const g = spec.paramGrid ?? {
+          tkyBase: '-' as ParamCellValue,
+          patBase: '-' as ParamCellValue,
+          tkyBoundary: '-' as ParamCellValue,
+          patBoundary: '-' as ParamCellValue,
+        }
+        const setCell = (k: keyof NonNullable<typeof spec.paramGrid>, v: ParamCellValue) =>
+          setSpec({ paramGrid: { ...g, [k]: v } })
+        return (
+          <Field label="適用" hint="それぞれ − / ○ / 実測 を選びます。">
+            <table className="text-xs border-collapse">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-2 py-1 border w-16" />
+                  <th className="px-2 py-1 border w-24 font-medium">TKY2JGD</th>
+                  <th className="px-2 py-1 border w-24 font-medium">PatchJGD</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(['Base', 'Boundary'] as const).map((row) => (
+                  <tr key={row}>
+                    <td className="px-2 py-0.5 border bg-slate-50 text-center">
+                      {row === 'Base' ? '基準点' : '筆界点'}
+                    </td>
+                    {(['tky', 'pat'] as const).map((col) => {
+                      const key = `${col}${row}` as keyof NonNullable<typeof spec.paramGrid>
+                      return (
+                        <td key={col} className="px-1 py-0.5 border">
+                          <select
+                            className="w-full px-1 py-0.5 text-xs border rounded bg-white"
+                            value={g[key]}
+                            onChange={(e) => setCell(key, e.target.value as ParamCellValue)}
+                          >
+                            {PARAM_CELL_VALUES.map((v) => (
+                              <option key={v} value={v}>
+                                {v}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Field>
+        )
+      })()}
       <Field label="観測の注記">
         <input
           className={inputCls}
@@ -303,6 +358,7 @@ function MarkerFields({
               <th className="px-1 py-1 border text-left w-20">点名</th>
               <th className="px-1 py-1 border text-left">杭種</th>
               <th className="px-1 py-1 border text-left w-24">新設/既設</th>
+              <th className="px-1 py-1 border text-left w-28">マーカー</th>
             </tr>
           </thead>
           <tbody>
@@ -352,6 +408,24 @@ function MarkerFields({
                     <option value="">—</option>
                     <option value="新設">新設</option>
                     <option value="既設">既設</option>
+                  </select>
+                </td>
+                <td className="px-1 py-0.5 border">
+                  <select
+                    className="w-full px-1 py-0.5 text-[11px] border rounded bg-white"
+                    value={r.marker ?? 'standard'}
+                    onChange={(e) =>
+                      setRows(
+                        rows.map((x, k) =>
+                          k === i ? { ...x, marker: e.target.value as MarkerSymbol } : x,
+                        ),
+                      )
+                    }
+                    title="図上の○マーカーの描画方法"
+                  >
+                    <option value="standard">あり (○)</option>
+                    <option value="none">なし</option>
+                    <option value="custom">個別設定 (未実装)</option>
                   </select>
                 </td>
               </tr>
@@ -710,6 +784,27 @@ export function LandStepControls({
 
   const unused = controls.filter((c) => !chosen.includes(c.id))
 
+  // 選んだ 地番 に 紐付く 地権者 を 申請人 の 選択肢 に。
+  // 複数 筆 で 重複 する 地権者 は 1 件 に 絞る (full_name で dedup)。
+  const landownersAll = useLandownerStore((s) => s.landowners)
+  const landownersByParcelId = useLandownerStore((s) => s.landownersByParcelId)
+  const landownerOptions = useMemo(() => {
+    const idSet = new Set<string>()
+    for (const pid of spec.parcelIds) {
+      for (const lid of landownersByParcelId.get(pid) ?? []) idSet.add(lid)
+    }
+    const seenName = new Set<string>()
+    const list: { id: string; name: string }[] = []
+    for (const l of landownersAll) {
+      if (!idSet.has(l.id)) continue
+      const name = (l.full_name ?? '').trim()
+      if (!name || seenName.has(name)) continue
+      seenName.add(name)
+      list.push({ id: l.id, name })
+    }
+    return list
+  }, [landownersAll, landownersByParcelId, spec.parcelIds])
+
   return (
     <div className="h-full min-h-0 overflow-auto space-y-4">
       {/* 与点 の 成果 */}
@@ -853,7 +948,11 @@ export function LandStepControls({
             onChange={(e) => setSpec({ surveyedOn: e.target.value || null })}
           />
         </Field>
-        <MakerFields frame={plan.frame} onFrame={(frame) => onPatch({ frame })} />
+        <MakerFields
+          frame={plan.frame}
+          onFrame={(frame) => onPatch({ frame })}
+          landownerOptions={landownerOptions}
+        />
       </div>
     </div>
   )
