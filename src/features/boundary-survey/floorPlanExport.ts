@@ -18,6 +18,27 @@ import {
 } from './floorPlanDraw'
 import { writeStepAp202 } from '@/lib/sxf/writeStepAp202'
 
+/** 線 の 矢頭 の 3 点 (mm 座標 の 平坦 配列: tipX, tipY, blX, blY, brX, brY)。
+ *  長さ 2mm / 半幅 0.8mm の 塗りつぶし 三角形。 */
+function arrowHead(
+  tipX: number,
+  tipY: number,
+  fromX: number,
+  fromY: number,
+): number[] | null {
+  const dx = tipX - fromX
+  const dy = tipY - fromY
+  const len = Math.hypot(dx, dy)
+  if (len < 0.01) return null
+  const ux = dx / len
+  const uy = dy / len
+  const L = 2.0
+  const W = 0.8
+  const bcx = tipX - L * ux
+  const bcy = tipY - L * uy
+  return [tipX, tipY, bcx - W * uy, bcy + W * ux, bcx + W * uy, bcy - W * ux]
+}
+
 /** 線種 ごと の 刻み (mm)。 一点鎖線 は 長・短 の 繰り返し */
 function dashPattern(style: LineStyle | undefined): number[] {
   if (style === 'dash') return [1.2, 0.8]
@@ -68,6 +89,26 @@ export function renderToCanvas(
       g.moveTo(X(it.x1), X(it.y1))
       g.lineTo(X(it.x2), X(it.y2))
       g.stroke()
+      // 矢頭 (end / both で 終点、 start / both で 始点)
+      if (it.arrow && it.arrow !== 'none') {
+        g.setLineDash([])
+        const drawHead = (tx: number, ty: number, fx: number, fy: number) => {
+          const pts = arrowHead(tx, ty, fx, fy)
+          if (!pts) return
+          g.beginPath()
+          g.moveTo(X(pts[0]), X(pts[1]))
+          g.lineTo(X(pts[2]), X(pts[3]))
+          g.lineTo(X(pts[4]), X(pts[5]))
+          g.closePath()
+          g.fill()
+        }
+        if (it.arrow === 'end' || it.arrow === 'both') {
+          drawHead(it.x2, it.y2, it.x1, it.y1)
+        }
+        if (it.arrow === 'start' || it.arrow === 'both') {
+          drawHead(it.x1, it.y1, it.x2, it.y2)
+        }
+      }
     } else if (it.kind === 'poly') {
       if (it.pts.length < 2) continue
       g.setLineDash(dashPattern(it.style).map(X))
@@ -354,6 +395,21 @@ export function buildFeatureP21(items: DrawItem[], title: string): string {
         `LINE_FEATURE(${lay},1,${sxfLineType(it.style)},${widthNo(it.w)},` +
           `${n3(it.x1)},${n3(Y(it.y1))},${n3(it.x2)},${n3(Y(it.y2))})`,
       )
+      // 矢頭 (塗り つぶし 三角形 を POLYLINE で 近似)
+      if (it.arrow && it.arrow !== 'none') {
+        const emitHead = (tx: number, ty: number, fx: number, fy: number) => {
+          const h = arrowHead(tx, ty, fx, fy)
+          if (!h) return
+          const xs = [h[0], h[2], h[4], h[0]]
+          const ys = [h[1], h[3], h[5], h[1]]
+          body.push(
+            `POLYLINE_FEATURE(${lay},1,1,${widthNo(it.w)},4,` +
+              `(${xs.map(n3).join(',')}),(${ys.map((v) => n3(Y(v))).join(',')}))`,
+          )
+        }
+        if (it.arrow === 'end' || it.arrow === 'both') emitHead(it.x2, it.y2, it.x1, it.y1)
+        if (it.arrow === 'start' || it.arrow === 'both') emitHead(it.x1, it.y1, it.x2, it.y2)
+      }
     } else if (it.kind === 'poly') {
       const pts = it.closed ? [...it.pts, it.pts[0]] : it.pts
       if (pts.length < 2) continue

@@ -35,6 +35,7 @@ import {
   Users,
   KeyRound,
   FileText,
+  LifeBuoy,
   ShieldCheck,
   ClipboardList,
   Megaphone,
@@ -941,6 +942,14 @@ function UserMenu({
           >
             <FileText className="h-4 w-4 text-slate-500" />
             利用規約
+          </Link>
+          <Link
+            to="/support"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50"
+          >
+            <LifeBuoy className="h-4 w-4 text-slate-500" />
+            サポート
           </Link>
           {/* アプリ の ビルド日時 (バージョン情報)。 利用規約 の 直下 に 常時 表示。
               以前 は 利用規約 本文 の 末尾 や ヘッダ下 に 出して いた の を こちら に 集約 */}

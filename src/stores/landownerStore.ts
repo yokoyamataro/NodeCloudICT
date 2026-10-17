@@ -140,7 +140,7 @@ export const useLandownerStore = create<State>((set, get) => ({
         primary_attendance_at: fields.primary_attendance_at ?? null,
         secondary_attendance_at: fields.secondary_attendance_at ?? null,
         notification_method: fields.notification_method ?? null,
-        attendance_status: fields.attendance_status ?? 'not_attended',
+        attendance_status: fields.attendance_status ?? '未立会',
         notes: isoOrNull(fields.notes ?? null),
       }
       const { data, error } = await supabase

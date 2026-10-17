@@ -7,13 +7,14 @@ import { Trash2, Plus } from 'lucide-react'
 import { useLandownerStore } from '@/stores/landownerStore'
 import type {
   Landowner,
-  LandownerAttendanceStatus,
   LandownerAttribute,
   LandownerIdMethod,
   LandownerNotificationMethod,
 } from '@/types/database'
 import {
-  LANDOWNER_ATTENDANCE_LABEL,
+  LANDOWNER_ATTENDANCE_BADGE,
+  LANDOWNER_ATTENDANCE_BADGE_DEFAULT,
+  LANDOWNER_ATTENDANCE_PRESETS,
   LANDOWNER_ATTRIBUTE_LABEL,
   LANDOWNER_ID_METHOD_LABEL,
   LANDOWNER_NOTIFICATION_LABEL,
@@ -103,13 +104,6 @@ export const DEFAULT_VISIBLE_LANDOWNER_COLUMNS: ReadonlySet<LandownerColumnKey> 
 const ATTRIBUTE_OPTIONS: LandownerAttribute[] = ['applicant', 'adjacent']
 const ID_METHOD_OPTIONS: LandownerIdMethod[] = ['license', 'idcard', 'meishiki', 'other']
 
-const ATTENDANCE_OPTIONS: LandownerAttendanceStatus[] = [
-  'not_attended',
-  'field_confirmed',
-  'document_confirmed',
-  'rejected',
-]
-
 const NOTIFICATION_OPTIONS: LandownerNotificationMethod[] = [
   'direct_visit',
   'mail',
@@ -117,12 +111,8 @@ const NOTIFICATION_OPTIONS: LandownerNotificationMethod[] = [
   'agent',
 ]
 
-const STATUS_BADGE: Record<LandownerAttendanceStatus, string> = {
-  not_attended: 'bg-slate-100 text-slate-700 border-slate-200',
-  field_confirmed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  document_confirmed: 'bg-blue-50 text-blue-700 border-blue-200',
-  rejected: 'bg-red-50 text-red-700 border-red-200',
-}
+const statusBadgeFor = (v: string): string =>
+  LANDOWNER_ATTENDANCE_BADGE[v] ?? LANDOWNER_ATTENDANCE_BADGE_DEFAULT
 
 // timestamptz → datetime-local 文字列
 function toLocalInput(iso: string | null): string {
@@ -370,19 +360,23 @@ export function LandownerRowFields({
         )
       case 'attendance_status':
         return (
-          <select
-            value={landowner.attendance_status}
-            onChange={(e) =>
-              save({ attendance_status: e.target.value as LandownerAttendanceStatus })
-            }
-            className={`w-full px-1.5 py-1 text-xs border rounded focus:ring-1 focus:ring-blue-400 focus:outline-none ${STATUS_BADGE[landowner.attendance_status]}`}
-          >
-            {ATTENDANCE_OPTIONS.map((s) => (
-              <option key={s} value={s}>
-                {LANDOWNER_ATTENDANCE_LABEL[s]}
-              </option>
-            ))}
-          </select>
+          <>
+            <input
+              type="text"
+              list="landowner-attendance-presets"
+              value={landowner.attendance_status ?? ''}
+              onChange={(e) => save({ attendance_status: e.target.value })}
+              placeholder="未立会"
+              className={`w-full px-1.5 py-1 text-xs border rounded focus:ring-1 focus:ring-blue-400 focus:outline-none ${statusBadgeFor(
+                landowner.attendance_status ?? '',
+              )}`}
+            />
+            <datalist id="landowner-attendance-presets">
+              {LANDOWNER_ATTENDANCE_PRESETS.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
+          </>
         )
       case 'notes':
         return (

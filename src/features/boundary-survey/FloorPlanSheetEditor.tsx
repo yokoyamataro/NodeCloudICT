@@ -8,12 +8,22 @@
 // 中身 (所在 や 求積 など) を 直せば その まま 追従 する。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MousePointer2, Pencil, Trash2, Type, Undo2 } from 'lucide-react'
+import {
+  ArrowLeftRight,
+  ArrowRight,
+  Minus,
+  MousePointer2,
+  Pencil,
+  Trash2,
+  Type,
+  Undo2,
+} from 'lucide-react'
 import {
   SHEET,
   applyOverlay,
   measureRichWidth,
   parseRichText,
+  type ArrowStyle,
   type DrawItem,
   type LineStyle,
   type SheetOverlay,
@@ -24,6 +34,31 @@ type Tool = 'select' | 'line' | 'text'
 /** 足した 要素 の 識別子。 描画中 で は なく 操作 の 中 で 作る */
 let extraSeq = 0
 const nextExtraId = () => `extra:${(extraSeq += 1)}-${Math.random().toString(36).slice(2, 7)}`
+
+/** 線 の 端 に 置く 矢頭 の 3 点 (塗りつぶし 三角形)。 現地 1/500 なら
+ *  用紙 上 2mm で 現地 1m。 線 の 延長方向 の 向き に 向く。 */
+function arrowHeadPoints(
+  tipX: number,
+  tipY: number,
+  fromX: number,
+  fromY: number,
+): string {
+  const dx = tipX - fromX
+  const dy = tipY - fromY
+  const len = Math.hypot(dx, dy)
+  if (len < 0.01) return ''
+  const ux = dx / len
+  const uy = dy / len
+  const L = 2.0 // 長さ (mm)
+  const W = 0.8 // 半幅 (mm)
+  const bcx = tipX - L * ux
+  const bcy = tipY - L * uy
+  const blx = bcx - W * uy
+  const bly = bcy + W * ux
+  const brx = bcx + W * uy
+  const bry = bcy - W * ux
+  return `${tipX},${tipY} ${blx},${bly} ${brx},${bry}`
+}
 
 /** 線種 を SVG の 刻み に */
 function svgDash(style: LineStyle | undefined): string | undefined {
@@ -62,6 +97,8 @@ export function FloorPlanSheetEditor({
 }) {
   const [tool, setTool] = useState<Tool>('select')
   const [sel, setSel] = useState<string | null>(null)
+  // 「線を引く」 の 時 の 矢印 設定。 none=無し、 end=終点 のみ、 both=両端
+  const [arrowStyle, setArrowStyle] = useState<ArrowStyle>('none')
   const svgRef = useRef<SVGSVGElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ id: string; x: number; y: number; dx: number; dy: number } | null>(null)
@@ -257,6 +294,7 @@ export function FloorPlanSheetEditor({
               y2: Math.round(rubber.y2 * 100) / 100,
               w: 0.25,
               layer: '追記',
+              arrow: arrowStyle === 'none' ? undefined : arrowStyle,
             },
           ],
         })
@@ -311,7 +349,7 @@ export function FloorPlanSheetEditor({
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* 道具 */}
+      {/* 道具 (アイコン のみ)。 ラベル は tooltip で 補う */}
       <div className="flex items-center gap-1 mb-1 flex-wrap">
         {(
           [
@@ -324,14 +362,44 @@ export function FloorPlanSheetEditor({
             key={k}
             type="button"
             onClick={() => setTool(k)}
-            className={`px-2 py-1 text-xs border rounded flex items-center gap-1 ${
+            title={label}
+            aria-label={label}
+            className={`p-1.5 border rounded ${
               tool === k ? 'bg-blue-600 text-white border-blue-600' : 'hover:bg-slate-50'
             }`}
           >
-            <Icon className="h-3.5 w-3.5" />
-            {label}
+            <Icon className="h-4 w-4" />
           </button>
         ))}
+
+        {/* 線 ツール 選択 中 は 矢印 の 種類 を 選べる */}
+        {tool === 'line' && (
+          <div className="flex items-center gap-1 ml-2 pl-2 border-l">
+            <span className="text-[11px] text-slate-500">矢印</span>
+            {(
+              [
+                ['none', '矢印なし', Minus],
+                ['end', '終点のみ', ArrowRight],
+                ['both', '両端', ArrowLeftRight],
+              ] as const
+            ).map(([k, label, Icon]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setArrowStyle(k)}
+                title={label}
+                aria-label={label}
+                className={`p-1 border rounded ${
+                  arrowStyle === k
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'hover:bg-slate-50'
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+              </button>
+            ))}
+          </div>
+        )}
 
         {selected && (
           <div className="flex items-center gap-1 ml-2 pl-2 border-l">
@@ -370,6 +438,41 @@ export function FloorPlanSheetEditor({
                     else patchMove(selected.id!, { rot: v })
                   }}
                 />
+              </>
+            )}
+            {/* 選択中 が 追記 の 線 なら 矢印 を 変えられる */}
+            {selected.kind === 'line' && isExtra && (
+              <>
+                <span className="text-[11px] text-slate-500">矢印</span>
+                {(
+                  [
+                    ['none', '矢印なし', Minus],
+                    ['end', '終点のみ', ArrowRight],
+                    ['both', '両端', ArrowLeftRight],
+                  ] as const
+                ).map(([k, label, Icon]) => {
+                  const cur = selected.arrow ?? 'none'
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() =>
+                        patchExtra(selected.id!, {
+                          arrow: k === 'none' ? undefined : k,
+                        } as Partial<DrawItem>)
+                      }
+                      title={label}
+                      aria-label={label}
+                      className={`p-1 border rounded ${
+                        cur === k
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                    </button>
+                  )
+                })}
               </>
             )}
             <button
@@ -463,18 +566,46 @@ export function FloorPlanSheetEditor({
               : { pointerEvents: 'none' as const }
 
             if (it.kind === 'line') {
+              const arrowEnd =
+                it.arrow === 'end' || it.arrow === 'both'
+                  ? arrowHeadPoints(it.x2, it.y2, it.x1, it.y1)
+                  : ''
+              const arrowStart =
+                it.arrow === 'start' || it.arrow === 'both'
+                  ? arrowHeadPoints(it.x1, it.y1, it.x2, it.y2)
+                  : ''
+              if (!arrowEnd && !arrowStart) {
+                return (
+                  <line
+                    key={i}
+                    x1={it.x1}
+                    y1={it.y1}
+                    x2={it.x2}
+                    y2={it.y2}
+                    stroke="#0f172a"
+                    strokeWidth={Math.max(it.w, 0.18)}
+                    strokeDasharray={svgDash(it.style)}
+                    {...common}
+                  />
+                )
+              }
               return (
-                <line
-                  key={i}
-                  x1={it.x1}
-                  y1={it.y1}
-                  x2={it.x2}
-                  y2={it.y2}
-                  stroke="#0f172a"
-                  strokeWidth={Math.max(it.w, 0.18)}
-                  strokeDasharray={svgDash(it.style)}
-                  {...common}
-                />
+                <g key={i}>
+                  <line
+                    x1={it.x1}
+                    y1={it.y1}
+                    x2={it.x2}
+                    y2={it.y2}
+                    stroke="#0f172a"
+                    strokeWidth={Math.max(it.w, 0.18)}
+                    strokeDasharray={svgDash(it.style)}
+                    {...common}
+                  />
+                  {arrowEnd && <polygon points={arrowEnd} fill="#0f172a" {...common} />}
+                  {arrowStart && (
+                    <polygon points={arrowStart} fill="#0f172a" {...common} />
+                  )}
+                </g>
               )
             }
             if (it.kind === 'poly') {
@@ -600,6 +731,30 @@ export function FloorPlanSheetEditor({
               stroke="#2563eb"
               strokeWidth={0.3}
               strokeDasharray="1 0.6"
+              pointerEvents="none"
+            />
+          )}
+          {/* 選択 中 の 文字 が 「どの 点 / どの 辺 を 指して いる か」 を 赤 で 示す */}
+          {selected && selected.kind === 'text' && selected.linkedPoint && (
+            <circle
+              cx={selected.linkedPoint.cx}
+              cy={selected.linkedPoint.cy}
+              r={1.4}
+              fill="none"
+              stroke="#dc2626"
+              strokeWidth={0.4}
+              pointerEvents="none"
+            />
+          )}
+          {selected && selected.kind === 'text' && selected.linkedEdge && (
+            <line
+              x1={selected.linkedEdge.x1}
+              y1={selected.linkedEdge.y1}
+              x2={selected.linkedEdge.x2}
+              y2={selected.linkedEdge.y2}
+              stroke="#dc2626"
+              strokeWidth={0.5}
+              strokeOpacity={0.8}
               pointerEvents="none"
             />
           )}

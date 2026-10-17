@@ -747,6 +747,7 @@ function drawMap(
         anchor: 'middle',
         rot: deg,
         layer: L.dim,
+        linkedEdge: { x1: sa.x, y1: sa.y, x2: sb.x, y2: sb.y },
       })
     }
   }
@@ -773,6 +774,7 @@ function drawMap(
         anchor: 'start',
         rot: 0,
         layer: L.site,
+        linkedPoint: { cx: s.x, cy: s.y },
       })
     }
   }

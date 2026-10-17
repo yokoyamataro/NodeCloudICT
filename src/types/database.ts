@@ -554,19 +554,30 @@ export const LANDOWNER_NOTIFICATION_LABEL: Record<LandownerNotificationMethod, s
   agent: '代理人',
 }
 
-// 地権者の立会状況
-export type LandownerAttendanceStatus =
-  | 'not_attended'
-  | 'field_confirmed'
-  | 'document_confirmed'
-  | 'rejected'
+// 地権者の立会状況 (自由文、既定の推奨値は下記 PRESETS)。
+// 旧 enum ID (not_attended など) は 20261015 のマイグレで日本語ラベルに正規化済み。
+export type LandownerAttendanceStatus = string
 
-export const LANDOWNER_ATTENDANCE_LABEL: Record<LandownerAttendanceStatus, string> = {
-  not_attended: '未立会',
-  field_confirmed: '現地立会確認済',
-  document_confirmed: '書面確認済',
-  rejected: '不承諾',
+/** UI の datalist に出す推奨値。好みで自由に書き足せる */
+export const LANDOWNER_ATTENDANCE_PRESETS = [
+  '未立会',
+  '現地立会確認済',
+  '書面確認済',
+  '立会確認省略',
+  '不承諾',
+] as const
+
+/** 既知のラベル → バッジ用 Tailwind クラス。未知のラベル (自由文) は default */
+export const LANDOWNER_ATTENDANCE_BADGE: Record<string, string> = {
+  '未立会': 'bg-slate-100 text-slate-700 border-slate-200',
+  '現地立会確認済': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  '書面確認済': 'bg-blue-50 text-blue-700 border-blue-200',
+  '立会確認省略': 'bg-amber-50 text-amber-700 border-amber-200',
+  '不承諾': 'bg-red-50 text-red-700 border-red-200',
 }
+
+export const LANDOWNER_ATTENDANCE_BADGE_DEFAULT =
+  'bg-white text-slate-700 border-slate-300'
 
 // 地権者の属性 (申請人 / 隣接者)
 export type LandownerAttribute = 'applicant' | 'adjacent'

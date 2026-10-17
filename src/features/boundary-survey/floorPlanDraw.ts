@@ -46,6 +46,8 @@ export interface DrawBase {
   id?: string
 }
 
+export type ArrowStyle = 'none' | 'end' | 'start' | 'both'
+
 export interface DrawLine extends DrawBase {
   kind: 'line'
   x1: number
@@ -55,6 +57,9 @@ export interface DrawLine extends DrawBase {
   w: number
   layer: string
   style?: LineStyle
+  /** 矢印 の 描画。 'end'=終点、 'start'=始点、 'both'=両端、 既定 は なし。
+   *  矢頭 は 線 と 同じ 色、 サイズ は 固定 (約 2mm) で レンダラ 側 で 描く。 */
+  arrow?: ArrowStyle
 }
 export interface DrawPoly extends DrawBase {
   kind: 'poly'
@@ -90,6 +95,12 @@ export interface DrawText extends DrawBase {
   /** true の 時 は text 中 の `[xxx]` を 上付 文字 と して 描く
    *  (地図番号 の 「N[10]4-1」 など)。 pitch は 一緒 に 使え ない。 */
   rich?: boolean
+  /** 選択 時 の 対応 位置 (点)。 点名 の 文字 が 「どの 点 を 指す か」 を
+   *  赤 の ○ で 示す ため に 使う。 */
+  linkedPoint?: { cx: number; cy: number }
+  /** 選択 時 の 対応 位置 (辺)。 距離 の 文字 が 「どの 辺 の 距離 か」 を
+   *  赤 の 線 で 示す ため に 使う。 */
+  linkedEdge?: { x1: number; y1: number; x2: number; y2: number }
 }
 export type DrawItem = DrawLine | DrawPoly | DrawCircle | DrawText
 

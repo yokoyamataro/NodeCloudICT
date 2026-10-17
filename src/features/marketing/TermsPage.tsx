@@ -109,7 +109,9 @@ export function TermsPage() {
   useReleasePageScroll()
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="bg-white border-b">
+      {/* ステータスバー と 重ならない よう に 端末 の セーフエリア 分 を 足す
+       *  (PC では env(safe-area-inset-top) は 0 な ので 影響 なし) */}
+      <div className="bg-white border-b" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
           <Link to="/lp" className="text-slate-500 hover:text-slate-800" title="紹介ページ">
             <ArrowLeft className="h-5 w-5" />
